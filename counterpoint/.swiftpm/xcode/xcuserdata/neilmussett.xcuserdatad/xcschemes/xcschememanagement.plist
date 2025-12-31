@@ -32,6 +32,11 @@
 	</dict>
 	<key>SuppressBuildableAutocreation</key>
 	<dict>
+		<key>AdaptersTests</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
 		<key>CounterpointAdapters</key>
 		<dict>
 			<key>primary</key>

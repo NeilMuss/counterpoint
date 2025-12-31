@@ -94,3 +94,19 @@ Built-in example:
 ```
 swift run counterpoint-cli --example
 ```
+
+S-curve example:
+
+```
+swift run counterpoint-cli --example s-curve
+```
+
+SVG output:
+
+```
+swift run counterpoint-cli --example s-curve --svg out.svg
+```
+
+```
+swift run counterpoint-cli input.json --svg out.svg --padding 20
+```
