@@ -110,3 +110,12 @@ swift run counterpoint-cli --example s-curve --svg out.svg
 ```
 swift run counterpoint-cli input.json --svg out.svg --padding 20
 ```
+
+## Golden Fixtures
+Golden SVG fixtures live in `Fixtures/specs` and `Fixtures/expected`. Tests compare the SVG output for each spec against the expected file.
+
+Update golden files:
+
+```
+./Scripts/update_golden.sh
+```

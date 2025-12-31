@@ -42,7 +42,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CLITests",
-            dependencies: ["CounterpointCLI", "Domain"]
+            dependencies: ["CounterpointCLI", "Domain", "UseCases", "Adapters"]
         ),
         .testTarget(
             name: "UseCaseTests",

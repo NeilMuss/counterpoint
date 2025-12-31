@@ -37,6 +37,11 @@
 			<key>primary</key>
 			<true/>
 		</dict>
+		<key>CLITests</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
 		<key>CounterpointAdapters</key>
 		<dict>
 			<key>primary</key>
