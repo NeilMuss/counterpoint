@@ -1,0 +1,81 @@
+import Foundation
+
+public protocol SpecValidating {
+    func validate(_ spec: StrokeSpec) throws
+}
+
+public struct StrokeSpecValidationError: LocalizedError {
+    public let messages: [String]
+
+    public init(messages: [String]) {
+        self.messages = messages
+    }
+
+    public var errorDescription: String? {
+        messages.joined(separator: "\n")
+    }
+}
+
+public struct StrokeSpecValidator: SpecValidating {
+    public init() {}
+
+    public func validate(_ spec: StrokeSpec) throws {
+        var errors: [String] = []
+
+        if spec.path.segments.isEmpty {
+            errors.append("Path must contain at least one cubic segment.")
+        }
+
+        for (index, segment) in spec.path.segments.enumerated() {
+            if !segment.p0.isFinite || !segment.p1.isFinite || !segment.p2.isFinite || !segment.p3.isFinite {
+                errors.append("Path segment \(index) contains non-finite control points.")
+            }
+        }
+
+        validate(track: spec.width, name: "width", mustBePositive: true, errors: &errors)
+        validate(track: spec.height, name: "height", mustBePositive: true, errors: &errors)
+        validate(track: spec.theta, name: "theta", mustBePositive: false, errors: &errors)
+
+        if spec.sampling.baseSpacing <= 0 || !spec.sampling.baseSpacing.isFinite {
+            errors.append("Sampling baseSpacing must be a positive finite value.")
+        }
+        if spec.sampling.flatnessTolerance <= 0 || !spec.sampling.flatnessTolerance.isFinite {
+            errors.append("Sampling flatnessTolerance must be a positive finite value.")
+        }
+        if spec.sampling.rotationThresholdDegrees <= 0 || !spec.sampling.rotationThresholdDegrees.isFinite {
+            errors.append("Sampling rotationThresholdDegrees must be a positive finite value.")
+        }
+        if spec.sampling.minimumSpacing <= 0 || !spec.sampling.minimumSpacing.isFinite {
+            errors.append("Sampling minimumSpacing must be a positive finite value.")
+        }
+
+        if !errors.isEmpty {
+            throw StrokeSpecValidationError(messages: errors)
+        }
+    }
+
+    private func validate(track: ParamTrack, name: String, mustBePositive: Bool, errors: inout [String]) {
+        if track.keyframes.isEmpty {
+            errors.append("ParamTrack '\(name)' must contain at least one keyframe.")
+            return
+        }
+        for (index, keyframe) in track.keyframes.enumerated() {
+            if !keyframe.t.isFinite || !keyframe.value.isFinite {
+                errors.append("ParamTrack '\(name)' keyframe \(index) contains non-finite values.")
+                continue
+            }
+            if keyframe.t < 0.0 || keyframe.t > 1.0 {
+                errors.append("ParamTrack '\(name)' keyframe \(index) has t outside [0,1].")
+            }
+            if mustBePositive && keyframe.value <= 0.0 {
+                errors.append("ParamTrack '\(name)' keyframe \(index) must be > 0.")
+            }
+        }
+    }
+}
+
+private extension Point {
+    var isFinite: Bool {
+        x.isFinite && y.isFinite
+    }
+}
