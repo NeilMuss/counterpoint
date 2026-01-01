@@ -12,10 +12,17 @@ public struct GenerateStrokeOutlineUseCase {
         self.unioner = unioner
     }
 
-    public func generateOutline(for spec: StrokeSpec) -> PolygonSet {
+    public func generateOutline(for spec: StrokeSpec, includeBridges: Bool = true) throws -> PolygonSet {
         let samples = generateSamples(for: spec)
         let rings = samples.map { rectangleRing(for: $0) }
-        return (try? unioner.union(subjectRings: rings)) ?? []
+        let allRings: [Ring]
+        if includeBridges {
+            let bridges = try bridgeRings(between: rings)
+            allRings = rings + bridges
+        } else {
+            allRings = rings
+        }
+        return try unioner.union(subjectRings: allRings)
     }
 
     public func generateSamples(for spec: StrokeSpec) -> [Sample] {
@@ -104,5 +111,17 @@ public struct GenerateStrokeOutlineUseCase {
         let minDimension = min(minWidth, minHeight)
         let cap = minDimension > 0 ? minDimension / 4.0 : spec.sampling.baseSpacing
         return max(spec.sampling.minimumSpacing, min(spec.sampling.baseSpacing, cap))
+    }
+
+    private func bridgeRings(between rings: [Ring]) throws -> [Ring] {
+        guard rings.count > 1 else { return [] }
+        let builder = BridgeBuilder()
+        var bridges: [Ring] = []
+        bridges.reserveCapacity(rings.count * 2)
+        for index in 0..<(rings.count - 1) {
+            let segmentBridges = try builder.bridgeRings(from: rings[index], to: rings[index + 1])
+            bridges.append(contentsOf: segmentBridges)
+        }
+        return bridges
     }
 }

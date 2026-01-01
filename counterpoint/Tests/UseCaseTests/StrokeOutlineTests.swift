@@ -6,7 +6,7 @@ import XCTest
 final class StrokeOutlineTests: XCTestCase {
     private let tolerance = 0.75
 
-    func testStraightLineAbsoluteZeroBoundingBox() {
+    func testStraightLineAbsoluteZeroBoundingBox() throws {
         let spec = StrokeSpec(
             path: BezierPath(segments: [
                 CubicBezier(
@@ -23,7 +23,7 @@ final class StrokeOutlineTests: XCTestCase {
             sampling: SamplingSpec()
         )
 
-        let outline = makeUseCase().generateOutline(for: spec)
+        let outline = try makeUseCase().generateOutline(for: spec)
         let bounds = boundsOf(polygons: outline)
 
         XCTAssertEqual(bounds.minX, -5.0, accuracy: tolerance)
@@ -32,7 +32,7 @@ final class StrokeOutlineTests: XCTestCase {
         XCTAssertEqual(bounds.maxY, 10.0, accuracy: tolerance)
     }
 
-    func testStraightLineAbsoluteNinetyDegreesBoundingBox() {
+    func testStraightLineAbsoluteNinetyDegreesBoundingBox() throws {
         let spec = StrokeSpec(
             path: BezierPath(segments: [
                 CubicBezier(
@@ -49,7 +49,7 @@ final class StrokeOutlineTests: XCTestCase {
             sampling: SamplingSpec()
         )
 
-        let outline = makeUseCase().generateOutline(for: spec)
+        let outline = try makeUseCase().generateOutline(for: spec)
         let bounds = boundsOf(polygons: outline)
 
         XCTAssertEqual(bounds.minX, -10.0, accuracy: tolerance)
@@ -58,7 +58,7 @@ final class StrokeOutlineTests: XCTestCase {
         XCTAssertEqual(bounds.maxY, 5.0, accuracy: tolerance)
     }
 
-    func testLShapeProducesClosedNonEmptyRings() {
+    func testLShapeProducesClosedNonEmptyRings() throws {
         let spec = StrokeSpec(
             path: BezierPath(segments: [
                 CubicBezier(
@@ -81,7 +81,7 @@ final class StrokeOutlineTests: XCTestCase {
             sampling: SamplingSpec()
         )
 
-        let outline = makeUseCase().generateOutline(for: spec)
+        let outline = try makeUseCase().generateOutline(for: spec)
         XCTAssertFalse(outline.isEmpty)
 
         for polygon in outline {
@@ -127,7 +127,7 @@ final class StrokeOutlineTests: XCTestCase {
         }
     }
 
-    func testWidthVariationExpandsBounds() {
+    func testWidthVariationExpandsBounds() throws {
         let spec = StrokeSpec(
             path: BezierPath(segments: [
                 CubicBezier(
@@ -147,7 +147,7 @@ final class StrokeOutlineTests: XCTestCase {
             sampling: SamplingSpec()
         )
 
-        let outline = makeUseCase().generateOutline(for: spec)
+        let outline = try makeUseCase().generateOutline(for: spec)
         let bounds = boundsOf(polygons: outline)
 
         XCTAssertLessThanOrEqual(bounds.minX, -5.0 + tolerance)

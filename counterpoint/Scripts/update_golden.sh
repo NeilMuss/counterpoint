@@ -12,6 +12,6 @@ specs=(
 )
 
 for name in "${specs[@]}"; do
-  swift run counterpoint-cli "Fixtures/specs/${name}.json" --svg "Fixtures/expected/${name}.svg" --quiet
+  swift run counterpoint-cli "Fixtures/specs/${name}.json" --svg "Fixtures/expected/${name}.svg" --quiet --bridges
   echo "Wrote Fixtures/expected/${name}.svg"
 done

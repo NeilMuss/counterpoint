@@ -82,7 +82,7 @@ public struct Sample: Codable, Equatable {
 }
 
 public protocol StrokeOutlining {
-    func outline(spec: StrokeSpec) -> PolygonSet
+    func outline(spec: StrokeSpec) throws -> PolygonSet
 }
 
 public protocol PolygonUnioning {

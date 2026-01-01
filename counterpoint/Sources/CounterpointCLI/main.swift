@@ -11,7 +11,7 @@ struct CLI {
         let inputData: Data
 
         if let exampleName = options.exampleName {
-            inputData = exampleSpecData(named: exampleName)
+            inputData = exampleSpecData(named: exampleName.isEmpty ? nil : exampleName)
         } else if let path = options.inputPath, path != "-" {
             inputData = try Data(contentsOf: URL(fileURLWithPath: path))
         } else {
@@ -27,7 +27,7 @@ struct CLI {
             evaluator: DefaultParamEvaluator(),
             unioner: IOverlayPolygonUnionAdapter()
         )
-        let outline = useCase.generateOutline(for: spec)
+        let outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges)
 
         if let svgPath = options.svgOutputPath {
             let builder = SVGPathBuilder()
@@ -51,7 +51,8 @@ struct CLI {
     }
 
     private func exampleSpecData(named name: String?) -> Data {
-        switch name?.lowercased() {
+        let normalized = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch normalized?.lowercased() {
         case "s-curve", "scurve", "s":
             return Data(sCurveExample.utf8)
         default:
@@ -121,10 +122,11 @@ private struct CLIOptions {
     var svgSize: CGSize?
     var padding: Double
     var quiet: Bool
+    var useBridges: Bool
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
-    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false)
+    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true)
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -135,7 +137,7 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
                 options.exampleName = name
                 index += 1
             } else {
-                options.exampleName = nil
+                options.exampleName = ""
             }
         case "--svg":
             guard index + 1 < args.count else { throw CLIError.invalidArguments("--svg requires an output path") }
@@ -153,6 +155,10 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             index += 1
         case "--quiet":
             options.quiet = true
+        case "--bridges":
+            options.useBridges = true
+        case "--no-bridges":
+            options.useBridges = false
         default:
             if !arg.hasPrefix("--") {
                 options.inputPath = arg
@@ -189,6 +195,6 @@ do {
     let message = (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges]\n".utf8))
     exit(1)
 }

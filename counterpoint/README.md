@@ -111,6 +111,15 @@ swift run counterpoint-cli --example s-curve --svg out.svg
 swift run counterpoint-cli input.json --svg out.svg --padding 20
 ```
 
+Bridge envelopes (on by default):
+
+```
+swift run counterpoint-cli --example s-curve --svg out.svg --no-bridges
+```
+
+## Bridge Envelopes
+To reduce gaps and jaggies between stamped samples, the core constructs an envelope between adjacent counterpoints by connecting corresponding edges into quads (or splitting into triangles when edges invert). The union includes both stamps and bridges. Use `--no-bridges` to compare results.
+
 ## Golden Fixtures
 Golden SVG fixtures live in `Fixtures/specs` and `Fixtures/expected`. Tests compare the SVG output for each spec against the expected file.
 

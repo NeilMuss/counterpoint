@@ -27,7 +27,7 @@ final class GoldenSVGTests: XCTestCase {
                 evaluator: DefaultParamEvaluator(),
                 unioner: IOverlayPolygonUnionAdapter()
             )
-            let outline = useCase.generateOutline(for: spec)
+            let outline = try useCase.generateOutline(for: spec)
             let svg = SVGPathBuilder().svgDocument(for: outline, size: nil, padding: 10.0)
 
             let expected = try String(contentsOf: expectedURL, encoding: .utf8)
