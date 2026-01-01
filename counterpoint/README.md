@@ -144,6 +144,8 @@ swift run counterpoint-cli scurve --svg scurve.svg --view envelope,samples --ang
 ```
 
 Envelope rails mode is a fast approximation and can show gaps when silhouette sidedness flips. Use union mode for correct inked envelopes.
+Preview quality uses adaptive sampling with a loose tolerance; final uses tighter tolerance. The `--samples` flag is treated as a max sample cap for adaptive sampling.
+Union envelope mode prints diagnostics about effective sample count, envelope sides, and union components.
 
 Scurve playground options:
 ```
@@ -159,6 +161,84 @@ counterpoint-cli scurve --svg <outputPath>
   [--envelope-mode rails|union] [--envelope-sides N]
   [--view envelope,samples,rays,rails,union,centerline]
   [--no-centerline]
+```
+
+Line playground mode (same options, straight path):
+
+```
+swift run counterpoint-cli line --svg line.svg --view envelope --envelope-mode union
+```
+
+Line playground options:
+```
+counterpoint-cli line --svg <outputPath>
+  [--angle-start N] [--angle-end N]
+  [--size-start N] [--size-end N]
+  [--aspect-start N] [--aspect-end N]
+  [--width-start N] [--width-end N]
+  [--height-start N] [--height-end N]
+  [--alpha-start N] [--alpha-end N]
+  [--angle-mode absolute|relative]
+  [--samples N] [--quality preview|final]
+  [--envelope-mode rails|union] [--envelope-sides N]
+  [--view envelope,samples,rays,rails,union,centerline]
+  [--no-centerline]
+```
+
+## Showcase / Presets
+Generate a curated set of preset SVGs:
+
+```
+swift run counterpoint-cli showcase --out Fixtures/Showcase --quality final
+```
+
+Showcase commands (copy/paste):
+
+1) Baseline broad-nib sweep (constant size/aspect)
+```
+swift run counterpoint-cli scurve --svg scurve_broadnib.svg --view envelope,centerline --envelope-mode union --size-start 16 --size-end 16 --aspect-start 0.8 --aspect-end 0.8 --angle-start 20 --angle-end 20
+```
+
+2) Hairline → sail (dramatic ramp, final quality)
+```
+swift run counterpoint-cli scurve --svg scurve_hairline_sail_final.svg --view envelope --envelope-mode union --quality final --size-start 2 --size-end 26 --aspect-start 0.35 --aspect-end 0.35 --angle-start 10 --angle-end 75
+```
+
+3) Hairline → sail, swelling earlier (alpha reduced)
+```
+swift run counterpoint-cli scurve --svg scurve_hairline_sail_early.svg --view envelope --envelope-mode union --alpha-start -0.4 --alpha-end 0.2 --size-start 2 --size-end 26 --aspect-start 0.35 --aspect-end 0.35 --angle-start 10 --angle-end 75
+```
+
+4) Absolute vs relative comparison
+```
+swift run counterpoint-cli scurve --svg scurve_absolute.svg --view envelope,rays --envelope-mode union --angle-mode absolute --angle-start 10 --angle-end 75
+```
+```
+swift run counterpoint-cli scurve --svg scurve_relative.svg --view envelope,rays --envelope-mode union --angle-mode relative --angle-start 10 --angle-end 75
+```
+
+5) Sharp-ish vs flat brush
+```
+swift run counterpoint-cli scurve --svg scurve_sharp_brush.svg --view envelope --envelope-mode union --size-start 14 --size-end 14 --aspect-start 0.2 --aspect-end 0.2 --angle-start 25 --angle-end 25
+```
+```
+swift run counterpoint-cli scurve --svg scurve_flat_brush.svg --view envelope --envelope-mode union --size-start 14 --size-end 14 --aspect-start 1.8 --aspect-end 1.8 --angle-start 25 --angle-end 25
+```
+
+6) Debug bundle (all overlays)
+```
+swift run counterpoint-cli scurve --svg scurve_debug_bundle.svg --view envelope,samples,rays,rails,centerline --envelope-mode union --angle-start 10 --angle-end 75
+```
+
+Straight-line trumpet presets:
+```
+swift run counterpoint-cli line --svg line_trumpet_neutral.svg --view envelope,centerline --envelope-mode union --size-start 5 --size-end 50 --aspect-start 0.35 --aspect-end 0.35 --angle-start 30 --angle-end 30 --alpha-start 0 --alpha-end 0
+```
+```
+swift run counterpoint-cli line --svg line_trumpet_pos.svg --view envelope,centerline --envelope-mode union --size-start 5 --size-end 50 --aspect-start 0.35 --aspect-end 0.35 --angle-start 30 --angle-end 30 --alpha-end 0.9
+```
+```
+swift run counterpoint-cli line --svg line_trumpet_neg.svg --view envelope,centerline --envelope-mode union --size-start 5 --size-end 50 --aspect-start 0.35 --aspect-end 0.35 --angle-start 30 --angle-end 30 --alpha-start -0.9
 ```
 
 SVG output:

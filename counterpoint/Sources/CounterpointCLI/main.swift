@@ -11,6 +11,14 @@ struct CLI {
             try runScurve(args: Array(args.dropFirst()))
             return
         }
+        if let first = args.first, first == "line" {
+            try runLine(args: Array(args.dropFirst()))
+            return
+        }
+        if let first = args.first, first == "showcase" {
+            try runShowcase(args: Array(args.dropFirst()))
+            return
+        }
         let options = try parseOptions(args)
         let inputData: Data
 
@@ -124,11 +132,65 @@ struct CLI {
         try validate(config: config)
 
         let geometry = try buildScurveGeometry(config: config)
+        try writeScurveOutput(config: config, geometry: geometry)
+    }
 
+    private func runLine(args: [String]) throws {
+        let config = try parseScurveOptions(args)
+        try validate(config: config)
+
+        let geometry = try buildLineGeometry(config: config)
+        try writeScurveOutput(config: config, geometry: geometry)
+    }
+
+    private func runShowcase(args: [String]) throws {
+        let options = try parseShowcaseOptions(args)
+        let outURL = URL(fileURLWithPath: options.outputDirectory)
+        try FileManager.default.createDirectory(at: outURL, withIntermediateDirectories: true)
+
+        var rendered = 0
+        for preset in ShowcasePresets.all {
+            var presetArgs = preset.args
+            if let quality = options.quality, !presetArgs.contains("--quality") {
+                presetArgs.append(contentsOf: ["--quality", quality])
+            }
+            let outputPath = outURL.appendingPathComponent("\(preset.name).svg").path
+            presetArgs.append(contentsOf: ["--svg", outputPath])
+
+            switch preset.subcommand {
+            case .scurve:
+                try runScurve(args: presetArgs)
+            case .line:
+                try runLine(args: presetArgs)
+            }
+            rendered += 1
+        }
+
+        print("Rendered \(rendered) showcase SVGs to \(options.outputDirectory)")
+    }
+
+    private func writeScurveOutput(config: ScurvePlaygroundConfig, geometry: ScurveGeometry) throws {
+        if config.envelopeMode == .union {
+            let vertexCount = geometry.unionPolygons.reduce(0) { sum, polygon in
+                let holes = polygon.holes.reduce(0) { $0 + $1.count }
+                return sum + polygon.outer.count + holes
+            }
+            print("union envelope: effectiveSampleCount \(geometry.sValues.count)")
+            print("envelopeSides \(config.envelopeSegments)")
+            print("union components \(geometry.unionPolygons.count) vertexCount \(vertexCount)")
+            if geometry.unionPolygons.isEmpty {
+                print("UNION FAILED/EMPTY, falling back to samples")
+            }
+        }
+
+        let needsEnvelope = config.view.contains(.envelope)
+        let fallbackToSamples = needsEnvelope && config.envelopeMode == .union && geometry.unionPolygons.isEmpty
         let polygons: PolygonSet
-        if config.view.contains(.envelope) {
+        if needsEnvelope {
             if config.envelopeMode == .union {
-                polygons = geometry.unionPolygons
+                polygons = geometry.unionPolygons.isEmpty
+                    ? geometry.stampRings.map { Polygon(outer: $0) }
+                    : geometry.unionPolygons
             } else {
                 polygons = geometry.envelopeOutline.isEmpty ? [] : [Polygon(outer: geometry.envelopeOutline)]
             }
@@ -138,7 +200,7 @@ struct CLI {
 
         let overlay = SVGDebugOverlay(
             skeleton: geometry.centerline,
-            stamps: config.view.contains(.samples) ? geometry.stampRings : [],
+            stamps: (config.view.contains(.samples) || fallbackToSamples) ? geometry.stampRings : [],
             bridges: [],
             samplePoints: geometry.samplePoints,
             tangentRays: geometry.tangentRays,
@@ -421,6 +483,10 @@ struct ScurvePlaygroundConfig: Equatable {
     var alphaEnd: Double
     var angleMode: AngleMode
     var samplesPerSegment: Int
+    var maxSamples: Int
+    var maxDepth: Int
+    var tolerance: Double
+    var isFinal: Bool
     var ellipseSegments: Int
     var envelopeSegments: Int
     var view: Set<ScurveView>
@@ -451,6 +517,12 @@ struct ScurveGeometry {
     var tangentRays: [(Point, Point)]
     var angleRays: [(Point, Point)]
     var centerline: [Point]
+    var sValues: [Double]
+}
+
+struct ShowcaseOptions {
+    var outputDirectory: String
+    var quality: String?
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
@@ -559,7 +631,7 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
     var alphaStart = 0.0
     var alphaEnd = 0.0
     var angleMode: AngleMode = .absolute
-    var samplesPerSegment: Int?
+    var maxSamples: Int?
     var quality: String?
     var view: Set<ScurveView> = [.envelope, .centerline]
     var envelopeMode: EnvelopeMode = .union
@@ -663,7 +735,7 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
             guard index + 1 < args.count, let value = Int(args[index + 1]) else {
                 throw CLIError.invalidArguments("--samples requires an integer")
             }
-            samplesPerSegment = value
+            maxSamples = max(4, value)
             index += 1
         case "--quality":
             guard index + 1 < args.count else { throw CLIError.invalidArguments("--quality requires preview|final") }
@@ -696,16 +768,25 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
     }
 
     let resolvedSamples: Int
+    let resolvedMaxSamples: Int
+    let resolvedMaxDepth: Int
+    let resolvedTolerance: Double
+    let isFinal: Bool
     let ellipseSegments: Int
-    if let samplesPerSegment {
-        resolvedSamples = max(4, samplesPerSegment)
-        ellipseSegments = 24
-    } else if quality == "final" {
+    if quality == "final" {
         resolvedSamples = 200
         ellipseSegments = 64
+        resolvedMaxSamples = maxSamples ?? 800
+        resolvedMaxDepth = 14
+        resolvedTolerance = 0.0
+        isFinal = true
     } else {
-        resolvedSamples = 60
+        resolvedSamples = 80
         ellipseSegments = 24
+        resolvedMaxSamples = maxSamples ?? 200
+        resolvedMaxDepth = 10
+        resolvedTolerance = 0.0
+        isFinal = false
     }
 
     guard let svgOutputPath else {
@@ -730,11 +811,44 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
         alphaEnd: alphaEnd,
         angleMode: angleMode,
         samplesPerSegment: resolvedSamples,
+        maxSamples: resolvedMaxSamples,
+        maxDepth: resolvedMaxDepth,
+        tolerance: resolvedTolerance,
+        isFinal: isFinal,
         ellipseSegments: ellipseSegments,
         envelopeSegments: envelopeSegments,
         view: view,
         envelopeMode: envelopeMode
     )
+}
+
+func parseShowcaseOptions(_ args: [String]) throws -> ShowcaseOptions {
+    var outputDirectory: String?
+    var quality: String?
+    var index = 0
+
+    while index < args.count {
+        let arg = args[index]
+        switch arg {
+        case "--out":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--out requires a directory path") }
+            outputDirectory = args[index + 1]
+            index += 1
+        case "--quality":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--quality requires preview|final") }
+            quality = args[index + 1].lowercased()
+            index += 1
+        default:
+            break
+        }
+        index += 1
+    }
+
+    guard let outputDirectory else {
+        throw CLIError.invalidArguments("showcase requires --out <dir>")
+    }
+
+    return ShowcaseOptions(outputDirectory: outputDirectory, quality: quality)
 }
 
 private func parseViewModes(_ text: String) throws -> Set<ScurveView> {
@@ -777,6 +891,9 @@ func validate(config: ScurvePlaygroundConfig) throws {
     if config.alphaStart < -1.0 || config.alphaStart > 1.0 || config.alphaEnd < -1.0 || config.alphaEnd > 1.0 {
         throw CLIError.invalidArguments("alpha must be in [-1,1]")
     }
+    if config.maxSamples < 2 {
+        throw CLIError.invalidArguments("samples must be >= 2")
+    }
 }
 
 private func globalScurvePath() -> BezierPath {
@@ -802,6 +919,17 @@ private func globalScurvePath() -> BezierPath {
     ])
 }
 
+private func globalLinePath() -> BezierPath {
+    BezierPath(segments: [
+        CubicBezier(
+            p0: Point(x: 0, y: 0),
+            p1: Point(x: 100, y: 0),
+            p2: Point(x: 200, y: 0),
+            p3: Point(x: 300, y: 0)
+        )
+    ])
+}
+
 private func applyBias(s: Double, alphaStart: Double, alphaEnd: Double) -> Double {
     let clamped = ScalarMath.clamp01(s)
     let alpha = ScalarMath.lerp(alphaStart, alphaEnd, clamped)
@@ -817,7 +945,14 @@ private func biasCurve(t: Double, bias: Double) -> Double {
 }
 
 func buildScurveGeometry(config: ScurvePlaygroundConfig) throws -> ScurveGeometry {
-    let path = globalScurvePath()
+    try buildPlaygroundGeometry(path: globalScurvePath(), config: config)
+}
+
+func buildLineGeometry(config: ScurvePlaygroundConfig) throws -> ScurveGeometry {
+    try buildPlaygroundGeometry(path: globalLinePath(), config: config)
+}
+
+func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) throws -> ScurveGeometry {
     let domain = PathDomain(path: path, samplesPerSegment: config.samplesPerSegment)
     let angleField = ParamField.linearDegrees(startDeg: config.angleStart, endDeg: config.angleEnd)
 
@@ -846,6 +981,14 @@ func buildScurveGeometry(config: ScurvePlaygroundConfig) throws -> ScurveGeometr
     }
     let diag = hypot(bounds.width, bounds.height)
     let rayLength = max(8.0, diag * 0.05)
+    let tolerance: Double
+    if config.tolerance > 0.0 {
+        tolerance = config.tolerance
+    } else if config.isFinal {
+        tolerance = max(0.4, diag * 0.001)
+    } else {
+        tolerance = max(1.5, diag * 0.0025)
+    }
 
     let showRays = config.view.contains(.rays)
     let showSamples = config.view.contains(.samples)
@@ -855,7 +998,46 @@ func buildScurveGeometry(config: ScurvePlaygroundConfig) throws -> ScurveGeometr
     let needsStamps = showSamples || config.view.contains(.union) || (showEnvelope && envelopeUsesUnion)
 
     let stamping = CounterpointStamping()
-    for sample in domain.samples {
+    let overlapSplit: ((Double, Double) -> Bool)? = envelopeUsesUnion ? { s0, s1 in
+        let p0 = domain.evalAtS(s0, path: path).point
+        let p1 = domain.evalAtS(s1, path: path).point
+        let biased0 = applyBias(s: s0, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
+        let biased1 = applyBias(s: s1, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
+        let r0 = max(widthField.evaluate(biased0) * 0.5, heightField.evaluate(biased0) * 0.5)
+        let r1 = max(widthField.evaluate(biased1) * 0.5, heightField.evaluate(biased1) * 0.5)
+        return (p1 - p0).length > 0.8 * (r0 + r1)
+    } : nil
+
+    var sampleList = adaptiveSampleParameters(
+        domain: domain,
+        maxDepth: config.maxDepth,
+        maxSamples: config.maxSamples,
+        tolerance: tolerance,
+        baseIntervals: 16,
+        leftRightAt: { s in
+            let sample = domain.evalAtS(s, path: path)
+            let biasedS = applyBias(s: s, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
+            let angleDeg = angleField.evaluate(biasedS)
+            let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angleDeg, mode: config.angleMode)
+            let dirUnit = dir.normalized() ?? Point(x: 1, y: 0)
+            let normal = dirUnit.leftNormal()
+            let width = widthField.evaluate(biasedS)
+            let height = heightField.evaluate(biasedS)
+            let halfWidth = width * 0.5
+            let halfHeight = height * 0.5
+            let leftOffset = orientedEllipseSupportPoint(direction: normal, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            let rightOffset = orientedEllipseSupportPoint(direction: normal * -1.0, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            return (sample.point + leftOffset, sample.point + rightOffset)
+        },
+        shouldSplit: overlapSplit
+    )
+
+    if envelopeUsesUnion && config.isFinal {
+        sampleList = ensureMinSamples(sampleList, minCount: 250)
+    }
+
+    for s in sampleList {
+        let sample = domain.evalAtS(s, path: path)
         let biasedS = applyBias(s: sample.s, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
         let angleDeg = angleField.evaluate(biasedS)
         let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angleDeg, mode: config.angleMode)
@@ -940,8 +1122,114 @@ func buildScurveGeometry(config: ScurvePlaygroundConfig) throws -> ScurveGeometr
         samplePoints: samplePoints,
         tangentRays: tangentRays,
         angleRays: angleRays,
-        centerline: centerline
+        centerline: centerline,
+        sValues: sampleList
     )
+}
+
+func adaptiveSampleParameters(
+    domain: PathDomain,
+    maxDepth: Int,
+    maxSamples: Int,
+    tolerance: Double,
+    baseIntervals: Int,
+    leftRightAt: (Double) -> (Point, Point),
+    shouldSplit: ((Double, Double) -> Bool)? = nil
+) -> [Double] {
+    let intervalCount = max(1, baseIntervals)
+    let step = 1.0 / Double(intervalCount)
+    var intervals: [(Double, Double, Int)] = []
+    intervals.reserveCapacity(intervalCount)
+    for i in 0..<intervalCount {
+        let s0 = Double(i) * step
+        let s1 = Double(i + 1) * step
+        intervals.append((s0, s1, 0))
+    }
+
+    var result: [Double] = []
+    result.reserveCapacity(maxSamples)
+
+    func refine(s0: Double, s1: Double, depth: Int) {
+        if result.count >= maxSamples - 1 {
+            result.append(s0)
+            return
+        }
+        if depth >= maxDepth {
+            result.append(s0)
+            return
+        }
+        let sm = (s0 + s1) * 0.5
+        let left0 = leftRightAt(s0).0
+        let right0 = leftRightAt(s0).1
+        let left1 = leftRightAt(s1).0
+        let right1 = leftRightAt(s1).1
+        let leftM = leftRightAt(sm).0
+        let rightM = leftRightAt(sm).1
+
+        let leftInterp = lerpPoint(left0, left1, 0.5)
+        let rightInterp = lerpPoint(right0, right1, 0.5)
+        let errLeft = (leftM - leftInterp).length
+        let errRight = (rightM - rightInterp).length
+        let err = max(errLeft, errRight)
+        let forceSplit = shouldSplit?(s0, s1) ?? false
+
+        if err > tolerance || forceSplit {
+            refine(s0: s0, s1: sm, depth: depth + 1)
+            refine(s0: sm, s1: s1, depth: depth + 1)
+        } else {
+            result.append(s0)
+        }
+    }
+
+    for (s0, s1, depth) in intervals {
+        refine(s0: s0, s1: s1, depth: depth)
+        if result.count >= maxSamples - 1 {
+            break
+        }
+    }
+
+    result.append(1.0)
+    let deduped = dedupeSorted(result, epsilon: 1.0e-9)
+    return capSamples(deduped, maxSamples: maxSamples)
+}
+
+private func lerpPoint(_ a: Point, _ b: Point, _ t: Double) -> Point {
+    Point(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+}
+
+private func dedupeSorted(_ values: [Double], epsilon: Double) -> [Double] {
+    guard !values.isEmpty else { return [] }
+    let sorted = values.sorted()
+    var result: [Double] = [sorted[0]]
+    for value in sorted.dropFirst() {
+        if abs(value - result.last!) > epsilon {
+            result.append(value)
+        }
+    }
+    if result.first != 0.0 {
+        result.insert(0.0, at: 0)
+    }
+    if result.last != 1.0 {
+        result.append(1.0)
+    }
+    return result
+}
+
+private func capSamples(_ values: [Double], maxSamples: Int) -> [Double] {
+    guard values.count > maxSamples else { return values }
+    if maxSamples <= 2 { return [0.0, 1.0] }
+    let head = Array(values.prefix(maxSamples - 1))
+    if head.last == 1.0 {
+        return head
+    }
+    return head + [1.0]
+}
+
+private func ensureMinSamples(_ values: [Double], minCount: Int) -> [Double] {
+    guard values.count < minCount else { return values }
+    if minCount <= 2 { return [0.0, 1.0] }
+    let step = 1.0 / Double(minCount - 1)
+    return (0..<minCount).map { Double($0) * step }
 }
 
 private func parseAngleMode(_ text: String) throws -> AngleMode {
@@ -1109,5 +1397,7 @@ do {
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
     stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline]\n".utf8))
+    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline]\n".utf8))
+    stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
     exit(1)
 }

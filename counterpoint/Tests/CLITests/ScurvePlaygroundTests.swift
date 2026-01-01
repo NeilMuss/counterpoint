@@ -33,7 +33,7 @@ final class ScurvePlaygroundTests: XCTestCase {
     }
 
     func testUnionEnvelopeBeatsRailsInCurveCase() throws {
-        let railsConfig = try parseScurveOptions([
+        var railsConfig = try parseScurveOptions([
             "--svg", "out.svg",
             "--view", "envelope,rails",
             "--envelope-mode", "rails",
@@ -42,8 +42,15 @@ final class ScurvePlaygroundTests: XCTestCase {
             "--size-start", "10",
             "--size-end", "10"
         ])
+        railsConfig.maxSamples = 40
+        railsConfig.maxDepth = 4
+        railsConfig.tolerance = 5.0
+
         var unionConfig = railsConfig
         unionConfig.envelopeMode = .union
+        unionConfig.maxSamples = 200
+        unionConfig.maxDepth = 10
+        unionConfig.tolerance = 0.5
         unionConfig.view.insert(.envelope)
 
         let railsGeom = try buildScurveGeometry(config: railsConfig)
@@ -58,6 +65,48 @@ final class ScurvePlaygroundTests: XCTestCase {
         for polygon in unionGeom.unionPolygons {
             XCTAssertFalse(hasSelfIntersection(polygon.outer))
         }
+    }
+
+    func testUnionEnvelopeNonEmptyForKnownCommand() throws {
+        var config = try parseScurveOptions([
+            "--svg", "out.svg",
+            "--quality", "final",
+            "--view", "envelope",
+            "--envelope-mode", "union",
+            "--angle-mode", "relative",
+            "--angle-start", "20",
+            "--angle-end", "75",
+            "--size-start", "12",
+            "--size-end", "30",
+            "--alpha-end", "0.5"
+        ])
+        config.view.insert(.envelope)
+        let geometry = try buildScurveGeometry(config: config)
+        XCTAssertFalse(geometry.unionPolygons.isEmpty)
+    }
+
+    func testAdaptivePreviewLessThanFinal() throws {
+        let preview = try parseScurveOptions(["--svg", "out.svg", "--quality", "preview"])
+        let final = try parseScurveOptions(["--svg", "out.svg", "--quality", "final"])
+
+        let previewGeom = try buildScurveGeometry(config: preview)
+        let finalGeom = try buildScurveGeometry(config: final)
+        XCTAssertLessThan(previewGeom.sValues.count, finalGeom.sValues.count)
+    }
+
+    func testAdaptiveRespectsCap() throws {
+        let config = try parseScurveOptions(["--svg", "out.svg", "--samples", "12"])
+        let geometry = try buildScurveGeometry(config: config)
+        XCTAssertLessThanOrEqual(geometry.sValues.count, 12)
+        XCTAssertEqual(geometry.sValues.first, 0.0)
+        XCTAssertEqual(geometry.sValues.last, 1.0)
+    }
+
+    func testAdaptiveDeterminism() throws {
+        let config = try parseScurveOptions(["--svg", "out.svg", "--quality", "preview"])
+        let a = try buildScurveGeometry(config: config)
+        let b = try buildScurveGeometry(config: config)
+        XCTAssertEqual(a.sValues, b.sValues)
     }
 
     private func hasSelfIntersection(_ ring: Ring) -> Bool {
