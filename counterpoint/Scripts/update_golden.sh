@@ -11,6 +11,7 @@ specs=(
   "l-shape"
   "alpha-terminal"
   "teardrop-demo"
+  "global-angle-scurve"
 )
 
 for name in "${specs[@]}"; do

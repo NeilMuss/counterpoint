@@ -16,7 +16,7 @@ struct SVGPathBuilder {
         let width = size?.width ?? viewBox.width
         let height = size?.height ?? viewBox.height
         let pathElements = polygons.map { pathData(for: $0) }.joined(separator: "\n")
-        let debug = debugOverlay.map { debugGroup($0) } ?? ""
+        let debug = debugOverlay.map { debugGroup($0, polygons: polygons) } ?? ""
 
         return """
         <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"\(format(width))\" height=\"\(format(height))\" viewBox=\"\(format(viewBox.minX)) \(format(viewBox.minY)) \(format(viewBox.width)) \(format(viewBox.height))\">
@@ -96,6 +96,24 @@ struct SVGPathBuilder {
                     maxY = max(maxY, point.y)
                 }
             }
+            for point in overlay.samplePoints {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
+            for ray in overlay.tangentRays + overlay.angleRays {
+                minX = min(minX, ray.0.x, ray.1.x)
+                maxX = max(maxX, ray.0.x, ray.1.x)
+                minY = min(minY, ray.0.y, ray.1.y)
+                maxY = max(maxY, ray.0.y, ray.1.y)
+            }
+            for point in overlay.envelopeLeft + overlay.envelopeRight + overlay.envelopeOutline {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
         }
 
         let width = max(0.0, maxX - minX)
@@ -110,19 +128,36 @@ struct SVGPathBuilder {
         return String(format: "%0.*f", precision, rounded)
     }
 
-    private func debugGroup(_ overlay: SVGDebugOverlay) -> String {
+    private func debugGroup(_ overlay: SVGDebugOverlay, polygons: PolygonSet) -> String {
         let skeletonPath = polylinePath(overlay.skeleton)
         let stampPaths = overlay.stamps.map { ringPath($0) }.filter { !$0.isEmpty }
         let bridgePaths = overlay.bridges.map { ringPath($0) }.filter { !$0.isEmpty }
+        let tangentPath = rayPath(overlay.tangentRays)
+        let anglePath = rayPath(overlay.angleRays)
+        let leftRail = polylinePath(overlay.envelopeLeft)
+        let rightRail = polylinePath(overlay.envelopeRight)
+        let outlineRail = overlay.envelopeOutline.isEmpty ? "" : ringPath(overlay.envelopeOutline)
+        let points = overlay.samplePoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(0.6))\" fill=\"#222222\" fill-opacity=\"0.5\"/>" }.joined(separator: "\n    ")
 
         let stampElements = stampPaths.map { "<path fill=\"none\" stroke=\"#0066ff\" stroke-opacity=\"0.3\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
         let bridgeElements = bridgePaths.map { "<path fill=\"none\" stroke=\"#00aa66\" stroke-opacity=\"0.25\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
+        let unionOutline = overlay.showUnionOutline ? polygons.map { outlinePath(for: $0) }.joined(separator: "\n    ") : ""
+        let envelopeElements = [
+            leftRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(leftRail)\"/>",
+            rightRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(rightRail)\"/>",
+            outlineRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.35\" stroke-width=\"0.6\" d=\"\(outlineRail)\"/>"
+        ].compactMap { $0 }.joined(separator: "\n    ")
 
         return """
         <g id=\"debug\">
           <path fill=\"none\" stroke=\"#ff3366\" stroke-opacity=\"0.6\" stroke-width=\"0.5\" d=\"\(skeletonPath)\"/>
+          <path fill=\"none\" stroke=\"#ff9900\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(tangentPath)\"/>
+          <path fill=\"none\" stroke=\"#222222\" stroke-opacity=\"0.7\" stroke-width=\"0.6\" d=\"\(anglePath)\"/>
+          \(points)
+          \(envelopeElements)
           \(stampElements)
           \(bridgeElements)
+          \(unionOutline)
         </g>
         """
     }
@@ -135,10 +170,33 @@ struct SVGPathBuilder {
         }
         return parts.joined(separator: " ")
     }
+
+    private func rayPath(_ rays: [(Point, Point)]) -> String {
+        guard !rays.isEmpty else { return "" }
+        var parts: [String] = []
+        for ray in rays {
+            parts.append("M \(format(ray.0.x)) \(format(ray.0.y)) L \(format(ray.1.x)) \(format(ray.1.y))")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func outlinePath(for polygon: Polygon) -> String {
+        let outer = ringPath(polygon.outer)
+        let holes = polygon.holes.map { ringPath($0) }.joined(separator: " ")
+        let combined = holes.isEmpty ? outer : "\(outer) \(holes)"
+        return "<path fill=\"none\" stroke=\"#111111\" stroke-opacity=\"0.6\" stroke-width=\"0.7\" d=\"\(combined)\"/>"
+    }
 }
 
 struct SVGDebugOverlay {
     var skeleton: [Point]
     var stamps: [Ring]
     var bridges: [Ring]
+    var samplePoints: [Point]
+    var tangentRays: [(Point, Point)]
+    var angleRays: [(Point, Point)]
+    var envelopeLeft: [Point]
+    var envelopeRight: [Point]
+    var envelopeOutline: Ring
+    var showUnionOutline: Bool
 }

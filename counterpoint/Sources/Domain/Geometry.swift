@@ -69,6 +69,16 @@ public enum AngleMath {
     public static func angularDifference(_ a: Double, _ b: Double) -> Double {
         wrapPi(a - b)
     }
+
+    public static func directionVector(unitTangent: Point, angleDegrees: Double, mode: AngleMode) -> Point {
+        switch mode {
+        case .absolute:
+            return GeometryMath.unitVectorFromAngleDegrees(angleDegrees)
+        case .tangentRelative:
+            let radians = angleDegrees * .pi / 180.0
+            return GeometryMath.rotate(point: unitTangent, by: radians)
+        }
+    }
 }
 
 public enum GeometryMath {
@@ -76,5 +86,20 @@ public enum GeometryMath {
         let c = cos(angle)
         let s = sin(angle)
         return Point(x: point.x * c - point.y * s, y: point.x * s + point.y * c)
+    }
+
+    public static func unitVectorFromAngleDegrees(_ degrees: Double) -> Point {
+        let radians = degrees * .pi / 180.0
+        return Point(x: cos(radians), y: sin(radians))
+    }
+}
+
+public enum ScalarMath {
+    public static func clamp01(_ value: Double) -> Double {
+        min(max(value, 0.0), 1.0)
+    }
+
+    public static func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double {
+        a + (b - a) * t
     }
 }

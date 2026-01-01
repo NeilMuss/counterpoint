@@ -13,7 +13,8 @@ final class GoldenSVGTests: XCTestCase {
             "s-curve",
             "l-shape",
             "alpha-terminal",
-            "teardrop-demo"
+            "teardrop-demo",
+            "global-angle-scurve"
         ]
 
         for name in cases {
@@ -21,7 +22,10 @@ final class GoldenSVGTests: XCTestCase {
             let expectedURL = try fixtureURL(pathComponents: ["Fixtures", "expected", "\(name).svg"])
 
             let specData = try Data(contentsOf: specURL)
-            let spec = try JSONDecoder().decode(StrokeSpec.self, from: specData)
+            var spec = try JSONDecoder().decode(StrokeSpec.self, from: specData)
+            if spec.samplingPolicy == nil {
+                spec.samplingPolicy = .preview
+            }
             try StrokeSpecValidator().validate(spec)
 
             let useCase = GenerateStrokeOutlineUseCase(

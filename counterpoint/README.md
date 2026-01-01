@@ -123,6 +123,12 @@ Teardrop demo (ellipse counterpoint + alpha bias):
 swift run counterpoint-cli --example teardrop-demo --svg teardrop-demo.svg
 ```
 
+Global angle S-curve demo (angle interpolated over total arc length):
+
+```
+swift run counterpoint-cli --example global-angle-scurve --svg global-angle-scurve.svg --debug-samples --show-envelope
+```
+
 SVG output:
 
 ```
@@ -152,10 +158,28 @@ swift run counterpoint-cli spec.json --quality preview
 swift run counterpoint-cli spec.json --quality final --envelope-tol 0.2 --flatten-tol 0.5 --max-samples 320
 ```
 
+Angle mode override (absolute vs tangent-relative):
+
+```
+swift run counterpoint-cli --example global-angle-scurve --angle-mode relative --svg global-angle-relative.svg --debug-samples --show-envelope
+```
+
 Debug sampling overlay:
 
 ```
 swift run counterpoint-cli --example teardrop-demo --svg teardrop-demo.svg --debug-samples
+```
+
+Envelope rails in debug overlay:
+
+```
+swift run counterpoint-cli --example global-angle-scurve --svg global-angle-scurve.svg --debug-samples --show-envelope --no-rays
+```
+
+Counterpoint size override for the demo:
+
+```
+swift run counterpoint-cli --example global-angle-scurve --svg global-angle-scurve.svg --debug-samples --show-envelope --cp-size 10
 ```
 
 ## Bridge Envelopes

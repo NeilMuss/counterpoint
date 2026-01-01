@@ -48,6 +48,9 @@ struct CLI {
         } else if spec.samplingPolicy == nil {
             spec.samplingPolicy = .preview
         }
+        if let override = options.angleModeOverride {
+            spec.angleMode = override
+        }
         if options.envelopeTolerance != nil || options.flattenTolerance != nil || options.maxSamples != nil {
             let base = spec.samplingPolicy ?? SamplingPolicy.fromSamplingSpec(spec.sampling)
             let overridden = SamplingPolicy(
@@ -65,6 +68,18 @@ struct CLI {
                 spec.counterpointShape = .ellipse(segments: segments)
             }
         }
+        if options.exampleName == "global-angle-scurve" {
+            if case .ellipse = spec.counterpointShape {
+                let segments = (options.quality == "final") ? 64 : 24
+                spec.counterpointShape = .ellipse(segments: segments)
+            }
+        }
+        if options.exampleName == "global-angle-scurve", let cpSize = options.counterpointSize {
+            let width = max(0.01, cpSize)
+            let height = max(0.01, cpSize * 1.5)
+            spec.width = ParamTrack.constant(width)
+            spec.height = ParamTrack.constant(height)
+        }
         try StrokeSpecValidator().validate(spec)
 
         let useCase = GenerateStrokeOutlineUseCase(
@@ -76,7 +91,7 @@ struct CLI {
 
         if let svgPath = options.svgOutputPath {
             let builder = SVGPathBuilder()
-            let debugOverlay = options.debugSamples ? makeDebugOverlay(spec: spec) : nil
+            let debugOverlay = options.debugSamples ? makeDebugOverlay(spec: spec, options: options) : nil
             let svg = builder.svgDocument(for: outline, size: options.svgSize, padding: options.padding, debugOverlay: debugOverlay)
             do {
                 try svg.write(to: URL(fileURLWithPath: svgPath), atomically: true, encoding: .utf8)
@@ -103,6 +118,8 @@ struct CLI {
     private func exampleSpecData(named name: String?) -> Data {
         let normalized = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         switch normalized?.lowercased() {
+        case "global-angle-scurve", "global-angle":
+            return Data(globalAngleExample.utf8)
         case "teardrop-demo", "teardrop":
             return Data(teardropDemoExample.utf8)
         case "alpha-terminal", "alpha":
@@ -270,6 +287,47 @@ struct CLI {
         }
         """
     }
+
+    private var globalAngleExample: String {
+        """
+        {
+          "path": {
+            "segments": [
+              {
+                "p0": {"x": 0, "y": 0},
+                "p1": {"x": 40, "y": 120},
+                "p2": {"x": 60, "y": 120},
+                "p3": {"x": 100, "y": 0}
+              },
+              {
+                "p0": {"x": 100, "y": 0},
+                "p1": {"x": 140, "y": -120},
+                "p2": {"x": 160, "y": -120},
+                "p3": {"x": 200, "y": 0}
+              },
+              {
+                "p0": {"x": 200, "y": 0},
+                "p1": {"x": 240, "y": 120},
+                "p2": {"x": 260, "y": 120},
+                "p3": {"x": 300, "y": 0}
+              }
+            ]
+          },
+          "width": {"keyframes": [{"t": 0, "value": 12.0}, {"t": 1, "value": 12.0}]},
+          "height": {"keyframes": [{"t": 0, "value": 18.0}, {"t": 1, "value": 18.0}]},
+          "theta": {"keyframes": [{"t": 0, "value": 0.1745329252}, {"t": 1, "value": 1.308996939}]},
+          "angleMode": "absolute",
+          "counterpointShape": {"type": "ellipse", "segments": 24},
+          "sampling": {
+            "baseSpacing": 3.0,
+            "flatnessTolerance": 1.0,
+            "rotationThresholdDegrees": 8.0,
+            "minimumSpacing": 0.0001,
+            "maxSamples": 140
+          }
+        }
+        """
+    }
 }
 
 private func loadExampleFixture(named name: String?) throws -> Data? {
@@ -285,7 +343,7 @@ private func loadExampleFixture(named name: String?) throws -> Data? {
     return nil
 }
 
-private struct CLIOptions {
+struct CLIOptions {
     var inputPath: String?
     var exampleName: String?
     var svgOutputPath: String?
@@ -295,13 +353,18 @@ private struct CLIOptions {
     var useBridges: Bool
     var debugSamples: Bool
     var quality: String?
+    var showEnvelope: Bool?
+    var showEnvelopeUnion: Bool
+    var showRays: Bool?
+    var counterpointSize: Double?
+    var angleModeOverride: AngleMode?
     var envelopeTolerance: Double?
     var flattenTolerance: Double?
     var maxSamples: Int?
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
-    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, quality: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil)
+    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil)
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -336,6 +399,26 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.useBridges = false
         case "--debug-samples":
             options.debugSamples = true
+        case "--debug-overlay":
+            options.debugSamples = true
+        case "--show-envelope":
+            options.showEnvelope = true
+        case "--show-rays":
+            options.showRays = true
+        case "--no-rays":
+            options.showRays = false
+        case "--show-envelope-union":
+            options.showEnvelopeUnion = true
+        case "--cp-size":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--cp-size requires a number")
+            }
+            options.counterpointSize = value
+            index += 1
+        case "--angle-mode":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--angle-mode requires absolute|relative") }
+            options.angleModeOverride = try parseAngleMode(args[index + 1])
+            index += 1
         case "--quality":
             guard index + 1 < args.count else { throw CLIError.invalidArguments("--quality requires preview|final") }
             options.quality = args[index + 1].lowercased()
@@ -369,6 +452,18 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
     return options
 }
 
+private func parseAngleMode(_ text: String) throws -> AngleMode {
+    let normalized = text.lowercased()
+    switch normalized {
+    case "absolute", "abs":
+        return .absolute
+    case "relative", "tangent", "relative-to-tangent":
+        return .tangentRelative
+    default:
+        throw CLIError.invalidArguments("--angle-mode must be absolute|relative")
+    }
+}
+
 private func parseSize(_ text: String) throws -> CGSize {
     let parts = text.split(separator: "x", omittingEmptySubsequences: false)
     guard parts.count == 2, let width = Double(parts[0]), let height = Double(parts[1]) else {
@@ -391,7 +486,7 @@ private enum CLIError: LocalizedError {
     }
 }
 
-private func makeDebugOverlay(spec: StrokeSpec) -> SVGDebugOverlay {
+func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay {
     let policy = spec.samplingPolicy ?? SamplingPolicy.fromSamplingSpec(spec.sampling)
     let polyline = DefaultPathSampler().makePolyline(path: spec.path, tolerance: policy.flattenTolerance)
     let samples = GenerateStrokeOutlineUseCase(
@@ -413,11 +508,104 @@ private func makeDebugOverlay(spec: StrokeSpec) -> SVGDebugOverlay {
         }
     }
 
+    var samplePoints = samples.map { $0.point }
+    var tangentRays: [(Point, Point)] = []
+    var angleRays: [(Point, Point)] = []
+    var envelopeLeft: [Point] = []
+    var envelopeRight: [Point] = []
+    var envelopeOutline: Ring = []
+    let showEnvelope = options.showEnvelope ?? options.debugSamples
+    let showUnionOutline = options.showEnvelopeUnion
+    let showRays = options.showRays ?? options.debugSamples
+
+    if options.exampleName == "global-angle-scurve" {
+        let samplesPerSegment = (options.quality == "final") ? 200 : 60
+        let domain = PathDomain(path: spec.path, samplesPerSegment: samplesPerSegment)
+        let angleField = ParamField.linearDegrees(startDeg: 10.0, endDeg: 75.0)
+        let bounds = domain.samples.reduce(CGRect.null) { rect, sample in
+            rect.union(CGRect(x: sample.point.x, y: sample.point.y, width: 0, height: 0))
+        }
+        let diag = hypot(bounds.width, bounds.height)
+        let rayLength = max(8.0, diag * 0.05)
+        samplePoints = domain.samples.map { $0.point }
+        if showRays {
+            tangentRays = domain.samples.map { sample in
+                let end = sample.point + sample.unitTangent * rayLength
+                return (sample.point, end)
+            }
+            angleRays = domain.samples.map { sample in
+                let angle = angleField.evaluate(sample.s)
+                let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angle, mode: spec.angleMode)
+                let end = sample.point + dir * rayLength
+                return (sample.point, end)
+            }
+        }
+
+        if showEnvelope {
+            let evaluator = DefaultParamEvaluator()
+            for sample in domain.samples {
+                let angle = angleField.evaluate(sample.s)
+                let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angle, mode: spec.angleMode)
+                let dirUnit = dir.normalized() ?? Point(x: 1, y: 0)
+                let normal = dirUnit.leftNormal()
+
+                let width = evaluator.evaluate(spec.width, at: sample.s)
+                let height = evaluator.evaluate(spec.height, at: sample.s)
+                let halfWidth = width * 0.5
+                let halfHeight = height * 0.5
+
+                let leftOffset: Point
+                let rightOffset: Point
+                switch spec.counterpointShape {
+                case .ellipse:
+                    leftOffset = orientedEllipseSupportPoint(direction: normal, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+                    rightOffset = orientedEllipseSupportPoint(direction: normal * -1.0, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+                case .rectangle:
+                    let radius = max(halfWidth, halfHeight)
+                    leftOffset = normal * radius
+                    rightOffset = normal * -radius
+                }
+
+                envelopeLeft.append(sample.point + leftOffset)
+                envelopeRight.append(sample.point + rightOffset)
+            }
+
+            if !envelopeLeft.isEmpty && envelopeRight.count == envelopeLeft.count {
+                envelopeOutline = envelopeLeft + envelopeRight.reversed()
+                envelopeOutline = closeRingIfNeeded(envelopeOutline)
+            }
+        }
+    }
+
     return SVGDebugOverlay(
         skeleton: polyline.points,
         stamps: stampRings,
-        bridges: bridgeRings
+        bridges: bridgeRings,
+        samplePoints: samplePoints,
+        tangentRays: tangentRays,
+        angleRays: angleRays,
+        envelopeLeft: envelopeLeft,
+        envelopeRight: envelopeRight,
+        envelopeOutline: envelopeOutline,
+        showUnionOutline: showUnionOutline
     )
+}
+
+private func ellipseSupportPoint(direction: Point, a: Double, b: Double) -> Point {
+    let dx = direction.x
+    let dy = direction.y
+    let denom = sqrt((a * dx) * (a * dx) + (b * dy) * (b * dy))
+    guard denom > 1.0e-12 else { return Point(x: 0, y: 0) }
+    return Point(x: (a * a * dx) / denom, y: (b * b * dy) / denom)
+}
+
+private func orientedEllipseSupportPoint(direction: Point, axis: Point, normal: Point, a: Double, b: Double) -> Point {
+    let dx = direction.dot(axis)
+    let dy = direction.dot(normal)
+    let denom = sqrt((a * dx) * (a * dx) + (b * dy) * (b * dy))
+    guard denom > 1.0e-12 else { return Point(x: 0, y: 0) }
+    let local = Point(x: (a * a * dx) / denom, y: (b * b * dy) / denom)
+    return axis * local.x + normal * local.y
 }
 
 do {
@@ -426,6 +614,6 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
     exit(1)
 }
