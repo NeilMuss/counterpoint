@@ -5,6 +5,62 @@ public enum AngleMode: String, Codable {
     case tangentRelative
 }
 
+public enum CapStyle: String, Codable {
+    case butt
+    case square
+    case round
+}
+
+public enum JoinStyle: Codable, Equatable {
+    case bevel
+    case miter(miterLimit: Double)
+    case round
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case miterLimit
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            let type = try container.decode(String.self, forKey: .type)
+            switch type {
+            case "miter":
+                let limit = try container.decodeIfPresent(Double.self, forKey: .miterLimit) ?? 4.0
+                self = .miter(miterLimit: limit)
+            case "round":
+                self = .round
+            default:
+                self = .bevel
+            }
+            return
+        }
+        let single = try decoder.singleValueContainer()
+        let type = (try? single.decode(String.self)) ?? "bevel"
+        switch type {
+        case "miter":
+            self = .miter(miterLimit: 4.0)
+        case "round":
+            self = .round
+        default:
+            self = .bevel
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .bevel:
+            try container.encode("bevel", forKey: .type)
+        case .round:
+            try container.encode("round", forKey: .type)
+        case .miter(let limit):
+            try container.encode("miter", forKey: .type)
+            try container.encode(limit, forKey: .miterLimit)
+        }
+    }
+}
+
 public struct SamplingSpec: Codable, Equatable {
     public var baseSpacing: Double
     public var flatnessTolerance: Double
@@ -29,11 +85,23 @@ public struct SamplingSpec: Codable, Equatable {
 }
 
 public struct StrokeSpec: Codable, Equatable {
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case width
+        case height
+        case theta
+        case angleMode
+        case capStyle
+        case joinStyle
+        case sampling
+    }
     public var path: BezierPath
     public var width: ParamTrack
     public var height: ParamTrack
     public var theta: ParamTrack
     public var angleMode: AngleMode
+    public var capStyle: CapStyle
+    public var joinStyle: JoinStyle
     public var sampling: SamplingSpec
 
     public init(
@@ -42,6 +110,8 @@ public struct StrokeSpec: Codable, Equatable {
         height: ParamTrack,
         theta: ParamTrack,
         angleMode: AngleMode,
+        capStyle: CapStyle = .butt,
+        joinStyle: JoinStyle = .bevel,
         sampling: SamplingSpec
     ) {
         self.path = path
@@ -49,7 +119,33 @@ public struct StrokeSpec: Codable, Equatable {
         self.height = height
         self.theta = theta
         self.angleMode = angleMode
+        self.capStyle = capStyle
+        self.joinStyle = joinStyle
         self.sampling = sampling
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(BezierPath.self, forKey: .path)
+        width = try container.decode(ParamTrack.self, forKey: .width)
+        height = try container.decode(ParamTrack.self, forKey: .height)
+        theta = try container.decode(ParamTrack.self, forKey: .theta)
+        angleMode = try container.decode(AngleMode.self, forKey: .angleMode)
+        capStyle = try container.decodeIfPresent(CapStyle.self, forKey: .capStyle) ?? .butt
+        joinStyle = try container.decodeIfPresent(JoinStyle.self, forKey: .joinStyle) ?? .bevel
+        sampling = try container.decode(SamplingSpec.self, forKey: .sampling)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
+        try container.encode(width, forKey: .width)
+        try container.encode(height, forKey: .height)
+        try container.encode(theta, forKey: .theta)
+        try container.encode(angleMode, forKey: .angleMode)
+        try container.encode(capStyle, forKey: .capStyle)
+        try container.encode(joinStyle, forKey: .joinStyle)
+        try container.encode(sampling, forKey: .sampling)
     }
 }
 

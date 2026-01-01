@@ -36,6 +36,12 @@ public struct StrokeSpecValidator: SpecValidating {
         validate(track: spec.height, name: "height", mustBePositive: true, errors: &errors)
         validate(track: spec.theta, name: "theta", mustBePositive: false, errors: &errors)
 
+        if case .miter(let limit) = spec.joinStyle {
+            if !limit.isFinite || limit <= 0 {
+                errors.append("JoinStyle miterLimit must be a positive finite value.")
+            }
+        }
+
         if spec.sampling.baseSpacing <= 0 || !spec.sampling.baseSpacing.isFinite {
             errors.append("Sampling baseSpacing must be a positive finite value.")
         }

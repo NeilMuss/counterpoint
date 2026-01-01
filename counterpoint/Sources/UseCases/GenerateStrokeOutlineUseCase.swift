@@ -15,12 +15,14 @@ public struct GenerateStrokeOutlineUseCase {
     public func generateOutline(for spec: StrokeSpec, includeBridges: Bool = true) throws -> PolygonSet {
         let samples = generateSamples(for: spec)
         let rings = samples.map { rectangleRing(for: $0) }
+        let capRings = capRings(for: samples, capStyle: spec.capStyle)
+        let joinRings = joinRings(for: samples, joinStyle: spec.joinStyle)
         let allRings: [Ring]
         if includeBridges {
             let bridges = try bridgeRings(between: rings)
-            allRings = rings + bridges
+            allRings = rings + bridges + capRings + joinRings
         } else {
-            allRings = rings
+            allRings = rings + capRings + joinRings
         }
         return try unioner.union(subjectRings: allRings)
     }
@@ -123,5 +125,49 @@ public struct GenerateStrokeOutlineUseCase {
             bridges.append(contentsOf: segmentBridges)
         }
         return bridges
+    }
+
+    private func capRings(for samples: [Sample], capStyle: CapStyle) -> [Ring] {
+        guard samples.count >= 2 else { return [] }
+        guard capStyle != .butt else { return [] }
+        let builder = JoinCapBuilder()
+
+        let start = samples[0]
+        let next = samples[1]
+        let end = samples[samples.count - 1]
+        let prev = samples[samples.count - 2]
+
+        let dirStart = (start.point - next.point).normalized() ?? Point(x: 0, y: 0)
+        let dirEnd = (end.point - prev.point).normalized() ?? Point(x: 0, y: 0)
+
+        let startRadius = max(start.width, start.height) * 0.5
+        let endRadius = max(end.width, end.height) * 0.5
+
+        var rings: [Ring] = []
+        rings.append(contentsOf: builder.capRings(point: start.point, direction: dirStart, radius: startRadius, style: capStyle))
+        rings.append(contentsOf: builder.capRings(point: end.point, direction: dirEnd, radius: endRadius, style: capStyle))
+        return rings
+    }
+
+    private func joinRings(for samples: [Sample], joinStyle: JoinStyle) -> [Ring] {
+        guard samples.count >= 3 else { return [] }
+        guard case .bevel = joinStyle else {
+            let builder = JoinCapBuilder()
+            var rings: [Ring] = []
+            for i in 1..<(samples.count - 1) {
+                let prev = samples[i - 1]
+                let current = samples[i]
+                let next = samples[i + 1]
+                guard let dirIn = (current.point - prev.point).normalized(),
+                      let dirOut = (next.point - current.point).normalized() else {
+                    continue
+                }
+                let radius = max(current.width, current.height) * 0.5
+                let joinRings = builder.joinRings(point: current.point, dirIn: dirIn, dirOut: dirOut, radius: radius, style: joinStyle)
+                rings.append(contentsOf: joinRings)
+            }
+            return rings
+        }
+        return []
     }
 }

@@ -22,6 +22,24 @@ public struct Point: Codable, Equatable {
     }
 }
 
+public extension Point {
+    var length: Double { hypot(x, y) }
+
+    func normalized(epsilon: Double = 1.0e-9) -> Point? {
+        let len = length
+        if len <= epsilon { return nil }
+        return Point(x: x / len, y: y / len)
+    }
+
+    func dot(_ other: Point) -> Double {
+        x * other.x + y * other.y
+    }
+
+    func leftNormal() -> Point {
+        Point(x: -y, y: x)
+    }
+}
+
 public typealias Ring = [Point]
 
 public struct Polygon: Codable, Equatable {

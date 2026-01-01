@@ -41,6 +41,8 @@ Example encoding for a simple stroke spec and path:
   "height": {"keyframes": [{"t": 0, "value": 20}, {"t": 1, "value": 20}]},
   "theta": {"keyframes": [{"t": 0, "value": 0}, {"t": 1, "value": 0}]},
   "angleMode": "absolute",
+  "capStyle": "round",
+  "joinStyle": {"type": "miter", "miterLimit": 4.0},
   "sampling": {
     "baseSpacing": 2.0,
     "flatnessTolerance": 0.5,
@@ -115,6 +117,12 @@ Bridge envelopes (on by default):
 
 ```
 swift run counterpoint-cli --example s-curve --svg out.svg --no-bridges
+```
+
+Join/cap variations (via JSON):
+
+```
+swift run counterpoint-cli spec.json --svg out.svg
 ```
 
 ## Bridge Envelopes
