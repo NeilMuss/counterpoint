@@ -1,0 +1,47 @@
+{
+  "path": {
+    "segments": [
+      {
+        "p0": {"x": 0, "y": 0},
+        "p1": {"x": 16, "y": 18},
+        "p2": {"x": 44, "y": -12},
+        "p3": {"x": 60, "y": 0}
+      }
+    ]
+  },
+  "width": {
+    "keyframes": [
+      {"t": 0.0, "value": 18},
+      {"t": 0.88, "value": 18, "interpolationToNext": {"alpha": 0.8}},
+      {"t": 0.93, "value": 6, "interpolationToNext": {"alpha": -0.6}},
+      {"t": 0.965, "value": 30, "interpolationToNext": {"alpha": 0.98}},
+      {"t": 1.0, "value": 0.2}
+    ]
+  },
+  "height": {
+    "keyframes": [
+      {"t": 0.0, "value": 28},
+      {"t": 0.94, "value": 28, "interpolationToNext": {"alpha": 0.85}},
+      {"t": 1.0, "value": 4.0}
+    ]
+  },
+  "theta": {"keyframes": [{"t": 0, "value": 0}, {"t": 1, "value": 0}]},
+  "angleMode": "tangentRelative",
+  "capStyle": "round",
+  "joinStyle": "bevel",
+  "counterpointShape": {"type": "ellipse", "segments": 24},
+  "sampling": {
+    "baseSpacing": 2.5,
+    "flatnessTolerance": 1.5,
+    "rotationThresholdDegrees": 8.0,
+    "minimumSpacing": 0.0001,
+    "maxSamples": 120
+  },
+  "samplingPolicy": {
+    "flattenTolerance": 1.5,
+    "envelopeTolerance": 2.0,
+    "maxSamples": 80,
+    "maxRecursionDepth": 7,
+    "minParamStep": 0.01
+  }
+}

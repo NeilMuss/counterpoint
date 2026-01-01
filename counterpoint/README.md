@@ -8,19 +8,19 @@ The stroke is a pen tip (here, a rectangle) swept along a skeleton path. Width, 
 ## Architecture Boundaries
 - `Sources/Domain`: Pure entities + protocols. No UI, no side effects, JSON-ready `Codable` structs.
 - `Sources/UseCases`: Orchestrates sampling, parameter evaluation, and stroke outlining.
-- `Sources/Adapters`: Pluggable geometry backend (polygon union). Current adapter is pass-through.
+- `Sources/Adapters`: Pluggable geometry backend (polygon union). Current adapter wraps `iOverlay`, with a pass-through adapter used only in tests.
 
 ## v0 Behavior
 - Skeleton: Bezier paths with cubic segments.
-- Sampling: flatten cubic to polyline (flatness tolerance), resample by arc-length-ish spacing, refine when rotation changes too fast.
-- Stroke: stamp rectangles at samples and union into output polygon rings.
+- Sampling: flatten cubic to polyline (flatness tolerance), then adaptively refine using envelope chunkiness until tolerance or limits are met.
+- Stroke: stamp counterpoint polygons (rectangle or ellipse) at samples, build bridge envelopes, add caps/joins, then union into output polygon rings.
 - Output: array of closed rings (polygons) with deterministic ordering.
 
 ## Sampling Details
 - Flatten each cubic until control points are within a flatness tolerance of the chord.
-- Resample polyline by length with `spacing <= min(width, height) / 4` (capped by `SamplingSpec.baseSpacing`).
-- Refine when `|deltaRotation| > 5°` between adjacent samples (configurable).
-- If tangent magnitude is near zero, reuse the prior tangent direction.
+- Adaptive refinement: test the midpoint stamp against the envelope formed by the end stamps + bridge pieces.
+- Refine when the midpoint stamp falls outside the envelope by more than `SamplingPolicy.envelopeTolerance`.
+- Always split deterministically at the midpoint, left then right.
 
 ## JSON Example
 Example encoding for a simple stroke spec and path:
@@ -47,7 +47,15 @@ Example encoding for a simple stroke spec and path:
     "baseSpacing": 2.0,
     "flatnessTolerance": 0.5,
     "rotationThresholdDegrees": 5.0,
-    "minimumSpacing": 0.0001
+    "minimumSpacing": 0.0001,
+    "maxSamples": 256
+  },
+  "samplingPolicy": {
+    "flattenTolerance": 1.5,
+    "envelopeTolerance": 1.0,
+    "maxSamples": 80,
+    "maxRecursionDepth": 7,
+    "minParamStep": 0.01
   }
 }
 ```
@@ -67,14 +75,14 @@ Tests are fast, deterministic, and validate:
 - Angle unwrap across the +/-pi boundary
 
 ## Extending Later
-- Alpha biasing and other counterpoint shapes (circle, union-of-circles brush)
+- Additional counterpoint shapes (circle, union-of-circles brush)
 - Whitespace as first-class objects
 - Strict DAG evaluation for derived values
 - Scriptable hooks via JSON-driven evaluation
-- Swap in a robust polygon union adapter in `Sources/Adapters`
+- Swap in alternative polygon union adapters in `Sources/Adapters`
 
 ## Notes on Geometry
-The current `PassthroughPolygonUnioner` does not perform true polygon boolean union. It returns the stamped rectangles as independent rings for clarity and determinism in v0 tests. Swap this adapter for a real union implementation when needed.
+The `IOverlayPolygonUnionAdapter` performs polygon boolean union through `iOverlay`. The `PassthroughPolygonUnioner` is retained for fast, deterministic unit tests where union results are not required.
 
 ## CLI Example
 The package includes a small CLI that reads a `StrokeSpec` JSON and prints the polygon outline JSON.
@@ -103,6 +111,18 @@ S-curve example:
 swift run counterpoint-cli --example s-curve
 ```
 
+Alpha terminal example (teardrop-like terminal via keyframe alpha bias):
+
+```
+swift run counterpoint-cli --example alpha-terminal --svg alpha-terminal.svg
+```
+
+Teardrop demo (ellipse counterpoint + alpha bias):
+
+```
+swift run counterpoint-cli --example teardrop-demo --svg teardrop-demo.svg
+```
+
 SVG output:
 
 ```
@@ -123,6 +143,19 @@ Join/cap variations (via JSON):
 
 ```
 swift run counterpoint-cli spec.json --svg out.svg
+```
+
+Quality presets and overrides:
+
+```
+swift run counterpoint-cli spec.json --quality preview
+swift run counterpoint-cli spec.json --quality final --envelope-tol 0.2 --flatten-tol 0.5 --max-samples 320
+```
+
+Debug sampling overlay:
+
+```
+swift run counterpoint-cli --example teardrop-demo --svg teardrop-demo.svg --debug-samples
 ```
 
 ## Bridge Envelopes

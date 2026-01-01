@@ -14,7 +14,8 @@ public struct GenerateStrokeOutlineUseCase {
 
     public func generateOutline(for spec: StrokeSpec, includeBridges: Bool = true) throws -> PolygonSet {
         let samples = generateSamples(for: spec)
-        let rings = samples.map { rectangleRing(for: $0) }
+        let stamping = CounterpointStamping()
+        let rings = samples.map { stamping.ring(for: $0, shape: spec.counterpointShape) }
         let capRings = capRings(for: samples, capStyle: spec.capStyle)
         let joinRings = joinRings(for: samples, joinStyle: spec.joinStyle)
         let allRings: [Ring]
@@ -28,11 +29,13 @@ public struct GenerateStrokeOutlineUseCase {
     }
 
     public func generateSamples(for spec: StrokeSpec) -> [Sample] {
-        let polyline = sampler.makePolyline(path: spec.path, tolerance: spec.sampling.flatnessTolerance)
-        let spacing = resolvedSpacing(spec: spec)
-        let baseParameters = polyline.sampleParameters(spacing: spacing)
-        let initial = baseParameters.compactMap { makeSample(at: $0, spec: spec, polyline: polyline, fallbackTangent: nil) }
-        return refine(samples: initial, spec: spec, polyline: polyline)
+        let policy = samplingPolicy(for: spec)
+        let polyline = sampler.makePolyline(path: spec.path, tolerance: policy.flattenTolerance)
+        guard let start = makeSample(at: 0.0, spec: spec, polyline: polyline, fallbackTangent: nil),
+              let end = makeSample(at: 1.0, spec: spec, polyline: polyline, fallbackTangent: start.tangentAngle) else {
+            return []
+        }
+        return adaptiveSamples(spec: spec, polyline: polyline, policy: policy, start: start, end: end)
     }
 
     private func makeSample(at t: Double, spec: StrokeSpec, polyline: PathPolyline, fallbackTangent: Double?) -> Sample? {
@@ -59,60 +62,56 @@ public struct GenerateStrokeOutlineUseCase {
         )
     }
 
-    private func refine(samples: [Sample], spec: StrokeSpec, polyline: PathPolyline) -> [Sample] {
-        guard samples.count > 1 else { return samples }
-        var refined = samples
-        let threshold = spec.sampling.rotationThresholdRadians
-        let minSpacing = spec.sampling.minimumSpacing
-        var index = 0
-        var fallbackTangent = refined.first?.tangentAngle ?? 0.0
+    private func adaptiveSamples(spec: StrokeSpec, polyline: PathPolyline, policy: SamplingPolicy, start: Sample, end: Sample) -> [Sample] {
+        var samples: [Sample] = []
+        samples.reserveCapacity(policy.maxSamples)
+        let builder = BridgeBuilder()
 
-        while index < refined.count - 1 {
-            let a = refined[index]
-            let b = refined[index + 1]
-            let delta = abs(AngleMath.angularDifference(b.effectiveRotation, a.effectiveRotation))
-            let span = b.t - a.t
-            if delta > threshold && span > minSpacing {
-                let midT = (a.t + b.t) * 0.5
-                if let midSample = makeSample(at: midT, spec: spec, polyline: polyline, fallbackTangent: fallbackTangent) {
-                    refined.insert(midSample, at: index + 1)
-                    fallbackTangent = midSample.tangentAngle
-                    continue
-                }
+        func recurse(t0: Double, t1: Double, s0: Sample, s1: Sample, depth: Int) {
+            if samples.count >= policy.maxSamples - 1 {
+                samples.append(s0)
+                return
             }
-            fallbackTangent = b.tangentAngle
-            index += 1
+            if depth >= policy.maxRecursionDepth || (t1 - t0) < policy.minParamStep {
+                samples.append(s0)
+                return
+            }
+
+            let midT = (t0 + t1) * 0.5
+            guard let sm = makeSample(at: midT, spec: spec, polyline: polyline, fallbackTangent: s0.tangentAngle) else {
+                samples.append(s0)
+                return
+            }
+
+            let stamping = CounterpointStamping()
+            let ringA = stamping.ring(for: s0, shape: spec.counterpointShape)
+            let ringB = stamping.ring(for: s1, shape: spec.counterpointShape)
+            let ringM = stamping.ring(for: sm, shape: spec.counterpointShape)
+            let bridges = (try? builder.bridgeRings(from: ringA, to: ringB)) ?? []
+
+            let deltaRotation = abs(AngleMath.angularDifference(s1.effectiveRotation, s0.effectiveRotation))
+            if deltaRotation > spec.sampling.rotationThresholdRadians {
+                recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
+                recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
+                return
+            }
+
+            let ok = ringWithinEnvelope(ringM, envelopes: [ringA, ringB] + bridges, tolerance: policy.envelopeTolerance)
+            if ok {
+                samples.append(s0)
+            } else {
+                recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
+                recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
+            }
         }
 
-        return refined
+        recurse(t0: 0.0, t1: 1.0, s0: start, s1: end, depth: 0)
+        samples.append(end)
+        return samples
     }
 
-    private func rectangleRing(for sample: Sample) -> Ring {
-        let halfWidth = sample.width * 0.5
-        let halfHeight = sample.height * 0.5
-
-        let local: [Point] = [
-            Point(x: -halfWidth, y: -halfHeight),
-            Point(x: halfWidth, y: -halfHeight),
-            Point(x: halfWidth, y: halfHeight),
-            Point(x: -halfWidth, y: halfHeight)
-        ]
-
-        let rotated = local.map { GeometryMath.rotate(point: $0, by: sample.effectiveRotation) }
-        let translated = rotated.map { $0 + sample.point }
-        var points = translated
-        if let first = translated.first {
-            points.append(first)
-        }
-        return points
-    }
-
-    private func resolvedSpacing(spec: StrokeSpec) -> Double {
-        let minWidth = spec.width.minValue.map { abs($0) } ?? spec.sampling.baseSpacing
-        let minHeight = spec.height.minValue.map { abs($0) } ?? spec.sampling.baseSpacing
-        let minDimension = min(minWidth, minHeight)
-        let cap = minDimension > 0 ? minDimension / 4.0 : spec.sampling.baseSpacing
-        return max(spec.sampling.minimumSpacing, min(spec.sampling.baseSpacing, cap))
+    private func samplingPolicy(for spec: StrokeSpec) -> SamplingPolicy {
+        spec.samplingPolicy ?? SamplingPolicy.fromSamplingSpec(spec.sampling)
     }
 
     private func bridgeRings(between rings: [Ring]) throws -> [Ring] {
@@ -125,6 +124,22 @@ public struct GenerateStrokeOutlineUseCase {
             bridges.append(contentsOf: segmentBridges)
         }
         return bridges
+    }
+
+    private func ringWithinEnvelope(_ ring: Ring, envelopes: [Ring], tolerance: Double) -> Bool {
+        let closed = closeRingIfNeeded(ring)
+        guard closed.count >= 4 else { return true }
+        for point in closed.dropLast() {
+            var covered = false
+            for envelope in envelopes {
+                if pointInsideOrNearRing(point, ring: envelope, tolerance: tolerance) {
+                    covered = true
+                    break
+                }
+            }
+            if !covered { return false }
+        }
+        return true
     }
 
     private func capRings(for samples: [Sample], capStyle: CapStyle) -> [Ring] {

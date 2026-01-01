@@ -11,7 +11,9 @@ final class GoldenSVGTests: XCTestCase {
             "straight-absolute",
             "straight-tangent-relative",
             "s-curve",
-            "l-shape"
+            "l-shape",
+            "alpha-terminal",
+            "teardrop-demo"
         ]
 
         for name in cases {
@@ -27,7 +29,7 @@ final class GoldenSVGTests: XCTestCase {
                 evaluator: DefaultParamEvaluator(),
                 unioner: IOverlayPolygonUnionAdapter()
             )
-            let outline = try useCase.generateOutline(for: spec)
+            let outline = try useCase.generateOutline(for: spec, includeBridges: true)
             let svg = SVGPathBuilder().svgDocument(for: outline, size: nil, padding: 10.0)
 
             let expected = try String(contentsOf: expectedURL, encoding: .utf8)

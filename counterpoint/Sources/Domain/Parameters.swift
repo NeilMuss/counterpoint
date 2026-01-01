@@ -1,12 +1,22 @@
 import Foundation
 
+public struct Interpolation: Codable, Equatable {
+    public var alpha: Double
+
+    public init(alpha: Double) {
+        self.alpha = alpha
+    }
+}
+
 public struct Keyframe: Codable, Equatable {
     public var t: Double
     public var value: Double
+    public var interpolationToNext: Interpolation?
 
-    public init(t: Double, value: Double) {
+    public init(t: Double, value: Double, interpolationToNext: Interpolation? = nil) {
         self.t = t
         self.value = value
+        self.interpolationToNext = interpolationToNext
     }
 }
 
@@ -58,10 +68,26 @@ public struct DefaultParamEvaluator: ParamEvaluating {
             let b = track.keyframes[index + 1]
             if t >= a.t && t <= b.t {
                 let span = b.t - a.t
-                let alpha = span == 0 ? 0.0 : (t - a.t) / span
+                var alpha = span == 0 ? 0.0 : (t - a.t) / span
+                if let bias = a.interpolationToNext?.alpha {
+                    alpha = biasCurve(alpha, bias: bias)
+                }
                 return interp(a.value, b.value, alpha)
             }
         }
         return last.value
+    }
+
+    private func biasCurve(_ t: Double, bias: Double) -> Double {
+        if abs(bias) < 1.0e-9 { return t }
+        let clamped = min(max(abs(bias), 0.0001), 0.9999)
+        if bias >= 0.0 {
+            return biasCurvePositive(t, bias: clamped)
+        }
+        return 1.0 - biasCurvePositive(1.0 - t, bias: clamped)
+    }
+
+    private func biasCurvePositive(_ t: Double, bias: Double) -> Double {
+        t / ((1.0 / bias - 2.0) * (1.0 - t) + 1.0)
     }
 }

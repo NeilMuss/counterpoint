@@ -61,22 +61,94 @@ public enum JoinStyle: Codable, Equatable {
     }
 }
 
+public enum CounterpointShape: Codable, Equatable {
+    case rectangle
+    case ellipse(segments: Int)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case segments
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            let type = try container.decode(String.self, forKey: .type)
+            switch type {
+            case "ellipse":
+                let segments = try container.decodeIfPresent(Int.self, forKey: .segments) ?? 24
+                self = .ellipse(segments: segments)
+            default:
+                self = .rectangle
+            }
+            return
+        }
+        let single = try decoder.singleValueContainer()
+        let type = (try? single.decode(String.self)) ?? "rectangle"
+        switch type {
+        case "ellipse":
+            self = .ellipse(segments: 24)
+        default:
+            self = .rectangle
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .rectangle:
+            try container.encode("rectangle", forKey: .type)
+        case .ellipse(let segments):
+            try container.encode("ellipse", forKey: .type)
+            try container.encode(segments, forKey: .segments)
+        }
+    }
+}
+
 public struct SamplingSpec: Codable, Equatable {
     public var baseSpacing: Double
     public var flatnessTolerance: Double
     public var rotationThresholdDegrees: Double
     public var minimumSpacing: Double
+    public var maxSamples: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case baseSpacing
+        case flatnessTolerance
+        case rotationThresholdDegrees
+        case minimumSpacing
+        case maxSamples
+    }
 
     public init(
         baseSpacing: Double = 2.0,
         flatnessTolerance: Double = 0.5,
         rotationThresholdDegrees: Double = 5.0,
-        minimumSpacing: Double = 1.0e-4
+        minimumSpacing: Double = 1.0e-4,
+        maxSamples: Int = 256
     ) {
         self.baseSpacing = baseSpacing
         self.flatnessTolerance = flatnessTolerance
         self.rotationThresholdDegrees = rotationThresholdDegrees
         self.minimumSpacing = minimumSpacing
+        self.maxSamples = maxSamples
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseSpacing = try container.decodeIfPresent(Double.self, forKey: .baseSpacing) ?? 2.0
+        flatnessTolerance = try container.decodeIfPresent(Double.self, forKey: .flatnessTolerance) ?? 0.5
+        rotationThresholdDegrees = try container.decodeIfPresent(Double.self, forKey: .rotationThresholdDegrees) ?? 5.0
+        minimumSpacing = try container.decodeIfPresent(Double.self, forKey: .minimumSpacing) ?? 1.0e-4
+        maxSamples = try container.decodeIfPresent(Int.self, forKey: .maxSamples) ?? 256
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(baseSpacing, forKey: .baseSpacing)
+        try container.encode(flatnessTolerance, forKey: .flatnessTolerance)
+        try container.encode(rotationThresholdDegrees, forKey: .rotationThresholdDegrees)
+        try container.encode(minimumSpacing, forKey: .minimumSpacing)
+        try container.encode(maxSamples, forKey: .maxSamples)
     }
 
     public var rotationThresholdRadians: Double {
@@ -93,7 +165,9 @@ public struct StrokeSpec: Codable, Equatable {
         case angleMode
         case capStyle
         case joinStyle
+        case counterpointShape
         case sampling
+        case samplingPolicy
     }
     public var path: BezierPath
     public var width: ParamTrack
@@ -102,7 +176,9 @@ public struct StrokeSpec: Codable, Equatable {
     public var angleMode: AngleMode
     public var capStyle: CapStyle
     public var joinStyle: JoinStyle
+    public var counterpointShape: CounterpointShape
     public var sampling: SamplingSpec
+    public var samplingPolicy: SamplingPolicy?
 
     public init(
         path: BezierPath,
@@ -112,7 +188,9 @@ public struct StrokeSpec: Codable, Equatable {
         angleMode: AngleMode,
         capStyle: CapStyle = .butt,
         joinStyle: JoinStyle = .bevel,
-        sampling: SamplingSpec
+        counterpointShape: CounterpointShape = .rectangle,
+        sampling: SamplingSpec,
+        samplingPolicy: SamplingPolicy? = nil
     ) {
         self.path = path
         self.width = width
@@ -121,7 +199,9 @@ public struct StrokeSpec: Codable, Equatable {
         self.angleMode = angleMode
         self.capStyle = capStyle
         self.joinStyle = joinStyle
+        self.counterpointShape = counterpointShape
         self.sampling = sampling
+        self.samplingPolicy = samplingPolicy
     }
 
     public init(from decoder: Decoder) throws {
@@ -133,7 +213,9 @@ public struct StrokeSpec: Codable, Equatable {
         angleMode = try container.decode(AngleMode.self, forKey: .angleMode)
         capStyle = try container.decodeIfPresent(CapStyle.self, forKey: .capStyle) ?? .butt
         joinStyle = try container.decodeIfPresent(JoinStyle.self, forKey: .joinStyle) ?? .bevel
+        counterpointShape = try container.decodeIfPresent(CounterpointShape.self, forKey: .counterpointShape) ?? .rectangle
         sampling = try container.decode(SamplingSpec.self, forKey: .sampling)
+        samplingPolicy = try container.decodeIfPresent(SamplingPolicy.self, forKey: .samplingPolicy)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -145,7 +227,11 @@ public struct StrokeSpec: Codable, Equatable {
         try container.encode(angleMode, forKey: .angleMode)
         try container.encode(capStyle, forKey: .capStyle)
         try container.encode(joinStyle, forKey: .joinStyle)
+        try container.encode(counterpointShape, forKey: .counterpointShape)
         try container.encode(sampling, forKey: .sampling)
+        if let samplingPolicy {
+            try container.encode(samplingPolicy, forKey: .samplingPolicy)
+        }
     }
 }
 

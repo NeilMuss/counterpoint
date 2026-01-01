@@ -54,6 +54,34 @@ public struct StrokeSpecValidator: SpecValidating {
         if spec.sampling.minimumSpacing <= 0 || !spec.sampling.minimumSpacing.isFinite {
             errors.append("Sampling minimumSpacing must be a positive finite value.")
         }
+        if spec.sampling.maxSamples <= 1 {
+            errors.append("Sampling maxSamples must be greater than 1.")
+        }
+        if let policy = spec.samplingPolicy {
+            if policy.flattenTolerance <= 0 || !policy.flattenTolerance.isFinite {
+                errors.append("SamplingPolicy flattenTolerance must be positive and finite.")
+            }
+            if policy.envelopeTolerance < 0 || !policy.envelopeTolerance.isFinite {
+                errors.append("SamplingPolicy envelopeTolerance must be non-negative and finite.")
+            }
+            if policy.maxSamples <= 1 {
+                errors.append("SamplingPolicy maxSamples must be greater than 1.")
+            }
+            if policy.maxRecursionDepth <= 0 {
+                errors.append("SamplingPolicy maxRecursionDepth must be greater than 0.")
+            }
+            if policy.minParamStep <= 0 || !policy.minParamStep.isFinite {
+                errors.append("SamplingPolicy minParamStep must be positive and finite.")
+            }
+        }
+        switch spec.counterpointShape {
+        case .rectangle:
+            break
+        case .ellipse(let segments):
+            if segments < 8 {
+                errors.append("CounterpointShape ellipse segments must be >= 8.")
+            }
+        }
 
         if !errors.isEmpty {
             throw StrokeSpecValidationError(messages: errors)
@@ -75,6 +103,11 @@ public struct StrokeSpecValidator: SpecValidating {
             }
             if mustBePositive && keyframe.value <= 0.0 {
                 errors.append("ParamTrack '\(name)' keyframe \(index) must be > 0.")
+            }
+            if let interpolation = keyframe.interpolationToNext {
+                if !interpolation.alpha.isFinite || interpolation.alpha < -1.0 || interpolation.alpha > 1.0 {
+                    errors.append("ParamTrack '\(name)' keyframe \(index) interpolation alpha must be in [-1,1].")
+                }
             }
         }
     }

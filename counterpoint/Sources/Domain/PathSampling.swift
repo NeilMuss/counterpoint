@@ -54,13 +54,17 @@ public struct PathPolyline: Equatable {
         return fallbackAngle
     }
 
-    public func sampleParameters(spacing: Double) -> [Double] {
+    public func sampleParameters(spacing: Double, maxSamples: Int) -> [Double] {
         guard totalLength > 0, spacing > 0 else { return [0.0, 1.0] }
+        let cappedMax = max(2, maxSamples)
         var parameters: [Double] = [0.0]
         var current = spacing
         while current < totalLength {
             parameters.append(current / totalLength)
             current += spacing
+            if parameters.count >= cappedMax - 1 {
+                break
+            }
         }
         if parameters.last != 1.0 {
             parameters.append(1.0)
