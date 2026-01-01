@@ -7,6 +7,10 @@ import Adapters
 struct CLI {
     func run() throws {
         let args = Array(CommandLine.arguments.dropFirst())
+        if let first = args.first, first == "scurve" {
+            try runScurve(args: Array(args.dropFirst()))
+            return
+        }
         let options = try parseOptions(args)
         let inputData: Data
 
@@ -113,6 +117,42 @@ struct CLI {
     private func readStdin() -> Data {
         let stdin = FileHandle.standardInput
         return stdin.readDataToEndOfFile()
+    }
+
+    private func runScurve(args: [String]) throws {
+        let config = try parseScurveOptions(args)
+        try validate(config: config)
+
+        let geometry = try buildScurveGeometry(config: config)
+
+        let polygons: PolygonSet
+        if config.view.contains(.envelope) {
+            if config.envelopeMode == .union {
+                polygons = geometry.unionPolygons
+            } else {
+                polygons = geometry.envelopeOutline.isEmpty ? [] : [Polygon(outer: geometry.envelopeOutline)]
+            }
+        } else {
+            polygons = []
+        }
+
+        let overlay = SVGDebugOverlay(
+            skeleton: geometry.centerline,
+            stamps: config.view.contains(.samples) ? geometry.stampRings : [],
+            bridges: [],
+            samplePoints: geometry.samplePoints,
+            tangentRays: geometry.tangentRays,
+            angleRays: geometry.angleRays,
+            envelopeLeft: config.view.contains(.rails) ? geometry.envelopeLeft : [],
+            envelopeRight: config.view.contains(.rails) ? geometry.envelopeRight : [],
+            envelopeOutline: config.view.contains(.envelope) ? geometry.envelopeOutline : [],
+            showUnionOutline: config.view.contains(.union),
+            unionPolygons: geometry.unionPolygons
+        )
+
+        let builder = SVGPathBuilder()
+        let svg = builder.svgDocument(for: polygons, size: config.svgSize, padding: config.padding, debugOverlay: overlay)
+        try svg.write(to: URL(fileURLWithPath: config.svgOutputPath), atomically: true, encoding: .utf8)
     }
 
     private func exampleSpecData(named name: String?) -> Data {
@@ -363,6 +403,56 @@ struct CLIOptions {
     var maxSamples: Int?
 }
 
+struct ScurvePlaygroundConfig: Equatable {
+    var svgOutputPath: String
+    var svgSize: CGSize?
+    var padding: Double
+    var angleStart: Double
+    var angleEnd: Double
+    var sizeStart: Double
+    var sizeEnd: Double
+    var aspectStart: Double
+    var aspectEnd: Double
+    var widthStart: Double?
+    var widthEnd: Double?
+    var heightStart: Double?
+    var heightEnd: Double?
+    var alphaStart: Double
+    var alphaEnd: Double
+    var angleMode: AngleMode
+    var samplesPerSegment: Int
+    var ellipseSegments: Int
+    var envelopeSegments: Int
+    var view: Set<ScurveView>
+    var envelopeMode: EnvelopeMode
+}
+
+enum ScurveView: String {
+    case envelope
+    case samples
+    case rays
+    case rails
+    case union
+    case centerline
+}
+
+enum EnvelopeMode: String {
+    case rails
+    case union
+}
+
+struct ScurveGeometry {
+    var envelopeLeft: [Point]
+    var envelopeRight: [Point]
+    var envelopeOutline: Ring
+    var unionPolygons: PolygonSet
+    var stampRings: [Ring]
+    var samplePoints: [Point]
+    var tangentRays: [(Point, Point)]
+    var angleRays: [(Point, Point)]
+    var centerline: [Point]
+}
+
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
     var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil)
     var index = 0
@@ -450,6 +540,408 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
     }
 
     return options
+}
+
+func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
+    var svgOutputPath: String?
+    var svgSize: CGSize?
+    var padding: Double = 10.0
+    var angleStart = 10.0
+    var angleEnd = 75.0
+    var sizeStart = 12.0
+    var sizeEnd = 12.0
+    var aspectStart = 1.5
+    var aspectEnd = 1.5
+    var widthStart: Double?
+    var widthEnd: Double?
+    var heightStart: Double?
+    var heightEnd: Double?
+    var alphaStart = 0.0
+    var alphaEnd = 0.0
+    var angleMode: AngleMode = .absolute
+    var samplesPerSegment: Int?
+    var quality: String?
+    var view: Set<ScurveView> = [.envelope, .centerline]
+    var envelopeMode: EnvelopeMode = .union
+    var envelopeSegments: Int = 48
+
+    var index = 0
+    while index < args.count {
+        let arg = args[index]
+        switch arg {
+        case "--svg":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--svg requires an output path") }
+            svgOutputPath = args[index + 1]
+            index += 1
+        case "--svg-size":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--svg-size requires WxH") }
+            svgSize = try parseSize(args[index + 1])
+            index += 1
+        case "--padding":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--padding requires a number")
+            }
+            padding = value
+            index += 1
+        case "--angle-start":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--angle-start requires a number")
+            }
+            angleStart = value
+            index += 1
+        case "--angle-end":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--angle-end requires a number")
+            }
+            angleEnd = value
+            index += 1
+        case "--size-start":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--size-start requires a number")
+            }
+            sizeStart = value
+            index += 1
+        case "--size-end":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--size-end requires a number")
+            }
+            sizeEnd = value
+            index += 1
+        case "--aspect-start":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--aspect-start requires a number")
+            }
+            aspectStart = value
+            index += 1
+        case "--aspect-end":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--aspect-end requires a number")
+            }
+            aspectEnd = value
+            index += 1
+        case "--width-start":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--width-start requires a number")
+            }
+            widthStart = value
+            index += 1
+        case "--width-end":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--width-end requires a number")
+            }
+            widthEnd = value
+            index += 1
+        case "--height-start":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--height-start requires a number")
+            }
+            heightStart = value
+            index += 1
+        case "--height-end":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--height-end requires a number")
+            }
+            heightEnd = value
+            index += 1
+        case "--alpha-start":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--alpha-start requires a number")
+            }
+            alphaStart = value
+            index += 1
+        case "--alpha-end":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--alpha-end requires a number")
+            }
+            alphaEnd = value
+            index += 1
+        case "--angle-mode":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--angle-mode requires absolute|relative") }
+            angleMode = try parseAngleMode(args[index + 1])
+            index += 1
+        case "--samples":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--samples requires an integer")
+            }
+            samplesPerSegment = value
+            index += 1
+        case "--quality":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--quality requires preview|final") }
+            quality = args[index + 1].lowercased()
+            index += 1
+        case "--view":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--view requires a value") }
+            view = try parseViewModes(args[index + 1])
+            index += 1
+        case "--envelope-mode":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--envelope-mode requires rails|union") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = EnvelopeMode(rawValue: mode) else {
+                throw CLIError.invalidArguments("--envelope-mode must be rails|union")
+            }
+            envelopeMode = parsed
+            index += 1
+        case "--envelope-sides":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--envelope-sides requires an integer")
+            }
+            envelopeSegments = max(8, value)
+            index += 1
+        case "--no-centerline":
+            view.remove(.centerline)
+        default:
+            break
+        }
+        index += 1
+    }
+
+    let resolvedSamples: Int
+    let ellipseSegments: Int
+    if let samplesPerSegment {
+        resolvedSamples = max(4, samplesPerSegment)
+        ellipseSegments = 24
+    } else if quality == "final" {
+        resolvedSamples = 200
+        ellipseSegments = 64
+    } else {
+        resolvedSamples = 60
+        ellipseSegments = 24
+    }
+
+    guard let svgOutputPath else {
+        throw CLIError.invalidArguments("scurve requires --svg <outputPath>")
+    }
+
+    return ScurvePlaygroundConfig(
+        svgOutputPath: svgOutputPath,
+        svgSize: svgSize,
+        padding: padding,
+        angleStart: angleStart,
+        angleEnd: angleEnd,
+        sizeStart: sizeStart,
+        sizeEnd: sizeEnd,
+        aspectStart: aspectStart,
+        aspectEnd: aspectEnd,
+        widthStart: widthStart,
+        widthEnd: widthEnd,
+        heightStart: heightStart,
+        heightEnd: heightEnd,
+        alphaStart: alphaStart,
+        alphaEnd: alphaEnd,
+        angleMode: angleMode,
+        samplesPerSegment: resolvedSamples,
+        ellipseSegments: ellipseSegments,
+        envelopeSegments: envelopeSegments,
+        view: view,
+        envelopeMode: envelopeMode
+    )
+}
+
+private func parseViewModes(_ text: String) throws -> Set<ScurveView> {
+    let raw = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    if raw.contains("all") {
+        return Set([.envelope, .samples, .rays, .rails, .union, .centerline])
+    }
+    if raw.contains("none") {
+        return []
+    }
+    var result: Set<ScurveView> = []
+    for item in raw where !item.isEmpty {
+        guard let mode = ScurveView(rawValue: item) else {
+            throw CLIError.invalidArguments("--view must be envelope|samples|rays|rails|union|centerline|all|none")
+        }
+        result.insert(mode)
+    }
+    return result
+}
+
+func validate(config: ScurvePlaygroundConfig) throws {
+    if config.sizeStart <= 0.0 || config.sizeEnd <= 0.0 {
+        throw CLIError.invalidArguments("size must be > 0")
+    }
+    if config.aspectStart <= 0.0 || config.aspectEnd <= 0.0 {
+        throw CLIError.invalidArguments("aspect must be > 0")
+    }
+    if let widthStart = config.widthStart, widthStart <= 0.0 {
+        throw CLIError.invalidArguments("width must be > 0")
+    }
+    if let widthEnd = config.widthEnd, widthEnd <= 0.0 {
+        throw CLIError.invalidArguments("width must be > 0")
+    }
+    if let heightStart = config.heightStart, heightStart <= 0.0 {
+        throw CLIError.invalidArguments("height must be > 0")
+    }
+    if let heightEnd = config.heightEnd, heightEnd <= 0.0 {
+        throw CLIError.invalidArguments("height must be > 0")
+    }
+    if config.alphaStart < -1.0 || config.alphaStart > 1.0 || config.alphaEnd < -1.0 || config.alphaEnd > 1.0 {
+        throw CLIError.invalidArguments("alpha must be in [-1,1]")
+    }
+}
+
+private func globalScurvePath() -> BezierPath {
+    BezierPath(segments: [
+        CubicBezier(
+            p0: Point(x: 0, y: 0),
+            p1: Point(x: 40, y: 120),
+            p2: Point(x: 60, y: 120),
+            p3: Point(x: 100, y: 0)
+        ),
+        CubicBezier(
+            p0: Point(x: 100, y: 0),
+            p1: Point(x: 140, y: -120),
+            p2: Point(x: 160, y: -120),
+            p3: Point(x: 200, y: 0)
+        ),
+        CubicBezier(
+            p0: Point(x: 200, y: 0),
+            p1: Point(x: 240, y: 120),
+            p2: Point(x: 260, y: 120),
+            p3: Point(x: 300, y: 0)
+        )
+    ])
+}
+
+private func applyBias(s: Double, alphaStart: Double, alphaEnd: Double) -> Double {
+    let clamped = ScalarMath.clamp01(s)
+    let alpha = ScalarMath.lerp(alphaStart, alphaEnd, clamped)
+    return biasCurve(t: clamped, bias: alpha)
+}
+
+private func biasCurve(t: Double, bias: Double) -> Double {
+    if abs(bias) < 1.0e-9 { return t }
+    let clamped = min(max(abs(bias), 0.0001), 0.9999)
+    let value = t / ((1.0 / clamped - 2.0) * (1.0 - t) + 1.0)
+    if bias >= 0.0 { return value }
+    return 1.0 - value
+}
+
+func buildScurveGeometry(config: ScurvePlaygroundConfig) throws -> ScurveGeometry {
+    let path = globalScurvePath()
+    let domain = PathDomain(path: path, samplesPerSegment: config.samplesPerSegment)
+    let angleField = ParamField.linearDegrees(startDeg: config.angleStart, endDeg: config.angleEnd)
+
+    let widthField: ParamField
+    let heightField: ParamField
+    if let widthStart = config.widthStart, let widthEnd = config.widthEnd,
+       let heightStart = config.heightStart, let heightEnd = config.heightEnd {
+        widthField = ParamField { s in ScalarMath.lerp(widthStart, widthEnd, ScalarMath.clamp01(s)) }
+        heightField = ParamField { s in ScalarMath.lerp(heightStart, heightEnd, ScalarMath.clamp01(s)) }
+    } else {
+        let sizeField = ParamField { s in ScalarMath.lerp(config.sizeStart, config.sizeEnd, ScalarMath.clamp01(s)) }
+        let aspectField = ParamField { s in ScalarMath.lerp(config.aspectStart, config.aspectEnd, ScalarMath.clamp01(s)) }
+        widthField = ParamField { s in sizeField.evaluate(s) }
+        heightField = ParamField { s in sizeField.evaluate(s) * aspectField.evaluate(s) }
+    }
+
+    var envelopeLeft: [Point] = []
+    var envelopeRight: [Point] = []
+    var samplePoints: [Point] = []
+    var tangentRays: [(Point, Point)] = []
+    var angleRays: [(Point, Point)] = []
+    var stampRings: [Ring] = []
+
+    let bounds = domain.samples.reduce(CGRect.null) { rect, sample in
+        rect.union(CGRect(x: sample.point.x, y: sample.point.y, width: 0, height: 0))
+    }
+    let diag = hypot(bounds.width, bounds.height)
+    let rayLength = max(8.0, diag * 0.05)
+
+    let showRays = config.view.contains(.rays)
+    let showSamples = config.view.contains(.samples)
+    let showRails = config.view.contains(.rails)
+    let showEnvelope = config.view.contains(.envelope)
+    let envelopeUsesUnion = config.envelopeMode == .union
+    let needsStamps = showSamples || config.view.contains(.union) || (showEnvelope && envelopeUsesUnion)
+
+    let stamping = CounterpointStamping()
+    for sample in domain.samples {
+        let biasedS = applyBias(s: sample.s, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
+        let angleDeg = angleField.evaluate(biasedS)
+        let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angleDeg, mode: config.angleMode)
+        let dirUnit = dir.normalized() ?? Point(x: 1, y: 0)
+        let normal = dirUnit.leftNormal()
+
+        let width = widthField.evaluate(biasedS)
+        let height = heightField.evaluate(biasedS)
+        let halfWidth = width * 0.5
+        let halfHeight = height * 0.5
+
+        if showEnvelope || showRails {
+            let leftOffset = orientedEllipseSupportPoint(direction: normal, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            let rightOffset = orientedEllipseSupportPoint(direction: normal * -1.0, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            envelopeLeft.append(sample.point + leftOffset)
+            envelopeRight.append(sample.point + rightOffset)
+        }
+
+        if needsStamps {
+            let tangentAngle = atan2(sample.unitTangent.y, sample.unitTangent.x)
+            let angleRadians = angleDeg * .pi / 180.0
+            let effectiveRotation: Double
+            switch config.angleMode {
+            case .absolute:
+                effectiveRotation = angleRadians
+            case .tangentRelative:
+                effectiveRotation = tangentAngle + angleRadians
+            }
+            let segments = envelopeUsesUnion ? config.envelopeSegments : config.ellipseSegments
+            let stamped = stamping.ring(
+                for: Sample(
+                    t: sample.s,
+                    point: sample.point,
+                    tangentAngle: tangentAngle,
+                    width: width,
+                    height: height,
+                    theta: angleRadians,
+                    effectiveRotation: effectiveRotation
+                ),
+                shape: .ellipse(segments: segments)
+            )
+            stampRings.append(stamped)
+        }
+
+        if config.view.contains(.centerline) {
+            samplePoints.append(sample.point)
+        }
+        if showRays {
+            let angleEnd = sample.point + dirUnit * rayLength
+            let tangentEnd = sample.point + sample.unitTangent * rayLength
+            angleRays.append((sample.point, angleEnd))
+            tangentRays.append((sample.point, tangentEnd))
+        }
+    }
+
+    var envelopeOutline: Ring = []
+    if showEnvelope, !envelopeLeft.isEmpty, envelopeLeft.count == envelopeRight.count {
+        envelopeOutline = closeRingIfNeeded(envelopeLeft + envelopeRight.reversed())
+    }
+
+    var unionPolygons: PolygonSet = []
+    if (showEnvelope && envelopeUsesUnion) || config.view.contains(.union) {
+        let builder = BridgeBuilder()
+        var rings = stampRings
+        if stampRings.count > 1 {
+            for i in 0..<(stampRings.count - 1) {
+                if let bridges = try? builder.bridgeRings(from: stampRings[i], to: stampRings[i + 1]) {
+                    rings.append(contentsOf: bridges)
+                }
+            }
+        }
+        unionPolygons = try IOverlayPolygonUnionAdapter().union(subjectRings: rings)
+    }
+
+    let centerline = config.view.contains(.centerline) ? domain.samples.map { $0.point } : []
+    return ScurveGeometry(
+        envelopeLeft: envelopeLeft,
+        envelopeRight: envelopeRight,
+        envelopeOutline: envelopeOutline,
+        unionPolygons: unionPolygons,
+        stampRings: stampRings,
+        samplePoints: samplePoints,
+        tangentRays: tangentRays,
+        angleRays: angleRays,
+        centerline: centerline
+    )
 }
 
 private func parseAngleMode(_ text: String) throws -> AngleMode {
@@ -587,7 +1079,8 @@ func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay 
         envelopeLeft: envelopeLeft,
         envelopeRight: envelopeRight,
         envelopeOutline: envelopeOutline,
-        showUnionOutline: showUnionOutline
+        showUnionOutline: showUnionOutline,
+        unionPolygons: nil
     )
 }
 
@@ -615,5 +1108,6 @@ do {
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
     stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline]\n".utf8))
     exit(1)
 }

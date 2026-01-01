@@ -141,7 +141,8 @@ struct SVGPathBuilder {
 
         let stampElements = stampPaths.map { "<path fill=\"none\" stroke=\"#0066ff\" stroke-opacity=\"0.3\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
         let bridgeElements = bridgePaths.map { "<path fill=\"none\" stroke=\"#00aa66\" stroke-opacity=\"0.25\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
-        let unionOutline = overlay.showUnionOutline ? polygons.map { outlinePath(for: $0) }.joined(separator: "\n    ") : ""
+        let unionSource = overlay.unionPolygons ?? polygons
+        let unionOutline = overlay.showUnionOutline ? unionSource.map { outlinePath(for: $0) }.joined(separator: "\n    ") : ""
         let envelopeElements = [
             leftRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(leftRail)\"/>",
             rightRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(rightRail)\"/>",
@@ -199,4 +200,5 @@ struct SVGDebugOverlay {
     var envelopeRight: [Point]
     var envelopeOutline: Ring
     var showUnionOutline: Bool
+    var unionPolygons: PolygonSet?
 }

@@ -129,6 +129,38 @@ Global angle S-curve demo (angle interpolated over total arc length):
 swift run counterpoint-cli --example global-angle-scurve --svg global-angle-scurve.svg --debug-samples --show-envelope
 ```
 
+S-curve playground mode (interactive CLI):
+
+```
+swift run counterpoint-cli scurve --svg scurve.svg --view envelope --envelope-mode union
+```
+
+```
+swift run counterpoint-cli scurve --svg scurve.svg --view envelope,rays --angle-start 10 --angle-end 75 --angle-mode absolute --envelope-mode union
+```
+
+```
+swift run counterpoint-cli scurve --svg scurve.svg --view envelope,samples --angle-start -20 --angle-end 110 --alpha-start -0.5 --alpha-end 0.5 --envelope-mode union
+```
+
+Envelope rails mode is a fast approximation and can show gaps when silhouette sidedness flips. Use union mode for correct inked envelopes.
+
+Scurve playground options:
+```
+counterpoint-cli scurve --svg <outputPath>
+  [--angle-start N] [--angle-end N]
+  [--size-start N] [--size-end N]
+  [--aspect-start N] [--aspect-end N]
+  [--width-start N] [--width-end N]
+  [--height-start N] [--height-end N]
+  [--alpha-start N] [--alpha-end N]
+  [--angle-mode absolute|relative]
+  [--samples N] [--quality preview|final]
+  [--envelope-mode rails|union] [--envelope-sides N]
+  [--view envelope,samples,rays,rails,union,centerline]
+  [--no-centerline]
+```
+
 SVG output:
 
 ```

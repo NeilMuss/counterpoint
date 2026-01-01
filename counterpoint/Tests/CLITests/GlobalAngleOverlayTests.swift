@@ -20,6 +20,8 @@ final class GlobalAngleOverlayTests: XCTestCase {
             quality: "preview",
             showEnvelope: nil,
             showEnvelopeUnion: false,
+            showRays: true,
+            counterpointSize: nil,
             angleModeOverride: nil,
             envelopeTolerance: nil,
             flattenTolerance: nil,
