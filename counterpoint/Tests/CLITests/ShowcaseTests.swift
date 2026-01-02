@@ -3,11 +3,16 @@ import Domain
 @testable import CounterpointCLI
 
 final class ShowcaseTests: XCTestCase {
+    private var runSlow: Bool {
+        ProcessInfo.processInfo.environment["RUN_SLOW_TESTS"] == "1"
+    }
+
     func testShowcaseRequiresOutputDirectory() {
         XCTAssertThrowsError(try parseShowcaseOptions([]))
     }
 
     func testShowcaseGoldenSVGs() throws {
+        try XCTSkipUnless(runSlow, "Set RUN_SLOW_TESTS=1 to run showcase golden rendering.")
         for preset in ShowcasePresets.all {
             let expectedURL = try fixtureURL(pathComponents: ["Fixtures", "Showcase", "\(preset.name).svg"])
             let expected = try String(contentsOf: expectedURL, encoding: .utf8)
@@ -15,6 +20,19 @@ final class ShowcaseTests: XCTestCase {
 
             let svg = try renderPresetSVG(preset, quality: "final")
             XCTAssertEqual(normalize(svg), normalize(expected), "Golden mismatch for \(preset.name)")
+        }
+    }
+
+    func testShowcaseSmokePreview() throws {
+        let overrides = [
+            "--quality", "preview",
+            "--samples", "120",
+            "--envelope-sides", "24"
+        ]
+        for preset in ShowcasePresets.all {
+            let svg = try renderPresetSVG(preset, quality: nil, overrides: overrides)
+            XCTAssertFalse(svg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            XCTAssertTrue(svg.contains("<path fill=\"black\""))
         }
     }
 
@@ -46,13 +64,16 @@ final class ShowcaseTests: XCTestCase {
         XCTAssertLessThan(earlyThickness, neutralThickness)
     }
 
-    private func renderPresetSVG(_ preset: ShowcasePreset, quality: String?) throws -> String {
+    private func renderPresetSVG(_ preset: ShowcasePreset, quality: String?, overrides: [String] = []) throws -> String {
         var args = preset.args
         if !args.contains("--svg") {
             args.append(contentsOf: ["--svg", "out.svg"])
         }
         if let quality, !args.contains("--quality") {
             args.append(contentsOf: ["--quality", quality])
+        }
+        if !overrides.isEmpty {
+            args.append(contentsOf: overrides)
         }
 
         let config = try parseScurveOptions(args)

@@ -204,6 +204,12 @@ Generate a curated set of preset SVGs:
 swift run counterpoint-cli showcase --out Fixtures/Showcase --quality final
 ```
 
+Showcase goldens are not rendered during a normal test run. To run the heavy showcase tests:
+
+```
+RUN_SLOW_TESTS=1 swift test
+```
+
 Showcase commands (copy/paste):
 
 1) Baseline broad-nib sweep (constant size/aspect)
@@ -316,4 +322,10 @@ Update golden files:
 
 ```
 ./Scripts/update_golden.sh
+```
+
+Showcase fixtures are generated outside of tests:
+
+```
+swift run counterpoint-cli showcase --out Fixtures/Showcase --quality final
 ```
