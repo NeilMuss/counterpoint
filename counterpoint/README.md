@@ -144,6 +144,8 @@ swift run counterpoint-cli scurve --svg scurve.svg --view envelope,samples --ang
 ```
 
 Envelope rails mode is a fast approximation and can show gaps when silhouette sidedness flips. Use union mode for correct inked envelopes.
+Union mode enforces overlap/coverage to prevent dotted gaps when counterpoints rotate quickly or shrink.
+Final renders can optionally fit cubic Béziers to the union boundary to remove micro-facets.
 Preview quality uses adaptive sampling with a loose tolerance; final uses tighter tolerance. The `--samples` flag is treated as a max sample cap for adaptive sampling.
 Union envelope mode prints diagnostics about effective sample count, envelope sides, and union components.
 
@@ -159,8 +161,10 @@ counterpoint-cli scurve --svg <outputPath>
   [--angle-mode absolute|relative]
   [--samples N] [--quality preview|final]
   [--envelope-mode rails|union] [--envelope-sides N]
+  [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N]
   [--view envelope,samples,rays,rails,union,centerline]
   [--no-centerline]
+  [--verbose]
 ```
 
 Line playground mode (same options, straight path):
@@ -181,8 +185,16 @@ counterpoint-cli line --svg <outputPath>
   [--angle-mode absolute|relative]
   [--samples N] [--quality preview|final]
   [--envelope-mode rails|union] [--envelope-sides N]
+  [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N]
   [--view envelope,samples,rays,rails,union,centerline]
   [--no-centerline]
+  [--verbose]
+```
+
+Outline fitting example:
+
+```
+swift run counterpoint-cli scurve --svg out.svg --view envelope --envelope-mode union --quality final --outline-fit bezier --fit-tolerance 0.5 --no-centerline
 ```
 
 ## Showcase / Presets

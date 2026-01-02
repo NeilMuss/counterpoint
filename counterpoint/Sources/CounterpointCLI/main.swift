@@ -178,6 +178,9 @@ struct CLI {
             print("union envelope: effectiveSampleCount \(geometry.sValues.count)")
             print("envelopeSides \(config.envelopeSegments)")
             print("union components \(geometry.unionPolygons.count) vertexCount \(vertexCount)")
+            if config.verbose {
+                print("max overlap ratio \(String(format: "%.3f", geometry.maxOverlapRatio))")
+            }
             if geometry.unionPolygons.isEmpty {
                 print("UNION FAILED/EMPTY, falling back to samples")
             }
@@ -198,6 +201,54 @@ struct CLI {
             polygons = []
         }
 
+        let fitTolerance = config.fitTolerance ?? defaultFitTolerance(polygons: polygons)
+        let simplifyTolerance = config.simplifyTolerance ?? (fitTolerance * 1.5)
+        var fittedPaths: [FittedPath]?
+        var renderPolygons: PolygonSet
+        switch config.outlineFit {
+        case .none:
+            fittedPaths = nil
+            renderPolygons = polygons
+        case .simplify:
+            let fitter = BezierFitter(tolerance: fitTolerance)
+            let simplified = polygons.map { polygon in
+                let outer = fitter.simplifyRing(polygon.outer, closed: true)
+                let holes = polygon.holes.map { fitter.simplifyRing($0, closed: true) }
+                return Polygon(outer: outer, holes: holes)
+            }
+            fittedPaths = nil
+            renderPolygons = simplified
+        case .bezier:
+            if config.envelopeMode == .union, !geometry.centerlineSamples.isEmpty {
+                fittedPaths = fitUnionRails(
+                    polygons,
+                    centerlineSamples: geometry.centerlineSamples,
+                    simplifyTolerance: simplifyTolerance,
+                    fitTolerance: fitTolerance
+                )
+            } else {
+                let simplifier = BezierFitter(tolerance: simplifyTolerance)
+                let simplified = polygons.map { polygon in
+                    let outer = simplifier.simplifyRing(polygon.outer, closed: true)
+                    let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
+                    return Polygon(outer: outer, holes: holes)
+                }
+                let fitter = BezierFitter(tolerance: fitTolerance)
+                fittedPaths = fitter.fitPolygonSet(simplified)
+            }
+            renderPolygons = []
+        }
+
+        if config.outlineFit == .bezier, let fitted = fittedPaths {
+            if outlineHasSelfIntersection(fitted) {
+                if config.verbose {
+                    print("warning: fitted outline self-intersects, falling back to raw envelope")
+                }
+                fittedPaths = nil
+                renderPolygons = polygons
+            }
+        }
+
         let overlay = SVGDebugOverlay(
             skeleton: geometry.centerline,
             stamps: (config.view.contains(.samples) || fallbackToSamples) ? geometry.stampRings : [],
@@ -213,7 +264,7 @@ struct CLI {
         )
 
         let builder = SVGPathBuilder()
-        let svg = builder.svgDocument(for: polygons, size: config.svgSize, padding: config.padding, debugOverlay: overlay)
+        let svg = builder.svgDocument(for: renderPolygons, fittedPaths: fittedPaths, size: config.svgSize, padding: config.padding, debugOverlay: overlay)
         try svg.write(to: URL(fileURLWithPath: config.svgOutputPath), atomically: true, encoding: .utf8)
     }
 
@@ -491,6 +542,10 @@ struct ScurvePlaygroundConfig: Equatable {
     var envelopeSegments: Int
     var view: Set<ScurveView>
     var envelopeMode: EnvelopeMode
+    var verbose: Bool
+    var outlineFit: OutlineFitMode
+    var fitTolerance: Double?
+    var simplifyTolerance: Double?
 }
 
 enum ScurveView: String {
@@ -518,6 +573,8 @@ struct ScurveGeometry {
     var angleRays: [(Point, Point)]
     var centerline: [Point]
     var sValues: [Double]
+    var maxOverlapRatio: Double
+    var centerlineSamples: [PathDomain.Sample]
 }
 
 struct ShowcaseOptions {
@@ -636,6 +693,10 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
     var view: Set<ScurveView> = [.envelope, .centerline]
     var envelopeMode: EnvelopeMode = .union
     var envelopeSegments: Int = 48
+    var verbose = false
+    var outlineFit: OutlineFitMode?
+    var fitTolerance: Double?
+    var simplifyTolerance: Double?
 
     var index = 0
     while index < args.count {
@@ -761,6 +822,28 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
             index += 1
         case "--no-centerline":
             view.remove(.centerline)
+        case "--verbose":
+            verbose = true
+        case "--outline-fit":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--outline-fit requires none|simplify|bezier") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = OutlineFitMode(rawValue: mode) else {
+                throw CLIError.invalidArguments("--outline-fit must be none|simplify|bezier")
+            }
+            outlineFit = parsed
+            index += 1
+        case "--fit-tolerance":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--fit-tolerance requires a number")
+            }
+            fitTolerance = value
+            index += 1
+        case "--simplify-tolerance":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--simplify-tolerance requires a number")
+            }
+            simplifyTolerance = value
+            index += 1
         default:
             break
         }
@@ -793,6 +876,13 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
         throw CLIError.invalidArguments("scurve requires --svg <outputPath>")
     }
 
+    let resolvedOutlineFit: OutlineFitMode
+    if let outlineFit {
+        resolvedOutlineFit = outlineFit
+    } else {
+        resolvedOutlineFit = isFinal ? .bezier : .none
+    }
+
     return ScurvePlaygroundConfig(
         svgOutputPath: svgOutputPath,
         svgSize: svgSize,
@@ -818,7 +908,11 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
         ellipseSegments: ellipseSegments,
         envelopeSegments: envelopeSegments,
         view: view,
-        envelopeMode: envelopeMode
+        envelopeMode: envelopeMode,
+        verbose: verbose,
+        outlineFit: resolvedOutlineFit,
+        fitTolerance: fitTolerance,
+        simplifyTolerance: simplifyTolerance
     )
 }
 
@@ -996,16 +1090,37 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
     let showEnvelope = config.view.contains(.envelope)
     let envelopeUsesUnion = config.envelopeMode == .union
     let needsStamps = showSamples || config.view.contains(.union) || (showEnvelope && envelopeUsesUnion)
+    let supportShape: CounterpointShape = .ellipse(segments: config.envelopeSegments)
 
     let stamping = CounterpointStamping()
     let overlapSplit: ((Double, Double) -> Bool)? = envelopeUsesUnion ? { s0, s1 in
-        let p0 = domain.evalAtS(s0, path: path).point
-        let p1 = domain.evalAtS(s1, path: path).point
+        let sample0 = domain.evalAtS(s0, path: path)
+        let sample1 = domain.evalAtS(s1, path: path)
         let biased0 = applyBias(s: s0, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
         let biased1 = applyBias(s: s1, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
-        let r0 = max(widthField.evaluate(biased0) * 0.5, heightField.evaluate(biased0) * 0.5)
-        let r1 = max(widthField.evaluate(biased1) * 0.5, heightField.evaluate(biased1) * 0.5)
-        return (p1 - p0).length > 0.8 * (r0 + r1)
+        let angle0 = angleField.evaluate(biased0)
+        let angle1 = angleField.evaluate(biased1)
+        let dir0 = AngleMath.directionVector(unitTangent: sample0.unitTangent, angleDegrees: angle0, mode: config.angleMode)
+        let dir1 = AngleMath.directionVector(unitTangent: sample1.unitTangent, angleDegrees: angle1, mode: config.angleMode)
+        let axis0 = dir0.normalized() ?? Point(x: 1, y: 0)
+        let axis1 = dir1.normalized() ?? Point(x: 1, y: 0)
+        let n0 = axis0.leftNormal()
+        let n1 = axis1.leftNormal()
+        let width0 = widthField.evaluate(biased0)
+        let height0 = heightField.evaluate(biased0)
+        let width1 = widthField.evaluate(biased1)
+        let height1 = heightField.evaluate(biased1)
+        let r0 = supportRadius(direction: n0, axis: axis0, normal: n0, width: width0, height: height0, shape: supportShape)
+        let r1 = supportRadius(direction: n1, axis: axis1, normal: n1, width: width1, height: height1, shape: supportShape)
+        let d = (sample1.point - sample0.point).length
+        let rMin = min(r0, r1)
+        let overlapFactor = 0.8
+        let overlapFactorMin = 0.8
+        let overlapFail = d > overlapFactor * (r0 + r1) || d > overlapFactorMin * (2.0 * rMin)
+        let dot = max(-1.0, min(1.0, axis0.dot(axis1)))
+        let angleDelta = acos(dot) * 180.0 / .pi
+        let angleFail = angleDelta > 12.0
+        return overlapFail || angleFail
     } : nil
 
     var sampleList = adaptiveSampleParameters(
@@ -1036,6 +1151,7 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         sampleList = ensureMinSamples(sampleList, minCount: 250)
     }
 
+    var maxOverlapRatio = 0.0
     for s in sampleList {
         let sample = domain.evalAtS(s, path: path)
         let biasedS = applyBias(s: sample.s, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
@@ -1092,6 +1208,36 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
             tangentRays.append((sample.point, tangentEnd))
         }
     }
+    if envelopeUsesUnion, sampleList.count > 1 {
+        for i in 0..<(sampleList.count - 1) {
+            let s0 = sampleList[i]
+            let s1 = sampleList[i + 1]
+            let sample0 = domain.evalAtS(s0, path: path)
+            let sample1 = domain.evalAtS(s1, path: path)
+            let biased0 = applyBias(s: s0, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
+            let biased1 = applyBias(s: s1, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
+            let angle0 = angleField.evaluate(biased0)
+            let angle1 = angleField.evaluate(biased1)
+            let dir0 = AngleMath.directionVector(unitTangent: sample0.unitTangent, angleDegrees: angle0, mode: config.angleMode)
+            let dir1 = AngleMath.directionVector(unitTangent: sample1.unitTangent, angleDegrees: angle1, mode: config.angleMode)
+            let axis0 = dir0.normalized() ?? Point(x: 1, y: 0)
+            let axis1 = dir1.normalized() ?? Point(x: 1, y: 0)
+            let n0 = axis0.leftNormal()
+            let n1 = axis1.leftNormal()
+            let width0 = widthField.evaluate(biased0)
+            let height0 = heightField.evaluate(biased0)
+            let width1 = widthField.evaluate(biased1)
+            let height1 = heightField.evaluate(biased1)
+            let r0 = supportRadius(direction: n0, axis: axis0, normal: n0, width: width0, height: height0, shape: supportShape)
+            let r1 = supportRadius(direction: n1, axis: axis1, normal: n1, width: width1, height: height1, shape: supportShape)
+            let d = (sample1.point - sample0.point).length
+            let denom = max(1.0e-9, r0 + r1)
+            let ratio = d / denom
+            if ratio > maxOverlapRatio {
+                maxOverlapRatio = ratio
+            }
+        }
+    }
 
     var envelopeOutline: Ring = []
     if showEnvelope, !envelopeLeft.isEmpty, envelopeLeft.count == envelopeRight.count {
@@ -1123,7 +1269,9 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         tangentRays: tangentRays,
         angleRays: angleRays,
         centerline: centerline,
-        sValues: sampleList
+        sValues: sampleList,
+        maxOverlapRatio: maxOverlapRatio,
+        centerlineSamples: domain.samples
     )
 }
 
@@ -1389,6 +1537,46 @@ private func orientedEllipseSupportPoint(direction: Point, axis: Point, normal: 
     return axis * local.x + normal * local.y
 }
 
+private func supportRadius(direction: Point, axis: Point, normal: Point, width: Double, height: Double, shape: CounterpointShape) -> Double {
+    let halfWidth = width * 0.5
+    let halfHeight = height * 0.5
+    switch shape {
+    case .ellipse:
+        let offset = orientedEllipseSupportPoint(direction: direction, axis: axis, normal: normal, a: halfWidth, b: halfHeight)
+        return offset.length
+    case .rectangle:
+        return max(halfWidth, halfHeight)
+    }
+}
+
+func defaultFitTolerance(polygons: PolygonSet) -> Double {
+    var minX = Double.greatestFiniteMagnitude
+    var maxX = -Double.greatestFiniteMagnitude
+    var minY = Double.greatestFiniteMagnitude
+    var maxY = -Double.greatestFiniteMagnitude
+    for polygon in polygons {
+        for point in polygon.outer {
+            minX = min(minX, point.x)
+            maxX = max(maxX, point.x)
+            minY = min(minY, point.y)
+            maxY = max(maxY, point.y)
+        }
+        for hole in polygon.holes {
+            for point in hole {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
+        }
+    }
+    if !minX.isFinite || !maxX.isFinite || !minY.isFinite || !maxY.isFinite {
+        return 0.5
+    }
+    let diag = hypot(maxX - minX, maxY - minY)
+    return max(0.5, diag * 0.001)
+}
+
 do {
     try CLI().run()
 } catch {
@@ -1396,8 +1584,8 @@ do {
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
     stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
-    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline]\n".utf8))
-    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline]\n".utf8))
+    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline] [--verbose]\n".utf8))
+    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
     exit(1)
 }

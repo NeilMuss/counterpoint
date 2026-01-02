@@ -109,6 +109,28 @@ final class ScurvePlaygroundTests: XCTestCase {
         XCTAssertEqual(a.sValues, b.sValues)
     }
 
+    func testUnionOverlapConstraintPreventsGaps() throws {
+        var config = try parseScurveOptions([
+            "--svg", "out.svg",
+            "--quality", "final",
+            "--view", "envelope",
+            "--envelope-mode", "union",
+            "--angle-mode", "relative",
+            "--angle-start", "-90",
+            "--angle-end", "90",
+            "--size-start", "4",
+            "--size-end", "4",
+            "--aspect-start", "0.6",
+            "--aspect-end", "0.6"
+        ])
+        config.maxSamples = 800
+        config.maxDepth = 14
+        config.view.insert(.envelope)
+
+        let geometry = try buildScurveGeometry(config: config)
+        XCTAssertLessThanOrEqual(geometry.maxOverlapRatio, 0.82)
+    }
+
     private func hasSelfIntersection(_ ring: Ring) -> Bool {
         let closed = closeRingIfNeeded(ring)
         guard closed.count >= 4 else { return false }

@@ -80,6 +80,51 @@ final class ShowcaseTests: XCTestCase {
             polygons = []
         }
 
+        let fitTolerance = config.fitTolerance ?? defaultFitTolerance(polygons: polygons)
+        let simplifyTolerance = config.simplifyTolerance ?? (fitTolerance * 1.5)
+        var fittedPaths: [FittedPath]?
+        var renderPolygons: PolygonSet
+        switch config.outlineFit {
+        case .none:
+            fittedPaths = nil
+            renderPolygons = polygons
+        case .simplify:
+            let fitter = BezierFitter(tolerance: fitTolerance)
+            let simplified = polygons.map { polygon in
+                let outer = fitter.simplifyRing(polygon.outer, closed: true)
+                let holes = polygon.holes.map { fitter.simplifyRing($0, closed: true) }
+                return Polygon(outer: outer, holes: holes)
+            }
+            fittedPaths = nil
+            renderPolygons = simplified
+        case .bezier:
+            if config.envelopeMode == .union, !geometry.centerlineSamples.isEmpty {
+                fittedPaths = fitUnionRails(
+                    polygons,
+                    centerlineSamples: geometry.centerlineSamples,
+                    simplifyTolerance: simplifyTolerance,
+                    fitTolerance: fitTolerance
+                )
+            } else {
+                let simplifier = BezierFitter(tolerance: simplifyTolerance)
+                let simplified = polygons.map { polygon in
+                    let outer = simplifier.simplifyRing(polygon.outer, closed: true)
+                    let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
+                    return Polygon(outer: outer, holes: holes)
+                }
+                let fitter = BezierFitter(tolerance: fitTolerance)
+                fittedPaths = fitter.fitPolygonSet(simplified)
+            }
+            renderPolygons = []
+        }
+
+        if config.outlineFit == .bezier, let fitted = fittedPaths {
+            if outlineHasSelfIntersection(fitted) {
+                fittedPaths = nil
+                renderPolygons = polygons
+            }
+        }
+
         let overlay = SVGDebugOverlay(
             skeleton: geometry.centerline,
             stamps: (config.view.contains(.samples) || fallbackToSamples) ? geometry.stampRings : [],
@@ -94,7 +139,7 @@ final class ShowcaseTests: XCTestCase {
             unionPolygons: geometry.unionPolygons
         )
 
-        return SVGPathBuilder().svgDocument(for: polygons, size: config.svgSize, padding: config.padding, debugOverlay: overlay)
+        return SVGPathBuilder().svgDocument(for: renderPolygons, fittedPaths: fittedPaths, size: config.svgSize, padding: config.padding, debugOverlay: overlay)
     }
 
     private func thickness(at s: Double, geometry: ScurveGeometry) -> Double {

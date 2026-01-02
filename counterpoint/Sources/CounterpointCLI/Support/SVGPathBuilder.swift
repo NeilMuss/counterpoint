@@ -9,13 +9,18 @@ struct SVGPathBuilder {
         self.precision = precision
     }
 
-    func svgDocument(for polygons: PolygonSet, size: CGSize?, padding: Double, debugOverlay: SVGDebugOverlay? = nil) -> String {
-        let bounds = boundsFor(polygons: polygons, debugOverlay: debugOverlay)
+    func svgDocument(for polygons: PolygonSet, fittedPaths: [FittedPath]? = nil, size: CGSize?, padding: Double, debugOverlay: SVGDebugOverlay? = nil) -> String {
+        let bounds = boundsFor(polygons: polygons, fittedPaths: fittedPaths, debugOverlay: debugOverlay)
         let padded = bounds.insetBy(dx: -padding, dy: -padding)
         let viewBox = padded
         let width = size?.width ?? viewBox.width
         let height = size?.height ?? viewBox.height
-        let pathElements = polygons.map { pathData(for: $0) }.joined(separator: "\n")
+        let pathElements: String
+        if let fittedPaths {
+            pathElements = fittedPaths.map { pathData(for: $0) }.joined(separator: "\n")
+        } else {
+            pathElements = polygons.map { pathData(for: $0) }.joined(separator: "\n")
+        }
         let debug = debugOverlay.map { debugGroup($0, polygons: polygons) } ?? ""
 
         return """
@@ -31,6 +36,23 @@ struct SVGPathBuilder {
         let holes = polygon.holes.map { ringPath($0) }.joined(separator: " ")
         let combined = holes.isEmpty ? outer : "\(outer) \(holes)"
         return "<path fill=\"black\" stroke=\"none\" fill-rule=\"evenodd\" d=\"\(combined)\"/>"
+    }
+
+    func pathData(for fittedPath: FittedPath) -> String {
+        let combined = fittedPath.subpaths.map { pathData(for: $0) }.joined(separator: " ")
+        return "<path fill=\"black\" stroke=\"none\" fill-rule=\"nonzero\" d=\"\(combined)\"/>"
+    }
+
+    private func pathData(for subpath: FittedSubpath) -> String {
+        guard let first = subpath.segments.first else { return "" }
+        var parts: [String] = []
+        parts.reserveCapacity(subpath.segments.count + 2)
+        parts.append("M \(format(first.p0.x)) \(format(first.p0.y))")
+        for segment in subpath.segments {
+            parts.append("C \(format(segment.p1.x)) \(format(segment.p1.y)) \(format(segment.p2.x)) \(format(segment.p2.y)) \(format(segment.p3.x)) \(format(segment.p3.y))")
+        }
+        parts.append("Z")
+        return parts.joined(separator: " ")
     }
 
     private func ringPath(_ ring: Ring) -> String {
@@ -54,7 +76,7 @@ struct SVGPathBuilder {
         return ring
     }
 
-    private func boundsFor(polygons: PolygonSet, debugOverlay: SVGDebugOverlay?) -> CGRect {
+    private func boundsFor(polygons: PolygonSet, fittedPaths: [FittedPath]?, debugOverlay: SVGDebugOverlay?) -> CGRect {
         var minX = Double.greatestFiniteMagnitude
         var maxX = -Double.greatestFiniteMagnitude
         var minY = Double.greatestFiniteMagnitude
@@ -73,6 +95,22 @@ struct SVGPathBuilder {
                     maxX = max(maxX, point.x)
                     minY = min(minY, point.y)
                     maxY = max(maxY, point.y)
+                }
+            }
+        }
+
+        if let fittedPaths {
+            for path in fittedPaths {
+                for subpath in path.subpaths {
+                    for segment in subpath.segments {
+                        let points = [segment.p0, segment.p1, segment.p2, segment.p3]
+                        for point in points {
+                            minX = min(minX, point.x)
+                            maxX = max(maxX, point.x)
+                            minY = min(minY, point.y)
+                            maxY = max(maxY, point.y)
+                        }
+                    }
                 }
             }
         }
