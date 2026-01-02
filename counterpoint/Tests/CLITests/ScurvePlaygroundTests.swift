@@ -131,6 +131,59 @@ final class ScurvePlaygroundTests: XCTestCase {
         XCTAssertLessThanOrEqual(geometry.maxOverlapRatio, 0.82)
     }
 
+    func testOffsetInterpolationOnLine() throws {
+        let config = try parseScurveOptions([
+            "--svg", "out.svg",
+            "--view", "envelope,rails",
+            "--angle-mode", "absolute",
+            "--angle-start", "0",
+            "--angle-end", "0",
+            "--size-start", "12",
+            "--size-end", "12",
+            "--aspect-start", "1.0",
+            "--aspect-end", "1.0",
+            "--offset-start", "0",
+            "--offset-end", "10"
+        ])
+        let geometry = try buildLineGeometry(config: config)
+        guard let lastLeft = geometry.envelopeLeft.last,
+              let lastRight = geometry.envelopeRight.last else {
+            XCTFail("Missing envelope rails")
+            return
+        }
+        let center = (lastLeft + lastRight) * 0.5
+        let centerline = pointAtS(1.0, samples: geometry.centerlineSamples)
+        let offset = center.y - centerline.y
+        XCTAssertEqual(offset, 10.0, accuracy: 0.5)
+    }
+
+    func testOffsetShiftsEnvelopeBounds() throws {
+        let baseConfig = try parseScurveOptions([
+            "--svg", "out.svg",
+            "--view", "envelope,rails",
+            "--angle-mode", "absolute",
+            "--angle-start", "0",
+            "--angle-end", "0",
+            "--size-start", "12",
+            "--size-end", "12",
+            "--aspect-start", "1.0",
+            "--aspect-end", "1.0",
+            "--offset-start", "0",
+            "--offset-end", "0"
+        ])
+        var offsetConfig = baseConfig
+        offsetConfig.offsetStart = 0.0
+        offsetConfig.offsetEnd = 14.0
+
+        let baseGeom = try buildLineGeometry(config: baseConfig)
+        let offsetGeom = try buildLineGeometry(config: offsetConfig)
+
+        let baseBounds = railsBounds(left: baseGeom.envelopeLeft, right: baseGeom.envelopeRight)
+        let offsetBounds = railsBounds(left: offsetGeom.envelopeLeft, right: offsetGeom.envelopeRight)
+
+        XCTAssertGreaterThan(offsetBounds.maxY, baseBounds.maxY)
+    }
+
     private func hasSelfIntersection(_ ring: Ring) -> Bool {
         let closed = closeRingIfNeeded(ring)
         guard closed.count >= 4 else { return false }
@@ -148,5 +201,30 @@ final class ScurvePlaygroundTests: XCTestCase {
             }
         }
         return false
+    }
+
+    private func pointAtS(_ s: Double, samples: [PathDomain.Sample]) -> Point {
+        guard let first = samples.first else { return Point(x: 0, y: 0) }
+        var best = first.point
+        var bestDelta = Double.greatestFiniteMagnitude
+        for sample in samples {
+            let delta = abs(sample.s - s)
+            if delta < bestDelta {
+                bestDelta = delta
+                best = sample.point
+            }
+        }
+        return best
+    }
+
+    private func railsBounds(left: [Point], right: [Point]) -> (minY: Double, maxY: Double) {
+        let all = left + right
+        var minY = Double.greatestFiniteMagnitude
+        var maxY = -Double.greatestFiniteMagnitude
+        for point in all {
+            minY = min(minY, point.y)
+            maxY = max(maxY, point.y)
+        }
+        return (minY, maxY)
     }
 }

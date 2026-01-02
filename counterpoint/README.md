@@ -162,7 +162,7 @@ counterpoint-cli scurve --svg <outputPath>
   [--samples N] [--quality preview|final]
   [--envelope-mode rails|union] [--envelope-sides N]
   [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N]
-  [--view envelope,samples,rays,rails,union,centerline]
+  [--view envelope,samples,rays,rails,union,centerline,offset]
   [--no-centerline]
   [--verbose]
 ```
@@ -257,6 +257,14 @@ swift run counterpoint-cli line --svg line_trumpet_pos.svg --view envelope,cente
 ```
 ```
 swift run counterpoint-cli line --svg line_trumpet_neg.svg --view envelope,centerline --envelope-mode union --size-start 5 --size-end 50 --aspect-start 0.35 --aspect-end 0.35 --angle-start 30 --angle-end 30 --alpha-start -0.9
+```
+
+One-sided modulation via offset:
+```
+swift run counterpoint-cli line --svg one_sided.svg --view envelope --envelope-mode union --outline-fit bezier --quality final --no-centerline --angle-start 30 --angle-end 30 --aspect-start 0.35 --aspect-end 0.35 --size-start 8 --size-end 40 --offset-start 0 --offset-end 18
+```
+```
+swift run counterpoint-cli scurve --svg scurve_offset.svg --view envelope --envelope-mode union --outline-fit bezier --quality final --no-centerline --angle-mode relative --angle-start 20 --angle-end 75 --size-start 12 --size-end 30 --alpha-end 0.5 --offset-start 0 --offset-end 10
 ```
 
 SVG output:

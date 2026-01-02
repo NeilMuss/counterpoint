@@ -140,7 +140,7 @@ struct SVGPathBuilder {
                 minY = min(minY, point.y)
                 maxY = max(maxY, point.y)
             }
-            for ray in overlay.tangentRays + overlay.angleRays {
+            for ray in overlay.tangentRays + overlay.angleRays + overlay.offsetRays {
                 minX = min(minX, ray.0.x, ray.1.x)
                 maxX = max(maxX, ray.0.x, ray.1.x)
                 minY = min(minY, ray.0.y, ray.1.y)
@@ -172,6 +172,7 @@ struct SVGPathBuilder {
         let bridgePaths = overlay.bridges.map { ringPath($0) }.filter { !$0.isEmpty }
         let tangentPath = rayPath(overlay.tangentRays)
         let anglePath = rayPath(overlay.angleRays)
+        let offsetPath = rayPath(overlay.offsetRays)
         let leftRail = polylinePath(overlay.envelopeLeft)
         let rightRail = polylinePath(overlay.envelopeRight)
         let outlineRail = overlay.envelopeOutline.isEmpty ? "" : ringPath(overlay.envelopeOutline)
@@ -192,6 +193,7 @@ struct SVGPathBuilder {
           <path fill=\"none\" stroke=\"#ff3366\" stroke-opacity=\"0.6\" stroke-width=\"0.5\" d=\"\(skeletonPath)\"/>
           <path fill=\"none\" stroke=\"#ff9900\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(tangentPath)\"/>
           <path fill=\"none\" stroke=\"#222222\" stroke-opacity=\"0.7\" stroke-width=\"0.6\" d=\"\(anglePath)\"/>
+          <path fill=\"none\" stroke=\"#00aaff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(offsetPath)\"/>
           \(points)
           \(envelopeElements)
           \(stampElements)
@@ -234,6 +236,7 @@ struct SVGDebugOverlay {
     var samplePoints: [Point]
     var tangentRays: [(Point, Point)]
     var angleRays: [(Point, Point)]
+    var offsetRays: [(Point, Point)]
     var envelopeLeft: [Point]
     var envelopeRight: [Point]
     var envelopeOutline: Ring

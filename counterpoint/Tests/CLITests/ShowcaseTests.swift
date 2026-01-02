@@ -153,6 +153,7 @@ final class ShowcaseTests: XCTestCase {
             samplePoints: geometry.samplePoints,
             tangentRays: geometry.tangentRays,
             angleRays: geometry.angleRays,
+            offsetRays: geometry.offsetRays,
             envelopeLeft: config.view.contains(.rails) ? geometry.envelopeLeft : [],
             envelopeRight: config.view.contains(.rails) ? geometry.envelopeRight : [],
             envelopeOutline: config.view.contains(.envelope) ? geometry.envelopeOutline : [],

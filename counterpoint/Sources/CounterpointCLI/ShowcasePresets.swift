@@ -79,6 +79,18 @@ enum ShowcasePresets {
             description: "Straight-line trumpet (negative start bias).",
             subcommand: .line,
             args: ["--view", "envelope,centerline", "--envelope-mode", "union", "--size-start", "5", "--size-end", "50", "--aspect-start", "0.35", "--aspect-end", "0.35", "--angle-start", "30", "--angle-end", "30", "--alpha-start", "-0.9"]
+        ),
+        ShowcasePreset(
+            name: "line_trumpet_offset",
+            description: "One-sided trumpet via offset ramp.",
+            subcommand: .line,
+            args: ["--view", "envelope,centerline", "--envelope-mode", "union", "--outline-fit", "bezier", "--quality", "final", "--size-start", "8", "--size-end", "40", "--aspect-start", "0.35", "--aspect-end", "0.35", "--angle-start", "30", "--angle-end", "30", "--offset-start", "0", "--offset-end", "18"]
+        ),
+        ShowcasePreset(
+            name: "scurve_offset_bias",
+            description: "Mild S-curve bias with offset ramp.",
+            subcommand: .scurve,
+            args: ["--view", "envelope", "--envelope-mode", "union", "--outline-fit", "bezier", "--quality", "final", "--angle-mode", "relative", "--angle-start", "20", "--angle-end", "75", "--size-start", "12", "--size-end", "30", "--alpha-end", "0.5", "--offset-start", "0", "--offset-end", "10"]
         )
     ]
 }
