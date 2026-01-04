@@ -174,10 +174,11 @@ func fitUnionRails(
     _ polygons: PolygonSet,
     centerlineSamples: [PathDomain.Sample],
     simplifyTolerance: Double,
-    fitTolerance: Double
+    fitTolerance: Double,
+    cornerThresholdDegrees: Double
 ) -> [FittedPath] {
-    let simplifier = BezierFitter(tolerance: simplifyTolerance)
-    let fitter = BezierFitter(tolerance: fitTolerance)
+    let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThresholdDegrees)
+    let fitter = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThresholdDegrees)
     return polygons.map { polygon in
         let isMonotone = isRingMonotoneInS(polygon.outer, centerlineSamples: centerlineSamples, epsilon: 1.0e-5)
         let combined: [CubicBezier]

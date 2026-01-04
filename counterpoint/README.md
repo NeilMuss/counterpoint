@@ -21,6 +21,9 @@ The stroke is a pen tip (here, a rectangle) swept along a skeleton path. Width, 
 - Adaptive refinement: test the midpoint stamp against the envelope formed by the end stamps + bridge pieces.
 - Refine when the midpoint stamp falls outside the envelope by more than `SamplingPolicy.envelopeTolerance`.
 - Always split deterministically at the midpoint, left then right.
+- After sampling, enforce a maximum spacing between samples (maxSpacing or baseSpacing).
+- Keyframes are evaluated using arclength progress, not parametric u.
+- Optional keyframeGrid mode samples directly at keyframe times (with maxSpacing coverage).
 
 ## JSON Example
 Example encoding for a simple stroke spec and path:
@@ -40,15 +43,21 @@ Example encoding for a simple stroke spec and path:
   "width": {"keyframes": [{"t": 0, "value": 10}, {"t": 1, "value": 10}]},
   "height": {"keyframes": [{"t": 0, "value": 20}, {"t": 1, "value": 20}]},
   "theta": {"keyframes": [{"t": 0, "value": 0}, {"t": 1, "value": 0}]},
+  "alpha": {"keyframes": [{"t": 0, "value": 0}, {"t": 1, "value": 0}]},
+  "offset": {"keyframes": [{"t": 0, "value": 0}, {"t": 1, "value": 0}]},
   "angleMode": "absolute",
   "capStyle": "round",
   "joinStyle": {"type": "miter", "miterLimit": 4.0},
+  "output": {"coordinateMode": "normalized"},
   "sampling": {
+    "mode": "adaptive",
     "baseSpacing": 2.0,
+    "maxSpacing": 2.0,
     "flatnessTolerance": 0.5,
     "rotationThresholdDegrees": 5.0,
     "minimumSpacing": 0.0001,
-    "maxSamples": 256
+    "maxSamples": 256,
+    "keyframeDensity": 1
   },
   "samplingPolicy": {
     "flattenTolerance": 1.5,
@@ -162,7 +171,8 @@ counterpoint-cli scurve --svg <outputPath>
   [--samples N] [--quality preview|final]
   [--envelope-mode rails|union] [--envelope-sides N]
   [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N]
-  [--view envelope,samples,rays,rails,union,centerline,offset]
+  [--view envelope,samples,rays,rails,union,centerline,offset|all|none]
+  [--dump-samples <path>]
   [--no-centerline]
   [--verbose]
 ```
@@ -186,7 +196,8 @@ counterpoint-cli line --svg <outputPath>
   [--samples N] [--quality preview|final]
   [--envelope-mode rails|union] [--envelope-sides N]
   [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N]
-  [--view envelope,samples,rays,rails,union,centerline]
+  [--view envelope,samples,rays,rails,union,centerline,offset|all|none]
+  [--dump-samples <path>]
   [--no-centerline]
   [--verbose]
 ```
@@ -248,6 +259,19 @@ swift run counterpoint-cli scurve --svg scurve_flat_brush.svg --view envelope --
 swift run counterpoint-cli scurve --svg scurve_debug_bundle.svg --view envelope,samples,rays,rails,centerline --envelope-mode union --angle-start 10 --angle-end 75
 ```
 
+7) Kinked joins (rails mode)
+```
+swift run counterpoint-cli line --svg kink_join_round.svg --view envelope,rails --envelope-mode rails --outline-fit bezier --join round --kink --size-start 18 --size-end 18 --aspect-start 1.0 --aspect-end 1.0 --angle-start 0 --angle-end 0
+```
+```
+swift run counterpoint-cli line --svg kink_join_bevel.svg --view envelope,rails --envelope-mode rails --outline-fit bezier --join bevel --kink --size-start 18 --size-end 18 --aspect-start 1.0 --aspect-end 1.0 --angle-start 0 --angle-end 0
+```
+```
+swift run counterpoint-cli line --svg kink_join_miter.svg --view envelope,rails --envelope-mode rails --outline-fit bezier --join miter --miter-limit 4 --kink --size-start 18 --size-end 18 --aspect-start 1.0 --aspect-end 1.0 --angle-start 0 --angle-end 0
+```
+
+Note: join styles currently apply to the rails-derived envelope. For union mode, switch to `--envelope-mode rails` to see them.
+
 Straight-line trumpet presets:
 ```
 swift run counterpoint-cli line --svg line_trumpet_neutral.svg --view envelope,centerline --envelope-mode union --size-start 5 --size-end 50 --aspect-start 0.35 --aspect-end 0.35 --angle-start 30 --angle-end 30 --alpha-start 0 --alpha-end 0
@@ -289,6 +313,22 @@ Join/cap variations (via JSON):
 swift run counterpoint-cli spec.json --svg out.svg
 ```
 
+Background glyph overlay (via JSON):
+
+```
+{
+  "backgroundGlyph": {
+    "svgPath": "/path/to/glyph.svg",
+    "fill": "#e0e0e0",
+    "stroke": "#4169e1",
+    "strokeWidth": 1.0,
+    "opacity": 0.25,
+    "zoom": 100,
+    "align": "center"
+  }
+}
+```
+
 Quality presets and overrides:
 
 ```
@@ -306,6 +346,13 @@ Debug sampling overlay:
 
 ```
 swift run counterpoint-cli --example teardrop-demo --svg teardrop-demo.svg --debug-samples
+```
+
+Dump samples to CSV (and sanity-check monotone runs):
+
+```
+swift run counterpoint-cli spec.json --dump-samples out/samples.csv --quiet
+python3 Scripts/check_samples_csv.py out/samples.csv
 ```
 
 Envelope rails in debug overlay:

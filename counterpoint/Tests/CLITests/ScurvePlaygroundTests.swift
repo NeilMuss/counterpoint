@@ -32,6 +32,19 @@ final class ScurvePlaygroundTests: XCTestCase {
         XCTAssertEqual(config.envelopeMode, .rails)
     }
 
+    func testJoinStyleParsing() throws {
+        let config = try parseScurveOptions([
+            "--svg", "out.svg",
+            "--join", "miter",
+            "--miter-limit", "3.5"
+        ])
+        guard case .miter(let limit) = config.joinStyle else {
+            XCTFail("Expected miter join style")
+            return
+        }
+        XCTAssertEqual(limit, 3.5, accuracy: 1.0e-9)
+    }
+
     func testUnionEnvelopeBeatsRailsInCurveCase() throws {
         var railsConfig = try parseScurveOptions([
             "--svg", "out.svg",

@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:counterpoint}/counterpoint",
+            "name": "Debug counterpoint-cli (counterpoint)",
+            "target": "counterpoint-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug counterpoint-cli (counterpoint)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:counterpoint}/counterpoint",
+            "name": "Release counterpoint-cli (counterpoint)",
+            "target": "counterpoint-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release counterpoint-cli (counterpoint)"
+        }
+    ]
+}

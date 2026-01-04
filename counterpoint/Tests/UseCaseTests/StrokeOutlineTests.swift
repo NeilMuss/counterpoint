@@ -154,6 +154,56 @@ final class StrokeOutlineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(bounds.maxX, 115.0 - tolerance)
     }
 
+    func testRawCoordinateModeKeepsStartPoint() {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 165, y: 20),
+                    p1: Point(x: 200, y: 20),
+                    p2: Point(x: 260, y: 20),
+                    p3: Point(x: 300, y: 20)
+                )
+            ]),
+            width: ParamTrack.constant(10),
+            height: ParamTrack.constant(20),
+            theta: ParamTrack.constant(0),
+            angleMode: .absolute,
+            sampling: SamplingSpec(),
+            output: OutputSpec(coordinateMode: .raw)
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        let first = samples.first?.point ?? Point(x: 0, y: 0)
+        XCTAssertEqual(first.x, 165, accuracy: 1.0e-6)
+        XCTAssertEqual(first.y, 20, accuracy: 1.0e-6)
+    }
+
+    func testThetaEvalFollowsKeyframes() {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 33, y: 0),
+                    p2: Point(x: 66, y: 0),
+                    p3: Point(x: 100, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(10),
+            height: ParamTrack.constant(20),
+            theta: ParamTrack(keyframes: [
+                Keyframe(t: 0.0, value: 0.0),
+                Keyframe(t: 1.0, value: 0.0)
+            ]),
+            angleMode: .absolute,
+            sampling: SamplingSpec()
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        for sample in samples {
+            XCTAssertEqual(sample.theta, 0.0, accuracy: 1.0e-6)
+        }
+    }
+
     private func makeUseCase() -> GenerateStrokeOutlineUseCase {
         GenerateStrokeOutlineUseCase(
             sampler: DefaultPathSampler(),

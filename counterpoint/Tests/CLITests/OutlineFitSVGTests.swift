@@ -15,7 +15,8 @@ final class OutlineFitSVGTests: XCTestCase {
         let geometry = try buildScurveGeometry(config: config)
 
         let polygons: PolygonSet
-        if config.envelopeMode == .union {
+        let preferRailsForJoin = config.envelopeMode == .union && config.joinStyle != .round
+        if config.envelopeMode == .union && !preferRailsForJoin {
             polygons = geometry.unionPolygons.isEmpty
                 ? geometry.stampRings.map { Polygon(outer: $0) }
                 : geometry.unionPolygons
@@ -25,13 +26,14 @@ final class OutlineFitSVGTests: XCTestCase {
 
         let fitTolerance = config.fitTolerance ?? defaultFitTolerance(polygons: polygons)
         let simplifyTolerance = config.simplifyTolerance ?? (fitTolerance * 1.5)
-        let simplifier = BezierFitter(tolerance: simplifyTolerance)
+        let cornerThreshold = outlineCornerThresholdDegrees(for: config.joinStyle)
+        let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
         let simplified = polygons.map { polygon in
             let outer = simplifier.simplifyRing(polygon.outer, closed: true)
             let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
             return Polygon(outer: outer, holes: holes)
         }
-        let fittedPaths = BezierFitter(tolerance: fitTolerance).fitPolygonSet(simplified)
+        let fittedPaths = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThreshold).fitPolygonSet(simplified)
 
         let svg = SVGPathBuilder().svgDocument(for: [], fittedPaths: fittedPaths, size: nil, padding: config.padding, debugOverlay: nil)
         guard let filledPathLine = svg.split(separator: "\n").first(where: { $0.contains("fill=\"black\"") }) else {
@@ -68,7 +70,8 @@ final class OutlineFitSVGTests: XCTestCase {
             polygons,
             centerlineSamples: geometry.centerlineSamples,
             simplifyTolerance: simplifyTolerance,
-            fitTolerance: fitTolerance
+            fitTolerance: fitTolerance,
+            cornerThresholdDegrees: outlineCornerThresholdDegrees(for: config.joinStyle)
         )
         guard let subpath = fitted.first?.subpaths.first else {
             XCTFail("Missing fitted path")
@@ -131,7 +134,8 @@ final class OutlineFitSVGTests: XCTestCase {
             polygons,
             centerlineSamples: geometry.centerlineSamples,
             simplifyTolerance: simplifyTolerance,
-            fitTolerance: fitTolerance
+            fitTolerance: fitTolerance,
+            cornerThresholdDegrees: outlineCornerThresholdDegrees(for: config.joinStyle)
         )
         if outlineHasSelfIntersection(fitted) {
             fitted = []
@@ -167,7 +171,8 @@ final class OutlineFitSVGTests: XCTestCase {
             polygons,
             centerlineSamples: geometry.centerlineSamples,
             simplifyTolerance: simplifyTolerance,
-            fitTolerance: fitTolerance
+            fitTolerance: fitTolerance,
+            cornerThresholdDegrees: outlineCornerThresholdDegrees(for: config.joinStyle)
         )
         if outlineHasSelfIntersection(fitted) {
             fitted = []

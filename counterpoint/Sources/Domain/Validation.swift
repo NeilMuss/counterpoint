@@ -35,6 +35,37 @@ public struct StrokeSpecValidator: SpecValidating {
         validate(track: spec.width, name: "width", mustBePositive: true, errors: &errors)
         validate(track: spec.height, name: "height", mustBePositive: true, errors: &errors)
         validate(track: spec.theta, name: "theta", mustBePositive: false, errors: &errors)
+        if let offset = spec.offset {
+            validate(track: offset, name: "offset", mustBePositive: false, errors: &errors)
+        }
+        if let alpha = spec.alpha {
+            validate(track: alpha, name: "alpha", mustBePositive: false, errors: &errors)
+        }
+
+        if let debug = spec.debugReference {
+            if debug.svgPathD.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                errors.append("DebugReference svgPathD must be non-empty.")
+            }
+            if let opacity = debug.opacity {
+                if !opacity.isFinite || opacity < 0.0 || opacity > 1.0 {
+                    errors.append("DebugReference opacity must be in [0,1].")
+                }
+            }
+        }
+        if let background = spec.backgroundGlyph {
+            if background.svgPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                errors.append("BackgroundGlyph svgPath must be non-empty.")
+            }
+            if !background.strokeWidth.isFinite || background.strokeWidth < 0.0 {
+                errors.append("BackgroundGlyph strokeWidth must be non-negative and finite.")
+            }
+            if !background.opacity.isFinite || background.opacity < 0.0 || background.opacity > 1.0 {
+                errors.append("BackgroundGlyph opacity must be in [0,1].")
+            }
+            if !background.zoom.isFinite || background.zoom <= 0.0 {
+                errors.append("BackgroundGlyph zoom must be positive and finite.")
+            }
+        }
 
         if case .miter(let limit) = spec.joinStyle {
             if !limit.isFinite || limit <= 0 {
@@ -44,6 +75,14 @@ public struct StrokeSpecValidator: SpecValidating {
 
         if spec.sampling.baseSpacing <= 0 || !spec.sampling.baseSpacing.isFinite {
             errors.append("Sampling baseSpacing must be a positive finite value.")
+        }
+        if let maxSpacing = spec.sampling.maxSpacing {
+            if maxSpacing <= 0 || !maxSpacing.isFinite {
+                errors.append("Sampling maxSpacing must be a positive finite value.")
+            }
+        }
+        if spec.sampling.keyframeDensity < 1 {
+            errors.append("Sampling keyframeDensity must be >= 1.")
         }
         if spec.sampling.flatnessTolerance <= 0 || !spec.sampling.flatnessTolerance.isFinite {
             errors.append("Sampling flatnessTolerance must be a positive finite value.")

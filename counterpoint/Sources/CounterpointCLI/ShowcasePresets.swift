@@ -63,6 +63,24 @@ enum ShowcasePresets {
             args: ["--view", "envelope,samples,rays,rails,centerline", "--envelope-mode", "union", "--angle-start", "10", "--angle-end", "75"]
         ),
         ShowcasePreset(
+            name: "kink_join_round",
+            description: "Kinked rail join (round).",
+            subcommand: .line,
+            args: ["--view", "envelope,rails", "--envelope-mode", "rails", "--outline-fit", "bezier", "--join", "round", "--kink", "--size-start", "18", "--size-end", "18", "--aspect-start", "1.0", "--aspect-end", "1.0", "--angle-start", "0", "--angle-end", "0"]
+        ),
+        ShowcasePreset(
+            name: "kink_join_bevel",
+            description: "Kinked rail join (bevel).",
+            subcommand: .line,
+            args: ["--view", "envelope,rails", "--envelope-mode", "rails", "--outline-fit", "bezier", "--join", "bevel", "--kink", "--size-start", "18", "--size-end", "18", "--aspect-start", "1.0", "--aspect-end", "1.0", "--angle-start", "0", "--angle-end", "0"]
+        ),
+        ShowcasePreset(
+            name: "kink_join_miter",
+            description: "Kinked rail join (miter, limit 4).",
+            subcommand: .line,
+            args: ["--view", "envelope,rails", "--envelope-mode", "rails", "--outline-fit", "bezier", "--join", "miter", "--miter-limit", "4", "--kink", "--size-start", "18", "--size-end", "18", "--aspect-start", "1.0", "--aspect-end", "1.0", "--angle-start", "0", "--angle-end", "0"]
+        ),
+        ShowcasePreset(
             name: "line_trumpet_neutral",
             description: "Straight-line trumpet (neutral alpha).",
             subcommand: .line,

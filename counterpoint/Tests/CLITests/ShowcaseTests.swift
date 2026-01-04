@@ -87,10 +87,11 @@ final class ShowcaseTests: XCTestCase {
         }
 
         let needsEnvelope = config.view.contains(.envelope)
+        let preferRailsForJoin = config.envelopeMode == .union && config.joinStyle != .round
         let fallbackToSamples = needsEnvelope && config.envelopeMode == .union && geometry.unionPolygons.isEmpty
         let polygons: PolygonSet
         if needsEnvelope {
-            if config.envelopeMode == .union {
+            if config.envelopeMode == .union && !preferRailsForJoin {
                 polygons = geometry.unionPolygons.isEmpty
                     ? geometry.stampRings.map { Polygon(outer: $0) }
                     : geometry.unionPolygons
@@ -103,6 +104,7 @@ final class ShowcaseTests: XCTestCase {
 
         let fitTolerance = config.fitTolerance ?? defaultFitTolerance(polygons: polygons)
         let simplifyTolerance = config.simplifyTolerance ?? (fitTolerance * 1.5)
+        let cornerThreshold = outlineCornerThresholdDegrees(for: config.joinStyle)
         var fittedPaths: [FittedPath]?
         var renderPolygons: PolygonSet
         switch config.outlineFit {
@@ -110,7 +112,7 @@ final class ShowcaseTests: XCTestCase {
             fittedPaths = nil
             renderPolygons = polygons
         case .simplify:
-            let fitter = BezierFitter(tolerance: fitTolerance)
+            let fitter = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThreshold)
             let simplified = polygons.map { polygon in
                 let outer = fitter.simplifyRing(polygon.outer, closed: true)
                 let holes = polygon.holes.map { fitter.simplifyRing($0, closed: true) }
@@ -124,16 +126,17 @@ final class ShowcaseTests: XCTestCase {
                     polygons,
                     centerlineSamples: geometry.centerlineSamples,
                     simplifyTolerance: simplifyTolerance,
-                    fitTolerance: fitTolerance
+                    fitTolerance: fitTolerance,
+                    cornerThresholdDegrees: outlineCornerThresholdDegrees(for: config.joinStyle)
                 )
             } else {
-                let simplifier = BezierFitter(tolerance: simplifyTolerance)
+                let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
                 let simplified = polygons.map { polygon in
                     let outer = simplifier.simplifyRing(polygon.outer, closed: true)
                     let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
                     return Polygon(outer: outer, holes: holes)
                 }
-                let fitter = BezierFitter(tolerance: fitTolerance)
+                let fitter = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThreshold)
                 fittedPaths = fitter.fitPolygonSet(simplified)
             }
             renderPolygons = []
