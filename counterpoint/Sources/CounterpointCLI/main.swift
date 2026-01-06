@@ -269,7 +269,9 @@ struct CLI {
             let cleanup = cleanupTouchingEdges(
                 rings: indexed,
                 epsilon: touchEps,
-                minRemainingCount: nil
+                minKeep: nil,
+                maxDrops: nil,
+                verbose: false
             )
             selection = UnionDumpSelection(
                 rings: cleanup.rings.map { $0.ring },
@@ -1341,7 +1343,9 @@ private func cleanupCoincidentEdges(
 private func cleanupTouchingEdges(
     rings: [IndexedRing],
     epsilon: Double,
-    minRemainingCount: Int?
+    minKeep: Int?,
+    maxDrops: Int?,
+    verbose: Bool
 ) -> TouchingCleanupResult {
     print("cleanup-touching start rings=\(rings.count)")
     guard epsilon > 0, rings.count > 1 else {
@@ -1351,14 +1355,10 @@ private func cleanupTouchingEdges(
     var dropped: [(ring: IndexedRing, degree: Int)] = []
     var lastPairCount = 0
     var lastInvolved: [Int] = []
-    let maxIterations = rings.count + 5
-    let maxDrops = rings.count
-    var iterations = 0
+    let maxDropLimit = maxDrops ?? rings.count
 
     while true {
-        iterations += 1
-        if iterations > maxIterations || dropped.count > maxDrops {
-            print("cleanup-touching aborted: iterCap (iterations=\(iterations), drops=\(dropped.count), remaining=\(working.count))")
+        if dropped.count >= maxDropLimit {
             break
         }
         let touchInfo = touchingPairs(rings: working, epsilon: epsilon)
@@ -1368,11 +1368,14 @@ private func cleanupTouchingEdges(
         if touchInfo.pairCount == 0 || touchInfo.involvedIndices.isEmpty {
             break
         }
-        if let minRemainingCount, working.count <= minRemainingCount {
+        if let minKeep, working.count <= minKeep {
             break
         }
         guard let candidate = selectTouchDropCandidate(rings: working, degrees: touchInfo.degrees) else {
             break
+        }
+        if verbose {
+            print("cleanup-touching drop idx=\(candidate.ring.index) degree=\(candidate.degree) area=\(String(format: "%.4f", candidate.ring.area)) remaining=\(max(0, working.count - 1)) pairs=\(touchInfo.pairCount)")
         }
         working.removeAll { $0.index == candidate.ring.index }
         dropped.append(candidate)
@@ -1583,13 +1586,9 @@ private func logTouchingCleanup(label: String, result: TouchingCleanupResult) {
         return
     }
     let involved = result.involvedIndices.map(String.init).joined(separator: ",")
-    let dropped = result.dropped.map { "\($0.ring.index):\(String(format: "%.4f", $0.ring.area)):\($0.degree)" }.joined(separator: ",")
     print("cleanup-touching foundPairs=\(result.pairCount) involvedRings=[\(involved)]")
-    if dropped.isEmpty {
-        print("cleanup-touching dropped=[] remaining=\(result.rings.count)")
-    } else {
-        print("cleanup-touching dropped=[\(dropped)] remaining=\(result.rings.count)")
-    }
+    let dropped = result.dropped.map { "\($0.ring.index):\(String(format: "%.4f", $0.ring.area)):\($0.degree)" }.joined(separator: ",")
+    print("cleanup-touching dropped=\(dropped.isEmpty ? "[]" : "[\(dropped)]") remaining=\(result.rings.count) pairs=\(result.pairCount)")
 }
 
 private struct RingSummary {
@@ -3678,13 +3677,23 @@ private struct AutoUnioner: PolygonUnioning {
             minRemainingCount: 120
         )
         logCoincidentEdgeCleanup(label: label, result: coincidentCleanup)
+        let minKeep = 6
+        let maxDrops = min(40, max(0, coincidentCleanup.rings.count - minKeep))
         let touchCleanup = cleanupTouchingEdges(
             rings: coincidentCleanup.rings,
             epsilon: 5.0e-4,
-            minRemainingCount: 120
+            minKeep: minKeep,
+            maxDrops: maxDrops,
+            verbose: verbose
         )
         logTouchingCleanup(label: label, result: touchCleanup)
         unionInput = touchCleanup.rings.map { $0.ring }
+        if touchCleanup.pairCount > 0 || touchCleanup.dropped.count >= maxDrops {
+            print("\(label) auto union skipped: touchingPairsRemaining pairs=\(touchCleanup.pairCount) remaining=\(unionInput.count)")
+            print("\(label) auto union preflight rings=\(unionInput.count) pairs=\(touchCleanup.pairCount) action=skip")
+            return cleaned.rings.map { Polygon(outer: $0) }
+        }
+        print("\(label) auto union preflight rings=\(unionInput.count) pairs=\(touchCleanup.pairCount) action=union")
         let safeMaxRingsAuto = 120
         let safeMaxTotalVertsAuto = 3000
         let safeMaxRingVertsAuto = 128
