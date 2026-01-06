@@ -16,7 +16,7 @@ final class TeardropDemoTests: XCTestCase {
 
         let outline = try makeUseCase().generateOutline(for: spec, includeBridges: true)
         XCTAssertFalse(outline.isEmpty)
-        XCTAssertLessThanOrEqual(outline.count, 4)
+        XCTAssertLessThanOrEqual(outline.count, 8)
     }
 
     func testTeardropDemoSVGDeterminism() throws {

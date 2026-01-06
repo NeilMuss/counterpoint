@@ -69,12 +69,21 @@ Example encoding for a simple stroke spec and path:
 }
 ```
 
+## Glyph JSON v0 (Fixed Frame / One-Way Evaluation)
+- Glyph placement and metrics live only in `frame`; geometry is never translated to encode metrics.
+- `derived` is an optional cache. It never feeds back into inputs or validation.
+- Schema models live in `Sources/Domain/GlyphDocumentV0.swift`; validation lives in `Sources/Domain/Validation/GlyphValidation.swift`.
+
 ## Tests
 Run tests:
 
 ```
 swift test
 ```
+
+Fast vs slow tests:
+- Default `swift test` runs fast tests only.
+- Slow/render-heavy tests are gated; run with `RUN_SLOW_TESTS=1 swift test`.
 
 Tests are fast, deterministic, and validate:
 - Straight line bounds at `theta = 0` and `theta = pi/2`
@@ -328,6 +337,78 @@ Background glyph overlay (via JSON):
   }
 }
 ```
+
+Centerline-only mode (glyph JSON):
+- Render ink paths as thin stroked centerlines (no envelopes or fills).
+
+```
+swift run counterpoint-cli Fixtures/glyphs/J.v0.json --centerline-only --svg out/J.svg
+```
+
+Stroke preview mode (glyph JSON):
+- Render ink paths as simple stroked envelopes with a constant rectangular counterpoint.
+- Relative preview angles orient the nib so width stays perpendicular to the tangent (vertical stems remain broad when width > height).
+
+```
+swift run counterpoint-cli Fixtures/glyphs/J.v0.json --stroke-preview --svg out/J.svg
+```
+
+Authored strokes (glyph JSON):
+- Add `type: "stroke"` items that reference one or more skeleton paths and provide param curves.
+- Normal rendering produces filled outlines; `--quality final` enables union by default.
+
+```
+{
+  "id": "stroke:main",
+  "type": "stroke",
+  "skeletons": ["ink:spine", "ink:hook"],
+  "params": {
+    "angleMode": "tangentRelative",
+    "width":  { "keyframes": [{ "t": 0, "value": 28 }, { "t": 1, "value": 28 }] },
+    "height": { "keyframes": [{ "t": 0, "value": 6 },  { "t": 1, "value": 6 }] },
+    "theta":  { "keyframes": [{ "t": 0, "value": 0 },  { "t": 1, "value": 0 }] }
+  },
+  "samplingPolicy": {
+    "flattenTolerance": 1.0,
+    "envelopeTolerance": 0.75,
+    "maxSamples": 320,
+    "maxRecursionDepth": 10,
+    "minParamStep": 0.005
+  },
+  "joins": {
+    "capStyle": "round",
+    "joinStyle": { "type": "miter", "miterLimit": 4.0 }
+  }
+}
+```
+
+```
+swift run counterpoint-cli Fixtures/glyphs/J.v0.json --quality final --svg out/J_final.svg
+```
+
+Preview sampling controls:
+- `--preview-samples N` (samples per cubic; higher is smoother)
+- `--preview-quality preview|final` (affects flattening tolerance)
+- `--preview-angle-mode absolute|relative` (rotate nib with tangent in relative mode)
+- `--preview-angle-deg N` (angle offset in degrees; default 30)
+- `--preview-width N` (preview width; default 24)
+- `--preview-height N` (preview height; default 8)
+- `--preview-nib-rotate-deg N` (rotate nib before angle/tangent; default 0)
+- `--preview-union auto|never|always` (default never; `auto` selects based on ring count)
+- `--final-union auto|never|always` (default auto; skips union if too complex)
+- `--union-simplify-tol N` (default 0.75; simplify rings before union)
+- `--union-max-verts N` (default 5000; cap per-ring vertices for union)
+- `--union-batch-size N` (default 50; union in batches)
+- `--union-area-eps N` (default 1e-6; drop tiny rings)
+- `--union-weld-eps N` (default 1e-5; merge near-duplicate points)
+- `--union-edge-eps N` (default 1e-5; drop tiny edges)
+- `--union-min-ring-area N` (default 5.0; drop tiny rings before union)
+- `--union-auto-time-budget-ms N` (default 1500; auto union bailout time budget)
+- `--union-input-filter none|silhouette` (default none; keep largest rings by bbox)
+
+Outline fitting (glyph JSON):
+- `--outline-fit none|simplify|bezier` (default none)
+- `--fit-tolerance N`, `--simplify-tolerance N`
 
 Quality presets and overrides:
 

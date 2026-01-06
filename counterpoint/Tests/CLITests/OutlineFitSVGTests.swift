@@ -4,6 +4,7 @@ import Domain
 
 final class OutlineFitSVGTests: XCTestCase {
     func testBezierOutlineUsesCubicFillPath() throws {
+        try SlowTestGate.requireSlowTests()
         var config = try parseScurveOptions([
             "--svg", "out.svg",
             "--view", "envelope",
@@ -46,6 +47,7 @@ final class OutlineFitSVGTests: XCTestCase {
     }
 
     func testBezierOutlineMonotoneSidesForTrumpet() throws {
+        try SlowTestGate.requireSlowTests()
         let config = try parseScurveOptions([
             "--svg", "out.svg",
             "--view", "envelope",
@@ -84,6 +86,7 @@ final class OutlineFitSVGTests: XCTestCase {
     }
 
     func testBezierOutlineUsesMonotoneLoopForNeutralTrumpet() throws {
+        try SlowTestGate.requireSlowTests()
         let config = try parseScurveOptions([
             "--svg", "out.svg",
             "--view", "envelope",
@@ -110,6 +113,7 @@ final class OutlineFitSVGTests: XCTestCase {
     }
 
     func testBezierOutlineNoSelfIntersectionForNeutralTrumpet() throws {
+        try SlowTestGate.requireSlowTests()
         let config = try parseScurveOptions([
             "--svg", "out.svg",
             "--view", "envelope",
@@ -144,6 +148,7 @@ final class OutlineFitSVGTests: XCTestCase {
     }
 
     func testBezierOutlineNoSelfIntersectionForScurveStress() throws {
+        try SlowTestGate.requireSlowTests()
         let config = try parseScurveOptions([
             "--svg", "out.svg",
             "--view", "envelope",

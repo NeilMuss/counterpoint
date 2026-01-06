@@ -3,16 +3,12 @@ import Domain
 @testable import CounterpointCLI
 
 final class ShowcaseTests: XCTestCase {
-    private var runSlow: Bool {
-        ProcessInfo.processInfo.environment["RUN_SLOW_TESTS"] == "1"
-    }
-
     func testShowcaseRequiresOutputDirectory() {
         XCTAssertThrowsError(try parseShowcaseOptions([]))
     }
 
     func testShowcaseGoldenSVGs() throws {
-        try XCTSkipUnless(runSlow, "Set RUN_SLOW_TESTS=1 to run showcase golden rendering.")
+        try SlowTestGate.requireSlowTests()
         for preset in ShowcasePresets.all {
             let expectedURL = try fixtureURL(pathComponents: ["Fixtures", "Showcase", "\(preset.name).svg"])
             let expected = try String(contentsOf: expectedURL, encoding: .utf8)

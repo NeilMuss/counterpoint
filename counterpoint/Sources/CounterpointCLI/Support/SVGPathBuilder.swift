@@ -80,6 +80,57 @@ struct SVGPathBuilder {
         """
     }
 
+    func svgDocumentForGlyphReference(
+        frameBounds: CGRect,
+        size: CGSize?,
+        padding: Double,
+        reference: BackgroundGlyphRender?,
+        centerlinePaths: [String] = [],
+        polygons: PolygonSet = [],
+        fittedPaths: [FittedPath]? = nil
+    ) -> String {
+        let generatedBounds = frameBounds
+        let referenceBounds = reference.map { transformedBackgroundBounds($0, generatedBounds: generatedBounds) }
+        let polygonBounds = (polygons.isEmpty && fittedPaths == nil) ? nil : boundsFor(polygons: polygons, fittedPaths: fittedPaths, debugOverlay: nil)
+        let bounds = unionBounds(unionBounds(generatedBounds, referenceBounds), polygonBounds)
+        let padded = bounds.insetBy(dx: -padding, dy: -padding)
+        let viewBox = padded
+        let width = size?.width ?? viewBox.width
+        let height = size?.height ?? viewBox.height
+        let referenceGroup = reference.map { backgroundGlyphElements($0, generatedBounds: generatedBounds) } ?? ""
+        let centerlines = centerlinePaths.joined(separator: "\n")
+        let polygonPaths: String
+        if let fittedPaths {
+            polygonPaths = fittedPaths.map { pathData(for: $0) }.joined(separator: "\n")
+        } else {
+            polygonPaths = polygons.map { pathData(for: $0) }.joined(separator: "\n")
+        }
+
+        return """
+        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"\(format(width))\" height=\"\(format(height))\" viewBox=\"\(format(viewBox.minX)) \(format(viewBox.minY)) \(format(viewBox.width)) \(format(viewBox.height))\">
+          \(referenceGroup)
+          \(centerlines)
+          \(polygonPaths)
+        </svg>
+        """
+    }
+
+    func centerlinePathElement(for segments: [GlyphSegment], stroke: String, strokeWidth: Double) -> String {
+        var parts: [String] = []
+        var started = false
+        for segment in segments {
+            guard case .cubic(let cubic) = segment else { continue }
+            if !started {
+                parts.append("M \(format(cubic.p0.x)) \(format(cubic.p0.y))")
+                started = true
+            }
+            parts.append("C \(format(cubic.p1.x)) \(format(cubic.p1.y)) \(format(cubic.p2.x)) \(format(cubic.p2.y)) \(format(cubic.p3.x)) \(format(cubic.p3.y))")
+        }
+        guard !parts.isEmpty else { return "" }
+        let d = parts.joined(separator: " ")
+        return "<path fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(format(strokeWidth))\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"\(d)\"/>"
+    }
+
     func pathData(for polygon: Polygon) -> String {
         let outer = ringPath(polygon.outer)
         let holes = polygon.holes.map { ringPath($0) }.joined(separator: " ")

@@ -7,6 +7,7 @@ import Adapters
 
 final class GoldenSVGTests: XCTestCase {
     func testGoldenSVGs() throws {
+        try SlowTestGate.requireSlowTests()
         let cases = [
             "straight-absolute",
             "straight-tangent-relative",

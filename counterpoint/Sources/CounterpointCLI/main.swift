@@ -48,6 +48,12 @@ struct CLI {
         }
 
         let decoder = JSONDecoder()
+        if let glyphDoc = try? decoder.decode(GlyphDocument.self, from: inputData),
+           glyphDoc.schema == GlyphDocument.schemaId {
+            try GlyphDocumentValidator().validate(glyphDoc)
+            try renderGlyphDocument(glyphDoc, options: options, inputPath: options.inputPath)
+            return
+        }
         var spec: StrokeSpec
         do {
             spec = try decoder.decode(StrokeSpec.self, from: inputData)
@@ -555,6 +561,35 @@ struct CLIOptions {
     var envelopeTolerance: Double?
     var flattenTolerance: Double?
     var maxSamples: Int?
+    var centerlineOnly: Bool
+    var strokePreview: Bool
+    var previewSamples: Int?
+    var previewQuality: String?
+    var previewAngleMode: AngleMode?
+    var previewAngleDeg: Double?
+    var previewWidth: Double?
+    var previewHeight: Double?
+    var previewNibRotateDeg: Double?
+    var previewUnionMode: PreviewUnionMode?
+    var unionSimplifyTolerance: Double?
+    var unionMaxVertices: Int?
+    var finalUnionMode: FinalUnionMode?
+    var unionBatchSize: Int?
+    var unionAreaEps: Double?
+    var unionWeldEps: Double?
+    var unionEdgeEps: Double?
+    var unionMinRingArea: Double?
+    var unionAutoTimeBudgetMs: Int?
+    var unionInputFilter: UnionInputFilter?
+    var outlineFit: OutlineFitMode?
+    var fitTolerance: Double?
+    var simplifyTolerance: Double?
+    var verbose: Bool
+}
+
+enum UnionInputFilter: String {
+    case none
+    case silhouette
 }
 
 struct ScurvePlaygroundConfig: Equatable {
@@ -609,6 +644,18 @@ enum EnvelopeMode: String {
     case union
 }
 
+enum PreviewUnionMode: String {
+    case auto
+    case never
+    case always
+}
+
+enum FinalUnionMode: String {
+    case auto
+    case never
+    case always
+}
+
 struct ScurveGeometry {
     var envelopeLeft: [Point]
     var envelopeRight: [Point]
@@ -631,7 +678,7 @@ struct ShowcaseOptions {
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
-    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil)
+    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false)
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -660,6 +707,8 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             index += 1
         case "--quiet":
             options.quiet = true
+        case "--verbose":
+            options.verbose = true
         case "--bridges":
             options.useBridges = true
         case "--no-bridges":
@@ -668,6 +717,140 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.debugSamples = true
         case "--debug-overlay":
             options.debugSamples = true
+        case "--centerline-only":
+            options.centerlineOnly = true
+        case "--stroke-preview":
+            options.strokePreview = true
+        case "--preview-samples":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--preview-samples requires an integer")
+            }
+            options.previewSamples = value
+            index += 1
+        case "--preview-quality":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--preview-quality requires preview|final") }
+            options.previewQuality = args[index + 1].lowercased()
+            index += 1
+        case "--preview-angle-mode":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--preview-angle-mode requires absolute|relative") }
+            options.previewAngleMode = try parseAngleMode(args[index + 1])
+            index += 1
+        case "--preview-angle-deg":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--preview-angle-deg requires a number")
+            }
+            options.previewAngleDeg = value
+            index += 1
+        case "--preview-width":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--preview-width requires a number")
+            }
+            options.previewWidth = value
+            index += 1
+        case "--preview-height":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--preview-height requires a number")
+            }
+            options.previewHeight = value
+            index += 1
+        case "--preview-nib-rotate-deg":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--preview-nib-rotate-deg requires a number")
+            }
+            options.previewNibRotateDeg = value
+            index += 1
+        case "--preview-union":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--preview-union requires auto|never|always") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = PreviewUnionMode(rawValue: mode) else {
+                throw CLIError.invalidArguments("--preview-union must be auto|never|always")
+            }
+            options.previewUnionMode = parsed
+            index += 1
+        case "--final-union":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = FinalUnionMode(rawValue: mode) else {
+                throw CLIError.invalidArguments("--final-union must be auto|never|always")
+            }
+            options.finalUnionMode = parsed
+            index += 1
+        case "--union-simplify-tol":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-simplify-tol requires a number")
+            }
+            options.unionSimplifyTolerance = value
+            index += 1
+        case "--union-max-verts":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-max-verts requires an integer")
+            }
+            options.unionMaxVertices = value
+            index += 1
+        case "--union-batch-size":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-batch-size requires an integer")
+            }
+            options.unionBatchSize = value
+            index += 1
+        case "--union-area-eps":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-area-eps requires a number")
+            }
+            options.unionAreaEps = value
+            index += 1
+        case "--union-weld-eps":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-weld-eps requires a number")
+            }
+            options.unionWeldEps = value
+            index += 1
+        case "--union-edge-eps":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-edge-eps requires a number")
+            }
+            options.unionEdgeEps = value
+            index += 1
+        case "--union-auto-time-budget-ms":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-auto-time-budget-ms requires an integer")
+            }
+            options.unionAutoTimeBudgetMs = value
+            index += 1
+        case "--union-input-filter":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--union-input-filter requires none|silhouette") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = UnionInputFilter(rawValue: mode) else {
+                throw CLIError.invalidArguments("--union-input-filter must be none|silhouette")
+            }
+            options.unionInputFilter = parsed
+            index += 1
+        case "--union-min-ring-area":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-min-ring-area requires a number")
+            }
+            options.unionMinRingArea = value
+            index += 1
+        case "--outline-fit":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--outline-fit requires none|simplify|bezier") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = OutlineFitMode(rawValue: mode) else {
+                throw CLIError.invalidArguments("--outline-fit must be none|simplify|bezier")
+            }
+            options.outlineFit = parsed
+            index += 1
+        case "--fit-tolerance":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--fit-tolerance requires a number")
+            }
+            options.fitTolerance = value
+            index += 1
+        case "--simplify-tolerance":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--simplify-tolerance requires a number")
+            }
+            options.simplifyTolerance = value
+            index += 1
         case "--dump-samples":
             guard index + 1 < args.count else { throw CLIError.invalidArguments("--dump-samples requires a file path") }
             options.dumpSamplesPath = args[index + 1]
@@ -1839,13 +2022,994 @@ func outlineCornerThresholdDegrees(for joinStyle: JoinStyle) -> Double {
     }
 }
 
+private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions, inputPath: String?) throws {
+    guard let svgPath = options.svgOutputPath else {
+        throw CLIError.invalidArguments("Glyph documents require --svg output.")
+    }
+    let outputURL = URL(fileURLWithPath: svgPath)
+    let outputDir = outputURL.deletingLastPathComponent()
+    if !outputDir.path.isEmpty, outputDir.path != "." {
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+    }
+
+    let referenceRender: SVGPathBuilder.BackgroundGlyphRender?
+    if let reference = document.derived?.reference {
+        let resolvedPath = resolveReferencePath(reference.source, inputPath: inputPath)
+        guard let source = SVGPathBuilder.loadBackgroundGlyph(from: resolvedPath) else {
+            throw CLIError.runtime("Failed to load reference SVG at: \(resolvedPath)")
+        }
+        let bounds = source.viewBox ?? source.bounds
+        let scale = reference.transform?.scale ?? 1.0
+        let translate = reference.transform?.translate ?? Point(x: 0, y: 0)
+        var manual = CGAffineTransform.identity
+        manual = manual.scaledBy(x: scale, y: scale)
+        manual = manual.translatedBy(x: translate.x, y: translate.y)
+        referenceRender = SVGPathBuilder.BackgroundGlyphRender(
+            elements: source.elements,
+            bounds: bounds,
+            fill: "#e0e0e0",
+            stroke: "#4169e1",
+            strokeWidth: 1.0,
+            opacity: 1.0,
+            zoom: 100.0,
+            align: .none,
+            manualTransform: manual
+        )
+    } else {
+        referenceRender = nil
+    }
+
+    let frameBounds = glyphFrameBounds(document.frame, reference: referenceRender)
+    let builder = SVGPathBuilder()
+    let centerlines: [String]
+    let strokePreviewPolygons: PolygonSet
+    let authoredPolygons: PolygonSet
+    let authoredFittedPaths: [FittedPath]?
+    if options.centerlineOnly {
+        let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
+        var rendered: [String] = []
+        rendered.reserveCapacity(document.inputs.geometry.ink.count)
+        for item in document.inputs.geometry.ink {
+            switch item {
+            case .path(let path):
+                let element = builder.centerlinePathElement(for: path.segments, stroke: "#111111", strokeWidth: 1.0)
+                if !element.isEmpty { rendered.append(element) }
+            case .stroke(let stroke):
+                for skeleton in stroke.skeletons {
+                    if let path = pathById[skeleton] {
+                        let element = builder.centerlinePathElement(for: path.segments, stroke: "#111111", strokeWidth: 1.0)
+                        if !element.isEmpty { rendered.append(element) }
+                    }
+                }
+            case .unknown:
+                continue
+            }
+        }
+        centerlines = rendered
+        strokePreviewPolygons = []
+        authoredPolygons = []
+        authoredFittedPaths = nil
+    } else if options.strokePreview {
+        centerlines = []
+        strokePreviewPolygons = buildStrokePreviewPolygons(document: document, options: options)
+        authoredPolygons = []
+        authoredFittedPaths = nil
+    } else {
+        centerlines = []
+        strokePreviewPolygons = []
+        let authored = try buildAuthoredStrokePolygons(document: document, options: options)
+        authoredPolygons = authored.polygons
+        authoredFittedPaths = authored.fittedPaths
+    }
+    let svg = builder.svgDocumentForGlyphReference(
+        frameBounds: frameBounds,
+        size: options.svgSize,
+        padding: options.padding,
+        reference: referenceRender,
+        centerlinePaths: centerlines,
+        polygons: strokePreviewPolygons + authoredPolygons,
+        fittedPaths: authoredFittedPaths
+    )
+    try svg.write(to: outputURL, atomically: true, encoding: .utf8)
+}
+
+private func resolveReferencePath(_ source: String, inputPath: String?) -> String {
+    if source.hasPrefix("/") { return source }
+    let fm = FileManager.default
+    if let inputPath {
+        let base = URL(fileURLWithPath: inputPath).deletingLastPathComponent()
+        let candidate = base.appendingPathComponent(source).path
+        if fm.fileExists(atPath: candidate) { return candidate }
+        let references = base.appendingPathComponent("references").appendingPathComponent(source).path
+        if fm.fileExists(atPath: references) { return references }
+        let siblingReferences = base.deletingLastPathComponent().appendingPathComponent("references").appendingPathComponent(source).path
+        if fm.fileExists(atPath: siblingReferences) { return siblingReferences }
+    }
+    let cwdReferences = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("references")
+        .appendingPathComponent(source)
+        .path
+    if fm.fileExists(atPath: cwdReferences) { return cwdReferences }
+    return source
+}
+
+private func glyphFrameBounds(_ frame: GlyphFrame, reference: SVGPathBuilder.BackgroundGlyphRender?) -> CGRect {
+    if let size = frame.size {
+        return CGRect(x: frame.origin.x, y: frame.origin.y, width: size.width, height: size.height)
+    }
+    if let reference {
+        return reference.bounds
+    }
+    return CGRect(x: frame.origin.x, y: frame.origin.y, width: 1.0, height: 1.0)
+}
+
+private func buildStrokePreviewPolygons(document: GlyphDocument, options: CLIOptions) -> PolygonSet {
+    var polygons: PolygonSet = []
+    polygons.reserveCapacity(document.inputs.geometry.paths.count)
+
+    let width = options.previewWidth ?? 24.0
+    let height = options.previewHeight ?? 8.0
+    let angleMode = options.previewAngleMode ?? .absolute
+    let angleOffset = (options.previewAngleDeg ?? 30.0) * .pi / 180.0
+    let nibRotate = (options.previewNibRotateDeg ?? 0.0) * .pi / 180.0
+    let baseRotation = nibRotate + angleOffset
+    let samplesPerSegment = max(2, options.previewSamples ?? defaultPreviewSamples(for: options.previewQuality))
+    let sampler = DefaultPathSampler()
+
+    let stamping = CounterpointStamping()
+    let builder = BridgeBuilder()
+    let previewUnionMaxRings = 200
+
+    for path in document.inputs.geometry.paths {
+        let segments = path.segments.compactMap { segment -> CubicBezier? in
+            if case .cubic(let cubic) = segment { return cubic }
+            return nil
+        }
+        if segments.isEmpty { continue }
+
+        let bezierPath = BezierPath(segments: segments)
+        let tolerance = previewFlattenTolerance(for: options.previewQuality)
+        let polyline = sampler.makePolyline(path: bezierPath, tolerance: tolerance)
+        let totalSamples = max(2, samplesPerSegment * segments.count)
+        let spacing = polyline.totalLength > 0 ? polyline.totalLength / Double(max(1, totalSamples - 1)) : 1.0
+        let parameters = polyline.sampleParameters(spacing: spacing, maxSamples: totalSamples)
+        let samples: [Sample] = parameters.map { s in
+            let point = polyline.point(at: s)
+            let tangentAngle = polyline.tangentAngle(at: s, fallbackAngle: 0.0)
+            let effectiveRotation: Double
+            switch angleMode {
+            case .absolute:
+                effectiveRotation = baseRotation
+            case .tangentRelative:
+                effectiveRotation = tangentAngle + baseRotation - (.pi / 2.0)
+            }
+            return Sample(
+                uGeom: s,
+                uGrid: s,
+                t: s,
+                point: point,
+                tangentAngle: tangentAngle,
+                width: width,
+                height: height,
+                theta: angleOffset,
+                effectiveRotation: effectiveRotation,
+                alpha: 0.0
+            )
+        }
+
+        let rings = samples.map { stamping.ring(for: $0, shape: .rectangle) }
+        var bridges: [Ring] = []
+        if rings.count > 1 {
+            for i in 0..<(rings.count - 1) {
+                if let segmentBridges = try? builder.bridgeRings(from: rings[i], to: rings[i + 1]) {
+                    bridges.append(contentsOf: segmentBridges)
+                }
+            }
+        }
+        let allRings = rings + bridges
+        let unionMode = options.previewUnionMode ?? .never
+        let useUnion: Bool
+        switch unionMode {
+        case .never:
+            useUnion = false
+        case .always:
+            useUnion = true
+        case .auto:
+            useUnion = allRings.count <= previewUnionMaxRings
+            if options.verbose {
+                let chosen = useUnion ? "always" : "never"
+                print("stroke-preview \(path.id) union auto -> \(chosen) (rings \(allRings.count))")
+            }
+        }
+        let unioner: PolygonUnioning = useUnion ? IOverlayPolygonUnionAdapter() : PassthroughPolygonUnioner()
+        if let outline = try? unioner.union(subjectRings: allRings) {
+            polygons.append(contentsOf: outline)
+        } else {
+            polygons.append(contentsOf: allRings.map { Polygon(outer: $0) })
+        }
+
+        if options.verbose, samples.count > 1 {
+            var minDistance = Double.greatestFiniteMagnitude
+            for i in 1..<samples.count {
+                let d = (samples[i].point - samples[i - 1].point).length
+                minDistance = min(minDistance, d)
+            }
+            let minDisplay = minDistance.isFinite ? minDistance : 0.0
+            print("stroke-preview \(path.id) samples \(samples.count) minSegment \(String(format: "%.3f", minDisplay))")
+        }
+    }
+
+    return polygons
+}
+
+func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) throws -> (polygons: PolygonSet, fittedPaths: [FittedPath]?) {
+    let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
+    let quality = options.quality ?? "preview"
+    let isFinal = quality == "final"
+    let unionMode: FinalUnionMode
+    if isFinal {
+        unionMode = options.finalUnionMode ?? .auto
+    } else {
+        unionMode = FinalUnionMode(rawValue: options.previewUnionMode?.rawValue ?? "never") ?? .never
+    }
+    let unionSimplifyTolerance = options.unionSimplifyTolerance ?? 0.75
+    let unionMaxVertices = options.unionMaxVertices ?? 5000
+    let unionBatchSize = max(1, options.unionBatchSize ?? 50)
+    let unionAreaEps = options.unionAreaEps ?? 1.0e-6
+    let unionWeldEps = options.unionWeldEps ?? 1.0e-5
+    let unionEdgeEps = options.unionEdgeEps ?? 1.0e-5
+    let unionMinRingArea = options.unionMinRingArea ?? 5.0
+    let unionAutoTimeBudgetMs = options.unionAutoTimeBudgetMs ?? 1500
+    let unionInputFilter = options.unionInputFilter ?? .none
+
+    let sampler = DefaultPathSampler()
+    let evaluator = DefaultParamEvaluator()
+    var polygons: PolygonSet = []
+    polygons.reserveCapacity(document.inputs.geometry.strokes.count)
+
+    for stroke in document.inputs.geometry.strokes {
+        guard let spec = strokeSpec(from: stroke, paths: pathById, quality: quality) else { continue }
+        let estimator = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
+        let sampleCount = estimator.generateSamples(for: spec).count
+        if options.verbose {
+            print("authored-stroke \(stroke.id) stamps \(sampleCount)")
+        }
+        let unioner: PolygonUnioning
+        switch unionMode {
+        case .never:
+            unioner = PassthroughPolygonUnioner()
+        case .always:
+            unioner = SimplifyingUnioner(
+                base: IOverlayPolygonUnionAdapter(),
+                simplifyTolerance: unionSimplifyTolerance,
+                maxVertices: unionMaxVertices,
+                areaEps: unionAreaEps,
+                minRingArea: unionMinRingArea,
+                weldEps: unionWeldEps,
+                edgeEps: unionEdgeEps,
+                batchSize: unionBatchSize,
+                inputFilter: unionInputFilter,
+                verbose: options.verbose,
+                label: "authored-stroke \(stroke.id)"
+            )
+        case .auto:
+            unioner = AutoUnioner(
+                base: IOverlayPolygonUnionAdapter(),
+                simplifyTolerance: unionSimplifyTolerance,
+                maxVertices: unionMaxVertices,
+                areaEps: unionAreaEps,
+                minRingArea: unionMinRingArea,
+                weldEps: unionWeldEps,
+                edgeEps: unionEdgeEps,
+                batchSize: unionBatchSize,
+                autoTimeBudgetMs: unionAutoTimeBudgetMs,
+                inputFilter: unionInputFilter,
+                verbose: options.verbose,
+                label: "authored-stroke \(stroke.id)"
+            )
+        }
+
+        let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: unioner)
+        let outline: PolygonSet
+        do {
+            outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges)
+        } catch {
+            if case .auto = unionMode, isFinal {
+                if options.verbose {
+                    print("authored-stroke \(stroke.id) union skipped due to error: \(error)")
+                }
+                let fallback = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
+                outline = try fallback.generateOutline(for: spec, includeBridges: options.useBridges)
+            } else {
+                throw error
+            }
+        }
+        polygons.append(contentsOf: outline)
+    }
+
+    guard !polygons.isEmpty else { return ([], nil) }
+
+    let outlineFit = options.outlineFit ?? .none
+    let fitTolerance = options.fitTolerance ?? defaultFitTolerance(polygons: polygons)
+    let simplifyTolerance = options.simplifyTolerance ?? (fitTolerance * 1.5)
+    let cornerThreshold = 60.0
+    switch outlineFit {
+    case .none:
+        return (polygons, nil)
+    case .simplify:
+        let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
+        let simplified = polygons.map { polygon in
+            let outer = simplifier.simplifyRing(polygon.outer, closed: true)
+            let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
+            return Polygon(outer: outer, holes: holes)
+        }
+        return (simplified, nil)
+    case .bezier:
+        let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
+        let simplified = polygons.map { polygon in
+            let outer = simplifier.simplifyRing(polygon.outer, closed: true)
+            let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
+            return Polygon(outer: outer, holes: holes)
+        }
+        let fitter = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThreshold)
+        let fitted = fitter.fitPolygonSet(simplified)
+        return ([], fitted)
+    }
+}
+
+private func strokeSpec(from stroke: StrokeGeometry, paths: [String: PathGeometry], quality: String) -> StrokeSpec? {
+    let skeletonSegments = stroke.skeletons.compactMap { paths[$0] }.flatMap { path in
+        path.segments.compactMap { segment -> CubicBezier? in
+            if case .cubic(let cubic) = segment { return cubic }
+            return nil
+        }
+    }
+    guard !skeletonSegments.isEmpty else { return nil }
+
+    let samplingPolicy = stroke.samplingPolicy ?? ((quality == "final") ? .final : .preview)
+    let samplingSpec = SamplingSpec()
+    let width = paramTrack(from: stroke.params.width)
+    let height = paramTrack(from: stroke.params.height)
+    let theta = paramTrack(from: stroke.params.theta)
+    let offset = stroke.params.offset.map { paramTrack(from: $0) }
+    let alpha = stroke.params.alpha.map { paramTrack(from: $0) }
+    let angleMode = stroke.params.angleMode ?? .absolute
+    let capStyle = stroke.joins?.capStyle ?? .butt
+    let joinStyle = stroke.joins?.joinStyle ?? .round
+
+    return StrokeSpec(
+        path: BezierPath(segments: skeletonSegments),
+        width: width,
+        height: height,
+        theta: theta,
+        offset: offset,
+        alpha: alpha,
+        angleMode: angleMode,
+        capStyle: capStyle,
+        joinStyle: joinStyle,
+        counterpointShape: .rectangle,
+        sampling: samplingSpec,
+        samplingPolicy: samplingPolicy,
+        output: OutputSpec(coordinateMode: .raw)
+    )
+}
+
+private func paramTrack(from curve: ParamCurve) -> ParamTrack {
+    let frames = curve.keyframes.map { Keyframe(t: $0.t, value: $0.value) }
+    return ParamTrack(keyframes: frames)
+}
+
+struct CleanupStats {
+    let preRingCount: Int
+    let preVertexCount: Int
+    let cleanedRingCount: Int
+    let cleanedVertexCount: Int
+    let sliverRingCount: Int
+    let sliverVertexCount: Int
+    let tinyRingCount: Int
+    let tinyVertexCount: Int
+    let dedupRingCount: Int
+    let dedupVertexCount: Int
+    let silhouetteRingCount: Int
+    let silhouetteVertexCount: Int
+}
+
+private func logCleanupStats(label: String, stats: CleanupStats) {
+    print("\(label) union cleanup rings \(stats.preRingCount) verts \(stats.preVertexCount) -> \(stats.cleanedRingCount)/\(stats.cleanedVertexCount)")
+    print("\(label) union sliver drop \(stats.cleanedRingCount - stats.sliverRingCount) remaining \(stats.sliverRingCount)")
+    let tinyDropped = stats.sliverRingCount - stats.tinyRingCount
+    print("\(label) union tiny drop \(tinyDropped) remaining \(stats.tinyRingCount)")
+    print("\(label) union droppedTinyRings \(tinyDropped) remaining \(stats.tinyRingCount)")
+    print("\(label) union dedup drop \(stats.tinyRingCount - stats.dedupRingCount) remaining \(stats.dedupRingCount)")
+    if stats.silhouetteRingCount != stats.dedupRingCount {
+        print("\(label) union silhouette drop \(stats.dedupRingCount - stats.silhouetteRingCount) remaining \(stats.silhouetteRingCount)")
+    }
+}
+
+private func percentile(_ values: [Double], _ p: Double) -> Double {
+    guard !values.isEmpty else { return 0.0 }
+    let sorted = values.sorted()
+    let clamped = max(0.0, min(1.0, p))
+    let index = Int(round(clamped * Double(sorted.count - 1)))
+    return sorted[index]
+}
+
+private func ringStatsReport(label: String, rings: [Ring]) {
+    guard !rings.isEmpty else {
+        print("\(label) union stats: no rings")
+        return
+    }
+    var areas: [Double] = []
+    var slivers: [Double] = []
+    var widths: [Double] = []
+    var heights: [Double] = []
+    var verts: [Double] = []
+    areas.reserveCapacity(rings.count)
+    slivers.reserveCapacity(rings.count)
+    widths.reserveCapacity(rings.count)
+    heights.reserveCapacity(rings.count)
+    verts.reserveCapacity(rings.count)
+    var entries: [(area: Double, width: Double, height: Double, verts: Int)] = []
+    entries.reserveCapacity(rings.count)
+    for ring in rings {
+        let area = abs(ringArea(ring))
+        let bbox = ringBounds(ring)
+        let width = bbox.width
+        let height = bbox.height
+        let bboxArea = max(width * height, 1.0e-9)
+        let sliverRatio = area / bboxArea
+        areas.append(area)
+        slivers.append(sliverRatio)
+        widths.append(width)
+        heights.append(height)
+        verts.append(Double(ring.count))
+        entries.append((area: area, width: width, height: height, verts: ring.count))
+    }
+    let areaMin = areas.min() ?? 0.0
+    let areaMax = areas.max() ?? 0.0
+    let widthMin = widths.min() ?? 0.0
+    let widthMax = widths.max() ?? 0.0
+    let heightMin = heights.min() ?? 0.0
+    let heightMax = heights.max() ?? 0.0
+    let vertsMin = verts.min() ?? 0.0
+    let vertsMax = verts.max() ?? 0.0
+    print("\(label) union stats rings \(rings.count)")
+    print("\(label) union area min \(String(format: "%.3f", areaMin)) p50 \(String(format: "%.3f", percentile(areas, 0.5))) p90 \(String(format: "%.3f", percentile(areas, 0.9))) p99 \(String(format: "%.3f", percentile(areas, 0.99))) max \(String(format: "%.3f", areaMax))")
+    print("\(label) union sliver min \(String(format: "%.4f", slivers.min() ?? 0.0)) p50 \(String(format: "%.4f", percentile(slivers, 0.5))) p90 \(String(format: "%.4f", percentile(slivers, 0.9))) p99 \(String(format: "%.4f", percentile(slivers, 0.99))) max \(String(format: "%.4f", slivers.max() ?? 0.0))")
+    print("\(label) union bboxW min \(String(format: "%.3f", widthMin)) p50 \(String(format: "%.3f", percentile(widths, 0.5))) p99 \(String(format: "%.3f", percentile(widths, 0.99))) max \(String(format: "%.3f", widthMax))")
+    print("\(label) union bboxH min \(String(format: "%.3f", heightMin)) p50 \(String(format: "%.3f", percentile(heights, 0.5))) p99 \(String(format: "%.3f", percentile(heights, 0.99))) max \(String(format: "%.3f", heightMax))")
+    print("\(label) union verts min \(String(format: "%.0f", vertsMin)) p50 \(String(format: "%.0f", percentile(verts, 0.5))) p99 \(String(format: "%.0f", percentile(verts, 0.99))) max \(String(format: "%.0f", vertsMax))")
+
+    let largest = entries.sorted { $0.area > $1.area }.prefix(10)
+    let smallest = entries.sorted { $0.area < $1.area }.prefix(10)
+    print("\(label) union largest rings:")
+    for entry in largest {
+        print("  area \(String(format: "%.3f", entry.area)) bbox \(String(format: "%.3f", entry.width))x\(String(format: "%.3f", entry.height)) verts \(entry.verts)")
+    }
+    print("\(label) union smallest rings:")
+    for entry in smallest {
+        print("  area \(String(format: "%.3f", entry.area)) bbox \(String(format: "%.3f", entry.width))x\(String(format: "%.3f", entry.height)) verts \(entry.verts)")
+    }
+}
+
+func cleanupRingsForUnion(
+    _ rings: [Ring],
+    areaEps: Double,
+    minRingArea: Double,
+    weldEps: Double,
+    edgeEps: Double,
+    inputFilter: UnionInputFilter
+) -> (rings: [Ring], stats: CleanupStats) {
+    let bboxEps = 0.5
+    let sliverRatioMin = 0.01
+    let sliverRatioLoose = 0.02
+    let sliverVertexCap = 5
+    let sliverTinyEps = 1.0e-9
+    let dedupeTolerance = 0.05
+    let silhouetteKeepCount = 50
+    let preRingCount = rings.count
+    let preVertexCount = rings.reduce(0) { $0 + $1.count }
+    var cleaned: [Ring] = []
+    cleaned.reserveCapacity(rings.count)
+    var cleanedVerts = 0
+    for ring in rings {
+        guard let result = cleanupRing(ring, areaEps: areaEps, weldEps: weldEps, edgeEps: edgeEps) else {
+            continue
+        }
+        cleanedVerts += result.count
+        cleaned.append(result)
+    }
+    var sliverFiltered: [Ring] = []
+    sliverFiltered.reserveCapacity(cleaned.count)
+    var sliverVerts = 0
+    for ring in cleaned {
+        let area = abs(ringArea(ring))
+        let bbox = ringBounds(ring)
+        let bboxArea = max(bbox.width * bbox.height, sliverTinyEps)
+        let sliverRatio = area / bboxArea
+        if sliverRatio < sliverRatioMin || (sliverRatio < sliverRatioLoose && ring.count <= sliverVertexCap) {
+            continue
+        }
+        sliverVerts += ring.count
+        sliverFiltered.append(ring)
+    }
+    var tinyFiltered: [Ring] = []
+    tinyFiltered.reserveCapacity(sliverFiltered.count)
+    var tinyVerts = 0
+    for ring in sliverFiltered {
+        let area = abs(ringArea(ring))
+        if area < minRingArea {
+            continue
+        }
+        let bbox = ringBounds(ring)
+        if bbox.width < bboxEps && bbox.height < bboxEps {
+            continue
+        }
+        tinyVerts += ring.count
+        tinyFiltered.append(ring)
+    }
+    let deduped = dedupeRingsByQuantizedPoints(tinyFiltered, tolerance: dedupeTolerance)
+    var silhouetteRings = deduped.rings
+    if inputFilter == .silhouette {
+        let sorted = deduped.rings.enumerated().sorted { lhs, rhs in
+            let lhsArea = ringBounds(lhs.element).width * ringBounds(lhs.element).height
+            let rhsArea = ringBounds(rhs.element).width * ringBounds(rhs.element).height
+            if lhsArea == rhsArea { return lhs.offset < rhs.offset }
+            return lhsArea > rhsArea
+        }
+        silhouetteRings = sorted.prefix(silhouetteKeepCount).map { $0.element }
+    }
+    let silhouetteVerts = silhouetteRings.reduce(0) { $0 + $1.count }
+    let dedupVertexCount = deduped.rings.reduce(0) { $0 + $1.count }
+    let stats = CleanupStats(
+        preRingCount: preRingCount,
+        preVertexCount: preVertexCount,
+        cleanedRingCount: cleaned.count,
+        cleanedVertexCount: cleanedVerts,
+        sliverRingCount: sliverFiltered.count,
+        sliverVertexCount: sliverVerts,
+        tinyRingCount: tinyFiltered.count,
+        tinyVertexCount: tinyVerts,
+        dedupRingCount: deduped.rings.count,
+        dedupVertexCount: dedupVertexCount,
+        silhouetteRingCount: silhouetteRings.count,
+        silhouetteVertexCount: silhouetteVerts
+    )
+    return (silhouetteRings, stats)
+}
+
+func simplifyRingsForUnion(
+    _ rings: [Ring],
+    baseTolerance: Double,
+    maxVertices: Int,
+    areaEps: Double,
+    minRingArea: Double,
+    weldEps: Double,
+    edgeEps: Double,
+    inputFilter: UnionInputFilter
+) throws -> (rings: [Ring], preCount: Int, postCount: Int, cleanup: CleanupStats) {
+    let cleaned = cleanupRingsForUnion(
+        rings,
+        areaEps: areaEps,
+        minRingArea: minRingArea,
+        weldEps: weldEps,
+        edgeEps: edgeEps,
+        inputFilter: inputFilter
+    )
+    let preCount = cleaned.stats.preVertexCount
+    var postCount = 0
+    var simplified: [Ring] = []
+    simplified.reserveCapacity(cleaned.rings.count)
+    for ring in cleaned.rings {
+        var tolerance = baseTolerance
+        var simplifiedRing = ring
+        var success = false
+        for _ in 0..<8 {
+            let fitter = BezierFitter(tolerance: tolerance, cornerThresholdDegrees: 60.0)
+            simplifiedRing = fitter.simplifyRing(ring, closed: true)
+            if simplifiedRing.count <= maxVertices {
+                success = true
+                break
+            }
+            tolerance *= 1.5
+        }
+        if !success {
+            throw CLIError.runtime("Union ring exceeded max vertices (\(maxVertices)) even after simplification.")
+        }
+        postCount += simplifiedRing.count
+        simplified.append(simplifiedRing)
+    }
+    return (simplified, preCount, postCount, cleaned.stats)
+}
+
+private struct SimplifyingUnioner: PolygonUnioning {
+    let base: PolygonUnioning
+    let simplifyTolerance: Double
+    let maxVertices: Int
+    let areaEps: Double
+    let minRingArea: Double
+    let weldEps: Double
+    let edgeEps: Double
+    let batchSize: Int
+    let inputFilter: UnionInputFilter
+    let verbose: Bool
+    let label: String
+
+    func union(subjectRings: [Ring]) throws -> PolygonSet {
+        let start = Date()
+        let simplified = try simplifyRingsForUnion(
+            subjectRings,
+            baseTolerance: simplifyTolerance,
+            maxVertices: maxVertices,
+            areaEps: areaEps,
+            minRingArea: minRingArea,
+            weldEps: weldEps,
+            edgeEps: edgeEps,
+            inputFilter: inputFilter
+        )
+        if verbose {
+            logCleanupStats(label: label, stats: simplified.cleanup)
+            print("\(label) union simplify verts \(simplified.cleanup.tinyVertexCount) -> \(simplified.postCount)")
+        }
+        let cleanedCount = simplified.rings.count
+        let batches = batchedUnion(
+            rings: simplified.rings,
+            batchSize: batchSize,
+            unioner: base,
+            verbose: verbose,
+            label: label
+        )
+        if verbose {
+            print("\(label) union batches \(cleanedCount) -> \(batches.count)")
+        }
+        let result = try base.union(subjectRings: batches)
+        if verbose {
+            let elapsed = Date().timeIntervalSince(start)
+            print("\(label) union time \(String(format: "%.3f", elapsed))s")
+        }
+        return result
+    }
+}
+
+private struct AutoUnioner: PolygonUnioning {
+    let base: PolygonUnioning
+    let simplifyTolerance: Double
+    let maxVertices: Int
+    let areaEps: Double
+    let minRingArea: Double
+    let weldEps: Double
+    let edgeEps: Double
+    let batchSize: Int
+    let autoTimeBudgetMs: Int
+    let inputFilter: UnionInputFilter
+    let verbose: Bool
+    let label: String
+
+    func union(subjectRings: [Ring]) throws -> PolygonSet {
+        let cleaned = cleanupRingsForUnion(
+            subjectRings,
+            areaEps: areaEps,
+            minRingArea: minRingArea,
+            weldEps: weldEps,
+            edgeEps: edgeEps,
+            inputFilter: inputFilter
+        )
+        let ringCount = cleaned.rings.count
+        let totalVerts = cleaned.rings.reduce(0) { $0 + $1.count }
+        let estimatedCost = Double(ringCount) * Double(max(1, totalVerts))
+        let maxVertsCap = maxVertices
+        let shouldUnion = totalVerts <= (maxVertsCap * 2)
+        let effectiveBatchSize = min(batchSize, 50)
+        if verbose {
+            logCleanupStats(label: label, stats: cleaned.stats)
+            ringStatsReport(label: label, rings: cleaned.rings)
+            print("\(label) union auto inputs rings \(ringCount) verts \(totalVerts) maxVertsCap \(maxVertsCap) simplifyTol \(simplifyTolerance) batch \(effectiveBatchSize) estCost \(String(format: "%.0f", estimatedCost))")
+        }
+        if ringCount > 250 {
+            if verbose {
+                print("\(label) auto union skipped: ringCountCap")
+            }
+            return cleaned.rings.map { Polygon(outer: $0) }
+        }
+        if !shouldUnion {
+            if verbose {
+                print("\(label) union auto -> never (reason: totalVerts \(totalVerts) > maxVertsCap * 2)")
+            }
+            return cleaned.rings.map { Polygon(outer: $0) }
+        }
+        if verbose {
+            print("\(label) union auto -> always")
+        }
+        let unioner = SimplifyingUnioner(
+            base: base,
+            simplifyTolerance: simplifyTolerance,
+            maxVertices: maxVertices,
+            areaEps: areaEps,
+            minRingArea: minRingArea,
+            weldEps: weldEps,
+            edgeEps: edgeEps,
+            batchSize: batchSize,
+            inputFilter: inputFilter,
+            verbose: verbose,
+            label: label
+        )
+        if autoTimeBudgetMs <= 0 {
+            return try unioner.union(subjectRings: cleaned.rings)
+        }
+        let simplified = try simplifyRingsForUnion(
+            cleaned.rings,
+            baseTolerance: simplifyTolerance,
+            maxVertices: maxVertices,
+            areaEps: areaEps,
+            minRingArea: minRingArea,
+            weldEps: weldEps,
+            edgeEps: edgeEps,
+            inputFilter: inputFilter
+        )
+        if verbose {
+            logCleanupStats(label: label, stats: simplified.cleanup)
+            print("\(label) union simplify verts \(simplified.cleanup.tinyVertexCount) -> \(simplified.postCount)")
+        }
+        let batchResult = batchedUnionWithBudget(
+            rings: simplified.rings,
+            batchSize: effectiveBatchSize,
+            unioner: base,
+            overallBudgetMs: max(1, autoTimeBudgetMs),
+            perBatchBudgetMs: 250,
+            verbose: verbose,
+            label: label
+        )
+        switch batchResult.reason {
+        case .none:
+            break
+        case .batchTimeExceeded(let batch, let ms):
+            if verbose {
+                print("\(label) union auto bailed at batch \(batch): batchTime=\(String(format: "%.3f", Double(ms) / 1000.0))s")
+            }
+            return simplified.rings.map { Polygon(outer: $0) }
+        case .overallBudgetExceeded:
+            if verbose {
+                print("\(label) union auto bailout: time budget exceeded")
+            }
+            return simplified.rings.map { Polygon(outer: $0) }
+        }
+        if batchResult.elapsedMs > autoTimeBudgetMs {
+            if verbose {
+                print("\(label) union auto bailout: time budget exceeded")
+            }
+            return simplified.rings.map { Polygon(outer: $0) }
+        }
+        return try base.union(subjectRings: batchResult.rings)
+    }
+}
+
+private func cleanupRing(_ ring: Ring, areaEps: Double, weldEps: Double, edgeEps: Double) -> Ring? {
+    var points = closeRingIfNeeded(ring)
+    if points.count < 4 { return nil }
+    points = weldPoints(points, epsilon: weldEps)
+    points = removeShortEdges(points, epsilon: edgeEps)
+    points = closeRingIfNeeded(points)
+    if points.count < 4 { return nil }
+    let area = abs(ringArea(points))
+    if area < areaEps { return nil }
+    return points
+}
+
+private func weldPoints(_ ring: Ring, epsilon: Double) -> Ring {
+    guard let first = ring.first else { return ring }
+    var result: [Point] = [first]
+    result.reserveCapacity(ring.count)
+    for point in ring.dropFirst() {
+        if (point - result[result.count - 1]).length >= epsilon {
+            result.append(point)
+        }
+    }
+    if let last = result.last, (last - first).length < epsilon {
+        result[result.count - 1] = first
+    }
+    return result
+}
+
+private func removeShortEdges(_ ring: Ring, epsilon: Double) -> Ring {
+    guard ring.count >= 4 else { return ring }
+    var result: [Point] = []
+    result.reserveCapacity(ring.count)
+    for index in 0..<ring.count {
+        let prev = ring[(index - 1 + ring.count) % ring.count]
+        let current = ring[index]
+        if (current - prev).length >= epsilon || result.isEmpty {
+            result.append(current)
+        }
+    }
+    return result
+}
+
+private func ringArea(_ ring: Ring) -> Double {
+    guard ring.count >= 3 else { return 0.0 }
+    var sum = 0.0
+    for i in 0..<(ring.count - 1) {
+        let a = ring[i]
+        let b = ring[i + 1]
+        sum += (a.x * b.y) - (b.x * a.y)
+    }
+    return 0.5 * sum
+}
+
+private func ringBounds(_ ring: Ring) -> CGRect {
+    guard let first = ring.first else { return .null }
+    var minX = first.x
+    var maxX = first.x
+    var minY = first.y
+    var maxY = first.y
+    for point in ring.dropFirst() {
+        minX = min(minX, point.x)
+        maxX = max(maxX, point.x)
+        minY = min(minY, point.y)
+        maxY = max(maxY, point.y)
+    }
+    return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+}
+
+private struct DedupeResult {
+    let rings: [Ring]
+    let droppedCount: Int
+    let droppedVertexCount: Int
+    let totalVertexCount: Int
+}
+
+private func dedupeRingsByQuantizedPoints(_ rings: [Ring], tolerance: Double) -> DedupeResult {
+    guard !rings.isEmpty else {
+        return DedupeResult(rings: [], droppedCount: 0, droppedVertexCount: 0, totalVertexCount: 0)
+    }
+    var seen: Set<String> = []
+    var deduped: [Ring] = []
+    deduped.reserveCapacity(rings.count)
+    var dropped = 0
+    var droppedVerts = 0
+    let totalVerts = rings.reduce(0) { $0 + $1.count }
+    for ring in rings {
+        let canonical = canonicalizeRing(ring, tolerance: tolerance)
+        let key = canonical.key
+        if seen.contains(key) {
+            dropped += 1
+            droppedVerts += ring.count
+            continue
+        }
+        seen.insert(key)
+        deduped.append(canonical.ring)
+    }
+    return DedupeResult(rings: deduped, droppedCount: dropped, droppedVertexCount: droppedVerts, totalVertexCount: totalVerts)
+}
+
+private func canonicalizeRing(_ ring: Ring, tolerance: Double) -> (ring: Ring, key: String) {
+    var points = ring
+    if points.count >= 3, points.first == points.last {
+        points.removeLast()
+    }
+    if ringArea(points) > 0 {
+        points.reverse()
+    }
+    var quantized: [(x: Int, y: Int)] = []
+    quantized.reserveCapacity(points.count)
+    for point in points {
+        let qx = Int(round(point.x / tolerance))
+        let qy = Int(round(point.y / tolerance))
+        quantized.append((x: qx, y: qy))
+    }
+    var startIndex = 0
+    if let first = quantized.first {
+        var best = first
+        for (index, value) in quantized.enumerated() {
+            if value.x < best.x || (value.x == best.x && value.y < best.y) {
+                best = value
+                startIndex = index
+            }
+        }
+    }
+    let rotated = (0..<quantized.count).map { quantized[(startIndex + $0) % quantized.count] }
+    var keyParts: [String] = []
+    keyParts.reserveCapacity(rotated.count + 1)
+    keyParts.append(String(rotated.count))
+    for value in rotated {
+        keyParts.append("\(value.x),\(value.y)")
+    }
+    let key = keyParts.joined(separator: ";")
+    let rotatedPoints = (0..<points.count).map { points[(startIndex + $0) % points.count] }
+    let closed = closeRingIfNeeded(rotatedPoints)
+    return (closed, key)
+}
+
+private func batchedUnion(rings: [Ring], batchSize: Int, unioner: PolygonUnioning, verbose: Bool = false, label: String = "") -> [Ring] {
+    guard rings.count > batchSize else { return rings }
+    var intermediates: [Ring] = []
+    intermediates.reserveCapacity((rings.count / batchSize) + 1)
+    var index = 0
+    var batchIndex = 0
+    while index < rings.count {
+        let end = min(rings.count, index + batchSize)
+        let chunk = Array(rings[index..<end])
+        let batchStart = Date()
+        if let unioned = try? unioner.union(subjectRings: chunk) {
+            intermediates.append(contentsOf: unioned.map { $0.outer })
+        } else {
+            intermediates.append(contentsOf: chunk)
+        }
+        if verbose {
+            let elapsed = Date().timeIntervalSince(batchStart)
+            print("\(label) union batch \(batchIndex + 1) time \(String(format: "%.3f", elapsed))s -> \(intermediates.count) rings")
+        }
+        index = end
+        batchIndex += 1
+    }
+    return intermediates
+}
+
+private enum AutoUnionBailReason {
+    case none
+    case batchTimeExceeded(batch: Int, ms: Int)
+    case overallBudgetExceeded(ms: Int)
+}
+
+private func batchedUnionWithBudget(
+    rings: [Ring],
+    batchSize: Int,
+    unioner: PolygonUnioning,
+    overallBudgetMs: Int,
+    perBatchBudgetMs: Int,
+    verbose: Bool = false,
+    label: String = ""
+) -> (rings: [Ring], reason: AutoUnionBailReason, batchesUsed: Int, elapsedMs: Int) {
+    guard rings.count > batchSize else { return (rings, .none, 0, 0) }
+    var intermediates: [Ring] = []
+    intermediates.reserveCapacity((rings.count / batchSize) + 1)
+    var index = 0
+    var batchIndex = 0
+    let overallStart = Date()
+    while index < rings.count {
+        let overallElapsedMs = Int(Date().timeIntervalSince(overallStart) * 1000.0)
+        if overallElapsedMs > overallBudgetMs {
+            return (rings, .overallBudgetExceeded(ms: overallElapsedMs), batchIndex, overallElapsedMs)
+        }
+        let end = min(rings.count, index + batchSize)
+        let chunk = Array(rings[index..<end])
+        let batchStart = Date()
+        if let unioned = try? unioner.union(subjectRings: chunk) {
+            intermediates.append(contentsOf: unioned.map { $0.outer })
+        } else {
+            intermediates.append(contentsOf: chunk)
+        }
+        let batchElapsedMs = Int(Date().timeIntervalSince(batchStart) * 1000.0)
+        if verbose {
+            print("\(label) union batch \(batchIndex + 1) time \(String(format: "%.3f", Double(batchElapsedMs) / 1000.0))s -> \(intermediates.count) rings")
+        }
+        if batchElapsedMs > perBatchBudgetMs {
+            let overallElapsedMs = Int(Date().timeIntervalSince(overallStart) * 1000.0)
+            return (rings, .batchTimeExceeded(batch: batchIndex + 1, ms: batchElapsedMs), batchIndex + 1, overallElapsedMs)
+        }
+        index = end
+        batchIndex += 1
+    }
+    let totalElapsedMs = Int(Date().timeIntervalSince(overallStart) * 1000.0)
+    return (intermediates, .none, batchIndex, totalElapsedMs)
+}
+
+private func defaultPreviewSamples(for quality: String?) -> Int {
+    guard let quality else { return 256 }
+    return (quality == "final") ? 512 : 256
+}
+
+private func previewFlattenTolerance(for quality: String?) -> Double {
+    guard let quality else { return 1.0 }
+    return (quality == "final") ? 0.25 : 1.0
+}
+
 do {
     try CLI().run()
 } catch {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
