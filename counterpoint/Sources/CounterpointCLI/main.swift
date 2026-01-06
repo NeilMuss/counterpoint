@@ -273,7 +273,7 @@ struct CLI {
             selection = UnionDumpSelection(
                 rings: cleanup.rings.map { $0.ring },
                 keptOriginalIndices: cleanup.rings.map { $0.index },
-                dropOriginalIndices: selection.dropOriginalIndices + cleanup.dropped.map { $0.index }
+                dropOriginalIndices: selection.dropOriginalIndices + cleanup.dropped.map { $0.ring.index }
             )
             logTouchingCleanup(label: "union-dump", result: cleanup)
         }
@@ -1337,6 +1337,7 @@ private func cleanupTouchingEdges(
     epsilon: Double,
     minRemainingCount: Int?
 ) -> TouchingCleanupResult {
+    print("cleanup-touching start rings=\(rings.count)")
     guard epsilon > 0, rings.count > 1 else {
         return TouchingCleanupResult(rings: rings, dropped: [], pairCount: 0, involvedIndices: [])
     }
@@ -1344,9 +1345,18 @@ private func cleanupTouchingEdges(
     var dropped: [(ring: IndexedRing, degree: Int)] = []
     var lastPairCount = 0
     var lastInvolved: [Int] = []
+    let maxIterations = rings.count + 5
+    let maxDrops = rings.count
+    var iterations = 0
 
     while true {
+        iterations += 1
+        if iterations > maxIterations || dropped.count > maxDrops {
+            print("cleanup-touching aborted: iterCap (iterations=\(iterations), drops=\(dropped.count), remaining=\(working.count))")
+            break
+        }
         let touchInfo = touchingPairs(rings: working, epsilon: epsilon)
+        print("cleanup-touching computedPairs=\(touchInfo.pairCount)")
         lastPairCount = touchInfo.pairCount
         lastInvolved = Array(touchInfo.involvedIndices).sorted()
         if touchInfo.pairCount == 0 || touchInfo.involvedIndices.isEmpty {
