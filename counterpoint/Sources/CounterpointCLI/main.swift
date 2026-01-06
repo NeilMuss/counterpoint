@@ -263,8 +263,15 @@ struct CLI {
         let stats = ringSummary(selection.rings)
         let keptList = selection.keptOriginalIndices.sorted().map(String.init).joined(separator: ",")
         let providedDrop = (options.dropOriginalIndices + options.dropIndices).sorted().map(String.init).joined(separator: ",")
+        if let dumpPath = options.dumpAfterCleanupPath {
+            dumpUnionInputRings(selection.rings, to: dumpPath)
+        }
         if options.dryRun {
             print("union-dump dry-run inputRings=\(originalRings.count) keepFirst=\(options.keepFirst.map(String.init) ?? "nil") dropOriginal=\(providedDrop.isEmpty ? "[]" : "[\(providedDrop)]") keptOriginal=\(keptList.isEmpty ? "[]" : "[\(keptList)]") finalRings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts)")
+            return
+        }
+        if options.noUnion {
+            print("union-dump cleanup-only inputRings=\(originalRings.count) keptOriginal=\(keptList.isEmpty ? "[]" : "[\(keptList)]") finalRings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts)")
             return
         }
         if keptList.isEmpty {
@@ -705,6 +712,8 @@ private struct UnionDumpOptions {
     var printRingOriginalIndex: Int?
     var cleanupCoincidentEdges: Bool
     var snapTol: Double?
+    var noUnion: Bool
+    var dumpAfterCleanupPath: String?
 }
 
 struct ScurvePlaygroundConfig: Equatable {
@@ -1074,7 +1083,9 @@ private func parseUnionDumpOptions(_ args: [String]) throws -> UnionDumpOptions 
         dryRun: false,
         printRingOriginalIndex: nil,
         cleanupCoincidentEdges: false,
-        snapTol: nil
+        snapTol: nil,
+        noUnion: false,
+        dumpAfterCleanupPath: nil
     )
     var index = 1
     while index < args.count {
@@ -1129,6 +1140,14 @@ private func parseUnionDumpOptions(_ args: [String]) throws -> UnionDumpOptions 
                 throw CLIError.invalidArguments("--print-ring-original-index requires an integer (0-based)")
             }
             options.printRingOriginalIndex = value
+            index += 1
+        case "--no-union":
+            options.noUnion = true
+        case "--cleanup-only":
+            options.noUnion = true
+        case "--dump-after-cleanup":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--dump-after-cleanup requires a path") }
+            options.dumpAfterCleanupPath = args[index + 1]
             index += 1
         default:
             throw CLIError.invalidArguments("Unknown option for union-dump: \(arg)")
@@ -1319,16 +1338,16 @@ private func edgeKey(_ a: QuantizedPoint, _ b: QuantizedPoint) -> EdgeKey {
 
 private func logCoincidentEdgeCleanup(label: String, result: CoincidentEdgeCleanupResult) {
     if result.coincidentEdgeCount == 0 {
-        print("\(label) coincident edges: none")
+        print("cleanup-coincident-edges foundEdges=0 involvedRings=[]")
         return
     }
     let involved = result.involvedIndices.map(String.init).joined(separator: ",")
     let dropped = result.dropped.map { "\($0.index):\(String(format: "%.4f", $0.area))" }.joined(separator: ",")
-    print("\(label) coincident edges=\(result.coincidentEdgeCount) involved=[\(involved)]")
+    print("cleanup-coincident-edges foundEdges=\(result.coincidentEdgeCount) involvedRings=[\(involved)]")
     if dropped.isEmpty {
-        print("\(label) coincident cleanup dropped=0 remaining=\(result.rings.count)")
+        print("cleanup-coincident-edges dropped=[] remaining=\(result.rings.count)")
     } else {
-        print("\(label) coincident cleanup dropped=[\(dropped)] remaining=\(result.rings.count)")
+        print("cleanup-coincident-edges dropped=[\(dropped)] remaining=\(result.rings.count)")
     }
 }
 
@@ -3815,6 +3834,6 @@ do {
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
-    stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--snap-tol N] [--dry-run] [--print-ring-original-index N]\n".utf8))
+    stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--snap-tol N] [--no-union|--cleanup-only] [--dump-after-cleanup <path>] [--dry-run] [--print-ring-original-index N]\n".utf8))
     exit(1)
 }
