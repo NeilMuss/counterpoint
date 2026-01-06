@@ -19,6 +19,10 @@ struct CLI {
             try runShowcase(args: Array(args.dropFirst()))
             return
         }
+        if let first = args.first, first == "union-dump" {
+            try runUnionDump(args: Array(args.dropFirst()))
+            return
+        }
         let options = try parseOptions(args)
         let inputData: Data
 
@@ -209,6 +213,100 @@ struct CLI {
         }
 
         print("Rendered \(rendered) showcase SVGs to \(options.outputDirectory)")
+    }
+
+    private func runUnionDump(args: [String]) throws {
+        let options = try parseUnionDumpOptions(args)
+        let inputURL = URL(fileURLWithPath: options.inputPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: inputURL)
+        } catch {
+            throw CLIError.invalidArguments("Failed to read input file at: \(options.inputPath)")
+        }
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode([[Point]].self, from: data)
+        let originalRings: [Ring] = decoded.map { $0 }
+
+        if let ringIndex = options.printRingOriginalIndex {
+            guard ringIndex >= 0 && ringIndex < originalRings.count else {
+                throw CLIError.invalidArguments("union-dump print-ring-original-index out of range (index=\(ringIndex), count=\(originalRings.count))")
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let output = try encoder.encode(originalRings[ringIndex])
+            FileHandle.standardOutput.write(output)
+            FileHandle.standardOutput.write(Data([0x0A]))
+            if options.dryRun {
+                return
+            }
+        }
+
+        var selection = try computeUnionDumpSelection(rings: originalRings, options: options)
+        let snapTol = options.snapTol ?? 1.0e-3
+        if options.cleanupCoincidentEdges {
+            let indexed = selection.keptOriginalIndices.map { index in
+                IndexedRing(index: index, ring: originalRings[index])
+            }
+            let cleanup = cleanupCoincidentEdges(
+                rings: indexed,
+                snapTol: snapTol,
+                minRemainingCount: nil
+            )
+            selection = UnionDumpSelection(
+                rings: cleanup.rings.map { $0.ring },
+                keptOriginalIndices: cleanup.rings.map { $0.index },
+                dropOriginalIndices: selection.dropOriginalIndices + cleanup.dropped.map { $0.index }
+            )
+            logCoincidentEdgeCleanup(label: "union-dump", result: cleanup)
+        }
+        let stats = ringSummary(selection.rings)
+        let keptList = selection.keptOriginalIndices.sorted().map(String.init).joined(separator: ",")
+        let providedDrop = (options.dropOriginalIndices + options.dropIndices).sorted().map(String.init).joined(separator: ",")
+        if options.dryRun {
+            print("union-dump dry-run inputRings=\(originalRings.count) keepFirst=\(options.keepFirst.map(String.init) ?? "nil") dropOriginal=\(providedDrop.isEmpty ? "[]" : "[\(providedDrop)]") keptOriginal=\(keptList.isEmpty ? "[]" : "[\(keptList)]") finalRings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts)")
+            return
+        }
+        if keptList.isEmpty {
+            print("union-dump input rings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts) keptOriginal=[]")
+        } else {
+            print("union-dump input rings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts) keptOriginal=[\(keptList)]")
+        }
+
+        let unioner = IOverlayPolygonUnionAdapter()
+        let unionResult = try unioner.union(subjectRings: selection.rings)
+
+        if let outPath = options.outPath {
+            let outputURL = URL(fileURLWithPath: outPath)
+            let outputDir = outputURL.deletingLastPathComponent()
+            if !outputDir.path.isEmpty, outputDir.path != "." {
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let output = try encoder.encode(unionResult)
+            try output.write(to: outputURL)
+        } else {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let output = try encoder.encode(unionResult)
+            FileHandle.standardOutput.write(output)
+            FileHandle.standardOutput.write(Data([0x0A]))
+        }
+
+        if let svgPath = options.svgPath {
+            let outputURL = URL(fileURLWithPath: svgPath)
+            let outputDir = outputURL.deletingLastPathComponent()
+            if !outputDir.path.isEmpty, outputDir.path != "." {
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            }
+            let svg = svgDocumentForUnionDump(
+                inputRings: selection.rings,
+                unionResult: unionResult,
+                padding: 10.0
+            )
+            try svg.write(to: outputURL, atomically: true, encoding: .utf8)
+        }
     }
 
     private func writeScurveOutput(config: ScurvePlaygroundConfig, geometry: ScurveGeometry) throws {
@@ -581,6 +679,9 @@ struct CLIOptions {
     var unionMinRingArea: Double?
     var unionAutoTimeBudgetMs: Int?
     var unionInputFilter: UnionInputFilter?
+    var unionSilhouetteK: Int?
+    var unionSilhouetteDropContained: Bool?
+    var unionDumpInputPath: String?
     var outlineFit: OutlineFitMode?
     var fitTolerance: Double?
     var simplifyTolerance: Double?
@@ -590,6 +691,20 @@ struct CLIOptions {
 enum UnionInputFilter: String {
     case none
     case silhouette
+}
+
+private struct UnionDumpOptions {
+    var inputPath: String
+    var svgPath: String?
+    var outPath: String?
+    var dropIndices: [Int]
+    var dropOriginalIndices: [Int]
+    var keepFirst: Int?
+    var keepIndices: [Int]
+    var dryRun: Bool
+    var printRingOriginalIndex: Int?
+    var cleanupCoincidentEdges: Bool
+    var snapTol: Double?
 }
 
 struct ScurvePlaygroundConfig: Equatable {
@@ -678,7 +793,7 @@ struct ShowcaseOptions {
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
-    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false)
+    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, unionSilhouetteK: nil, unionSilhouetteDropContained: nil, unionDumpInputPath: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false)
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -825,6 +940,22 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             }
             options.unionInputFilter = parsed
             index += 1
+        case "--union-silhouette-k":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-silhouette-k requires an integer")
+            }
+            options.unionSilhouetteK = value
+            index += 1
+        case "--union-silhouette-drop-contained":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--union-silhouette-drop-contained requires 0 or 1")
+            }
+            options.unionSilhouetteDropContained = value != 0
+            index += 1
+        case "--union-dump-input":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--union-dump-input requires a file path") }
+            options.unionDumpInputPath = args[index + 1]
+            index += 1
         case "--union-min-ring-area":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
                 throw CLIError.invalidArguments("--union-min-ring-area requires a number")
@@ -926,6 +1057,382 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
     }
 
     return options
+}
+
+private func parseUnionDumpOptions(_ args: [String]) throws -> UnionDumpOptions {
+    guard let inputPath = args.first, !inputPath.hasPrefix("--") else {
+        throw CLIError.invalidArguments("union-dump requires an input JSON path")
+    }
+    var options = UnionDumpOptions(
+        inputPath: inputPath,
+        svgPath: nil,
+        outPath: nil,
+        dropIndices: [],
+        dropOriginalIndices: [],
+        keepFirst: nil,
+        keepIndices: [],
+        dryRun: false,
+        printRingOriginalIndex: nil,
+        cleanupCoincidentEdges: false,
+        snapTol: nil
+    )
+    var index = 1
+    while index < args.count {
+        let arg = args[index]
+        switch arg {
+        case "--svg":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--svg requires an output path") }
+            options.svgPath = args[index + 1]
+            index += 1
+        case "--out":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--out requires an output path") }
+            options.outPath = args[index + 1]
+            index += 1
+        case "--drop-index":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--drop-index requires an integer (0-based original index)")
+            }
+            options.dropIndices.append(value)
+            index += 1
+        case "--drop-original-index":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--drop-original-index requires an integer (0-based)")
+            }
+            options.dropOriginalIndices.append(value)
+            index += 1
+        case "--cleanup-coincident-edges":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--cleanup-coincident-edges requires 0 or 1")
+            }
+            options.cleanupCoincidentEdges = value != 0
+            index += 1
+        case "--snap-tol":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--snap-tol requires a number")
+            }
+            options.snapTol = value
+            index += 1
+        case "--keep-first":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--keep-first requires an integer")
+            }
+            options.keepFirst = value
+            index += 1
+        case "--keep-indices":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--keep-indices requires a list") }
+            options.keepIndices = try parseIndexList(args[index + 1])
+            index += 1
+        case "--dry-run":
+            options.dryRun = true
+        case "--print-ring-original-index":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--print-ring-original-index requires an integer (0-based)")
+            }
+            options.printRingOriginalIndex = value
+            index += 1
+        default:
+            throw CLIError.invalidArguments("Unknown option for union-dump: \(arg)")
+        }
+        index += 1
+    }
+    return options
+}
+
+private func parseIndexList(_ value: String) throws -> [Int] {
+    var result: [Int] = []
+    let parts = value.split(separator: ",")
+    for part in parts {
+        let token = part.trimmingCharacters(in: .whitespaces)
+        if token.isEmpty { continue }
+        if let dashIndex = token.firstIndex(of: "-") {
+            let startString = token[..<dashIndex]
+            let endString = token[token.index(after: dashIndex)...]
+            guard let start = Int(startString), let end = Int(endString), start <= end else {
+                throw CLIError.invalidArguments("--keep-indices has invalid range: \(token)")
+            }
+            result.append(contentsOf: start...end)
+        } else {
+            guard let value = Int(token) else {
+                throw CLIError.invalidArguments("--keep-indices has invalid entry: \(token)")
+            }
+            result.append(value)
+        }
+    }
+    return result
+}
+
+private struct UnionDumpSelection {
+    let rings: [Ring]
+    let keptOriginalIndices: [Int]
+    let dropOriginalIndices: [Int]
+}
+
+private struct IndexedRing {
+    let index: Int
+    let ring: Ring
+    let area: Double
+
+    init(index: Int, ring: Ring) {
+        self.index = index
+        self.ring = ring
+        self.area = abs(ringArea(ring))
+    }
+}
+
+private struct CoincidentEdgeCleanupResult {
+    let rings: [IndexedRing]
+    let dropped: [IndexedRing]
+    let coincidentEdgeCount: Int
+    let involvedIndices: [Int]
+}
+
+private struct QuantizedPoint: Hashable {
+    let x: Int
+    let y: Int
+}
+
+private struct EdgeKey: Hashable {
+    let ax: Int
+    let ay: Int
+    let bx: Int
+    let by: Int
+}
+
+private func computeUnionDumpSelection(rings: [Ring], options: UnionDumpOptions) throws -> UnionDumpSelection {
+    let count = rings.count
+    var keptIndices = Array(0..<count)
+
+    if let keepFirst = options.keepFirst {
+        if keepFirst <= 0 {
+            keptIndices = []
+        } else {
+            keptIndices = Array(keptIndices.prefix(min(keepFirst, count)))
+        }
+    } else if !options.keepIndices.isEmpty {
+        let keepSet = Set(options.keepIndices)
+        if let maxIndex = keepSet.max(), maxIndex >= count {
+            throw CLIError.invalidArguments("union-dump keep-indices out of range (max=\(maxIndex), count=\(count))")
+        }
+        keptIndices = keptIndices.filter { keepSet.contains($0) }
+    }
+
+    let dropOriginal = options.dropOriginalIndices + options.dropIndices
+    if !dropOriginal.isEmpty {
+        let dropSet = Set(dropOriginal)
+        if let maxIndex = dropSet.max(), maxIndex >= count {
+            throw CLIError.invalidArguments("union-dump drop-original-index out of range (max=\(maxIndex), count=\(count))")
+        }
+        keptIndices = keptIndices.filter { !dropSet.contains($0) }
+    }
+
+    let keptRings = keptIndices.map { rings[$0] }
+    return UnionDumpSelection(rings: keptRings, keptOriginalIndices: keptIndices, dropOriginalIndices: dropOriginal)
+}
+
+private func cleanupCoincidentEdges(
+    rings: [IndexedRing],
+    snapTol: Double,
+    minRemainingCount: Int?
+) -> CoincidentEdgeCleanupResult {
+    guard snapTol > 0, rings.count > 1 else {
+        return CoincidentEdgeCleanupResult(rings: rings, dropped: [], coincidentEdgeCount: 0, involvedIndices: [])
+    }
+    var working = rings
+    var dropped: [IndexedRing] = []
+    var lastEdgeCount = 0
+    var lastInvolved: [Int] = []
+
+    while true {
+        let edgeInfo = coincidentEdgeInfo(rings: working, snapTol: snapTol)
+        lastEdgeCount = edgeInfo.edgeCount
+        lastInvolved = Array(edgeInfo.involvedIndices).sorted()
+        if edgeInfo.edgeCount == 0 || edgeInfo.involvedIndices.isEmpty {
+            break
+        }
+        if let minRemainingCount, working.count <= minRemainingCount {
+            break
+        }
+        let candidate = working
+            .filter { edgeInfo.involvedIndices.contains($0.index) }
+            .min {
+                if abs($0.area - $1.area) > 1.0e-9 {
+                    return $0.area < $1.area
+                }
+                return $0.index < $1.index
+            }
+        guard let toDrop = candidate else { break }
+        working.removeAll { $0.index == toDrop.index }
+        dropped.append(toDrop)
+    }
+
+    return CoincidentEdgeCleanupResult(
+        rings: working,
+        dropped: dropped,
+        coincidentEdgeCount: lastEdgeCount,
+        involvedIndices: lastInvolved
+    )
+}
+
+private func coincidentEdgeInfo(
+    rings: [IndexedRing],
+    snapTol: Double
+) -> (edgeCount: Int, involvedIndices: Set<Int>) {
+    var edgeMap: [EdgeKey: Set<Int>] = [:]
+    edgeMap.reserveCapacity(rings.count * 4)
+    for ring in rings {
+        let points = ring.ring
+        guard points.count >= 2 else { continue }
+        for i in 0..<points.count {
+            let a = points[i]
+            let b = points[(i + 1) % points.count]
+            let qa = quantizePoint(a, snapTol: snapTol)
+            let qb = quantizePoint(b, snapTol: snapTol)
+            if qa == qb { continue }
+            let key = edgeKey(qa, qb)
+            edgeMap[key, default: []].insert(ring.index)
+        }
+    }
+    var involved: Set<Int> = []
+    var coincidentEdges = 0
+    for entry in edgeMap.values {
+        if entry.count >= 2 {
+            coincidentEdges += 1
+            involved.formUnion(entry)
+        }
+    }
+    return (coincidentEdges, involved)
+}
+
+private func quantizePoint(_ point: Point, snapTol: Double) -> QuantizedPoint {
+    QuantizedPoint(
+        x: Int((point.x / snapTol).rounded()),
+        y: Int((point.y / snapTol).rounded())
+    )
+}
+
+private func edgeKey(_ a: QuantizedPoint, _ b: QuantizedPoint) -> EdgeKey {
+    if a.x < b.x || (a.x == b.x && a.y <= b.y) {
+        return EdgeKey(ax: a.x, ay: a.y, bx: b.x, by: b.y)
+    }
+    return EdgeKey(ax: b.x, ay: b.y, bx: a.x, by: a.y)
+}
+
+private func logCoincidentEdgeCleanup(label: String, result: CoincidentEdgeCleanupResult) {
+    if result.coincidentEdgeCount == 0 {
+        print("\(label) coincident edges: none")
+        return
+    }
+    let involved = result.involvedIndices.map(String.init).joined(separator: ",")
+    let dropped = result.dropped.map { "\($0.index):\(String(format: "%.4f", $0.area))" }.joined(separator: ",")
+    print("\(label) coincident edges=\(result.coincidentEdgeCount) involved=[\(involved)]")
+    if dropped.isEmpty {
+        print("\(label) coincident cleanup dropped=0 remaining=\(result.rings.count)")
+    } else {
+        print("\(label) coincident cleanup dropped=[\(dropped)] remaining=\(result.rings.count)")
+    }
+}
+
+private struct RingSummary {
+    let ringCount: Int
+    let totalVerts: Int
+    let maxRingVerts: Int
+}
+
+private func ringSummary(_ rings: [Ring]) -> RingSummary {
+    var total = 0
+    var maxVerts = 0
+    for ring in rings {
+        total += ring.count
+        maxVerts = max(maxVerts, ring.count)
+    }
+    return RingSummary(ringCount: rings.count, totalVerts: total, maxRingVerts: maxVerts)
+}
+
+private func svgDocumentForUnionDump(inputRings: [Ring], unionResult: PolygonSet, padding: Double) -> String {
+    let inputPaths = inputRings.map { ringStrokePath($0, stroke: "#444", strokeWidth: 1.0) }.joined(separator: "\n  ")
+    let unionPaths = unionResult.map { polygonPath($0, fill: "#111", fillOpacity: 0.2) }.joined(separator: "\n  ")
+    let bounds = unionBounds(boundsForRings(inputRings), boundsForPolygons(unionResult)) ?? CGRect(x: 0, y: 0, width: 100, height: 100)
+    let padded = bounds.insetBy(dx: -padding, dy: -padding)
+    let viewBox = "\(formatSVGNumber(padded.minX)) \(formatSVGNumber(padded.minY)) \(formatSVGNumber(padded.width)) \(formatSVGNumber(padded.height))"
+    let width = formatSVGNumber(padded.width)
+    let height = formatSVGNumber(padded.height)
+    return """
+    <svg xmlns="http://www.w3.org/2000/svg" width="\(width)" height="\(height)" viewBox="\(viewBox)">
+      \(unionPaths)
+      \(inputPaths)
+    </svg>
+    """
+}
+
+private func ringStrokePath(_ ring: Ring, stroke: String, strokeWidth: Double) -> String {
+    let d = ringPathData(ring)
+    guard !d.isEmpty else { return "" }
+    return "<path fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(formatSVGNumber(strokeWidth))\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"\(d)\"/>"
+}
+
+private func polygonPath(_ polygon: Polygon, fill: String, fillOpacity: Double) -> String {
+    let outer = ringPathData(polygon.outer)
+    let holes = polygon.holes.map { ringPathData($0) }.joined(separator: " ")
+    let d = holes.isEmpty ? outer : "\(outer) \(holes)"
+    guard !d.isEmpty else { return "" }
+    return "<path fill=\"\(fill)\" fill-opacity=\"\(formatSVGNumber(fillOpacity))\" stroke=\"none\" fill-rule=\"evenodd\" d=\"\(d)\"/>"
+}
+
+private func ringPathData(_ ring: Ring) -> String {
+    guard let first = ring.first else { return "" }
+    var parts: [String] = []
+    parts.reserveCapacity(ring.count + 2)
+    parts.append("M \(formatSVGNumber(first.x)) \(formatSVGNumber(first.y))")
+    for point in ring.dropFirst() {
+        parts.append("L \(formatSVGNumber(point.x)) \(formatSVGNumber(point.y))")
+    }
+    parts.append("Z")
+    return parts.joined(separator: " ")
+}
+
+private func formatSVGNumber(_ value: Double, precision: Int = 4) -> String {
+    let factor = pow(10.0, Double(precision))
+    let rounded = (value * factor).rounded() / factor
+    if rounded == -0.0 { return "0" }
+    return String(format: "%0.*f", precision, rounded)
+}
+
+private func boundsForRings(_ rings: [Ring]) -> CGRect? {
+    var bounds: CGRect?
+    for ring in rings {
+        let ringBounds = ringBounds(ring)
+        if ringBounds.isNull { continue }
+        bounds = bounds?.union(ringBounds) ?? ringBounds
+    }
+    return bounds
+}
+
+private func boundsForPolygons(_ polygons: PolygonSet) -> CGRect? {
+    var bounds: CGRect?
+    for polygon in polygons {
+        let outerBounds = ringBounds(polygon.outer)
+        if !outerBounds.isNull {
+            bounds = bounds?.union(outerBounds) ?? outerBounds
+        }
+        for hole in polygon.holes {
+            let holeBounds = ringBounds(hole)
+            if !holeBounds.isNull {
+                bounds = bounds?.union(holeBounds) ?? holeBounds
+            }
+        }
+    }
+    return bounds
+}
+
+private func unionBounds(_ lhs: CGRect?, _ rhs: CGRect?) -> CGRect? {
+    switch (lhs, rhs) {
+    case (nil, nil):
+        return nil
+    case let (value?, nil), let (nil, value?):
+        return value
+    case let (left?, right?):
+        return left.union(right)
+    }
 }
 
 func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
@@ -2261,6 +2768,9 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
     let unionMinRingArea = options.unionMinRingArea ?? 5.0
     let unionAutoTimeBudgetMs = options.unionAutoTimeBudgetMs ?? 1500
     let unionInputFilter = options.unionInputFilter ?? .none
+    let unionSilhouetteK = max(1, options.unionSilhouetteK ?? 60)
+    let unionSilhouetteDropContained = options.unionSilhouetteDropContained ?? true
+    let unionDumpInputPath = options.unionDumpInputPath
 
     let sampler = DefaultPathSampler()
     let evaluator = DefaultParamEvaluator()
@@ -2289,6 +2799,9 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 edgeEps: unionEdgeEps,
                 batchSize: unionBatchSize,
                 inputFilter: unionInputFilter,
+                silhouetteK: unionSilhouetteK,
+                silhouetteDropContained: unionSilhouetteDropContained,
+                dumpInputPath: unionDumpInputPath,
                 verbose: options.verbose,
                 label: "authored-stroke \(stroke.id)"
             )
@@ -2304,6 +2817,9 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 batchSize: unionBatchSize,
                 autoTimeBudgetMs: unionAutoTimeBudgetMs,
                 inputFilter: unionInputFilter,
+                silhouetteK: unionSilhouetteK,
+                silhouetteDropContained: unionSilhouetteDropContained,
+                dumpInputPath: unionDumpInputPath,
                 verbose: options.verbose,
                 label: "authored-stroke \(stroke.id)"
             )
@@ -2410,8 +2926,6 @@ struct CleanupStats {
     let tinyVertexCount: Int
     let dedupRingCount: Int
     let dedupVertexCount: Int
-    let silhouetteRingCount: Int
-    let silhouetteVertexCount: Int
 }
 
 private func logCleanupStats(label: String, stats: CleanupStats) {
@@ -2421,9 +2935,149 @@ private func logCleanupStats(label: String, stats: CleanupStats) {
     print("\(label) union tiny drop \(tinyDropped) remaining \(stats.tinyRingCount)")
     print("\(label) union droppedTinyRings \(tinyDropped) remaining \(stats.tinyRingCount)")
     print("\(label) union dedup drop \(stats.tinyRingCount - stats.dedupRingCount) remaining \(stats.dedupRingCount)")
-    if stats.silhouetteRingCount != stats.dedupRingCount {
-        print("\(label) union silhouette drop \(stats.dedupRingCount - stats.silhouetteRingCount) remaining \(stats.silhouetteRingCount)")
+}
+
+struct SilhouetteStats {
+    let inputCount: Int
+    let keptCount: Int
+    let containedDropCount: Int
+}
+
+private func logSilhouetteStats(label: String, k: Int, stats: SilhouetteStats) {
+    print("\(label) union silhouette keep K=\(k) from \(stats.inputCount) -> \(stats.keptCount)")
+    if stats.containedDropCount > 0 {
+        print("\(label) union silhouette contained drop \(stats.containedDropCount) remaining \(stats.keptCount)")
     }
+}
+
+private struct RingMetrics {
+    let ringCount: Int
+    let totalVerts: Int
+    let maxRingVerts: Int
+}
+
+private func ringMetrics(_ rings: [Ring]) -> RingMetrics {
+    var total = 0
+    var maxVerts = 0
+    for ring in rings {
+        let count = ring.count
+        total += count
+        if count > maxVerts { maxVerts = count }
+    }
+    return RingMetrics(ringCount: rings.count, totalVerts: total, maxRingVerts: maxVerts)
+}
+
+private func logUnionAdapterCall(label: String, batch: Int, metrics: RingMetrics) {
+    print("\(label) union calling adapter batch \(batch): inputRings=\(metrics.ringCount) totalVerts=\(metrics.totalVerts) maxRingVerts=\(metrics.maxRingVerts)")
+}
+
+private struct RingValidationResult {
+    let isValid: Bool
+    let reason: String?
+}
+
+private func validateRingForUnion(_ ring: Ring, epsilon: Double) -> RingValidationResult {
+    guard ring.count >= 3 else { return RingValidationResult(isValid: false, reason: "vertexCount<3") }
+    for point in ring {
+        if !point.x.isFinite || !point.y.isFinite {
+            return RingValidationResult(isValid: false, reason: "nonFinite")
+        }
+    }
+    let area = abs(ringArea(ring))
+    if area <= epsilon {
+        return RingValidationResult(isValid: false, reason: "area<=eps")
+    }
+    var prev = ring[0]
+    for index in 1..<ring.count {
+        let current = ring[index]
+        if (current - prev).length < epsilon {
+            return RingValidationResult(isValid: false, reason: "duplicatePoint")
+        }
+        prev = current
+    }
+    if ringSelfIntersects(ring, epsilon: epsilon) {
+        return RingValidationResult(isValid: false, reason: "selfIntersect")
+    }
+    return RingValidationResult(isValid: true, reason: nil)
+}
+
+private func logInvalidRing(label: String, index: Int, ring: Ring, reason: String) {
+    let area = abs(ringArea(ring))
+    let bounds = ringBounds(ring)
+    print("\(label) union invalid ring idx=\(index) reason=\(reason) verts=\(ring.count) area=\(String(format: "%.3f", area)) bbox=\(String(format: "%.3f", bounds.width))x\(String(format: "%.3f", bounds.height))")
+}
+
+private func filterInvalidRings(label: String, rings: [Ring], epsilon: Double, dropInvalid: Bool) -> [Ring] {
+    var filtered: [Ring] = []
+    filtered.reserveCapacity(rings.count)
+    for (index, ring) in rings.enumerated() {
+        let result = validateRingForUnion(ring, epsilon: epsilon)
+        if result.isValid {
+            filtered.append(ring)
+        } else if let reason = result.reason {
+            logInvalidRing(label: label, index: index, ring: ring, reason: reason)
+            if !dropInvalid {
+                filtered.append(ring)
+            }
+        }
+    }
+    return filtered
+}
+
+private func ringSelfIntersects(_ ring: Ring, epsilon: Double) -> Bool {
+    let count = ring.count
+    guard count >= 4 else { return false }
+    for i in 0..<(count - 1) {
+        let a1 = ring[i]
+        let a2 = ring[(i + 1) % count]
+        let start = i + 2
+        let end = count - 1
+        if start > end { continue }
+        for j in start..<end {
+            if i == 0 && j == count - 2 { continue }
+            let b1 = ring[j]
+            let b2 = ring[(j + 1) % count]
+            if segmentsIntersect(a1, a2, b1, b2, epsilon: epsilon) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+private func segmentsIntersect(_ p1: Point, _ p2: Point, _ q1: Point, _ q2: Point, epsilon: Double) -> Bool {
+    func orientation(_ a: Point, _ b: Point, _ c: Point) -> Double {
+        (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
+    }
+    let o1 = orientation(p1, p2, q1)
+    let o2 = orientation(p1, p2, q2)
+    let o3 = orientation(q1, q2, p1)
+    let o4 = orientation(q1, q2, p2)
+    if abs(o1) < epsilon && abs(o2) < epsilon && abs(o3) < epsilon && abs(o4) < epsilon {
+        return false
+    }
+    return (o1 * o2 < 0) && (o3 * o4 < 0)
+}
+
+private func dumpUnionInputRings(_ rings: [Ring], to path: String) {
+    var payload: [[ [String: Double] ]] = []
+    payload.reserveCapacity(rings.count)
+    for ring in rings {
+        var points: [[String: Double]] = []
+        points.reserveCapacity(ring.count)
+        for point in ring {
+            points.append(["x": point.x, "y": point.y])
+        }
+        payload.append(points)
+    }
+    if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+private func dumpUnionInputOnce(_ rings: [Ring], to path: String) {
+    if FileManager.default.fileExists(atPath: path) { return }
+    dumpUnionInputRings(rings, to: path)
 }
 
 private func percentile(_ values: [Double], _ p: Double) -> Double {
@@ -2497,8 +3151,7 @@ func cleanupRingsForUnion(
     areaEps: Double,
     minRingArea: Double,
     weldEps: Double,
-    edgeEps: Double,
-    inputFilter: UnionInputFilter
+    edgeEps: Double
 ) -> (rings: [Ring], stats: CleanupStats) {
     let bboxEps = 0.5
     let sliverRatioMin = 0.01
@@ -2506,7 +3159,6 @@ func cleanupRingsForUnion(
     let sliverVertexCap = 5
     let sliverTinyEps = 1.0e-9
     let dedupeTolerance = 0.05
-    let silhouetteKeepCount = 50
     let preRingCount = rings.count
     let preVertexCount = rings.reduce(0) { $0 + $1.count }
     var cleaned: [Ring] = []
@@ -2549,17 +3201,6 @@ func cleanupRingsForUnion(
         tinyFiltered.append(ring)
     }
     let deduped = dedupeRingsByQuantizedPoints(tinyFiltered, tolerance: dedupeTolerance)
-    var silhouetteRings = deduped.rings
-    if inputFilter == .silhouette {
-        let sorted = deduped.rings.enumerated().sorted { lhs, rhs in
-            let lhsArea = ringBounds(lhs.element).width * ringBounds(lhs.element).height
-            let rhsArea = ringBounds(rhs.element).width * ringBounds(rhs.element).height
-            if lhsArea == rhsArea { return lhs.offset < rhs.offset }
-            return lhsArea > rhsArea
-        }
-        silhouetteRings = sorted.prefix(silhouetteKeepCount).map { $0.element }
-    }
-    let silhouetteVerts = silhouetteRings.reduce(0) { $0 + $1.count }
     let dedupVertexCount = deduped.rings.reduce(0) { $0 + $1.count }
     let stats = CleanupStats(
         preRingCount: preRingCount,
@@ -2571,11 +3212,9 @@ func cleanupRingsForUnion(
         tinyRingCount: tinyFiltered.count,
         tinyVertexCount: tinyVerts,
         dedupRingCount: deduped.rings.count,
-        dedupVertexCount: dedupVertexCount,
-        silhouetteRingCount: silhouetteRings.count,
-        silhouetteVertexCount: silhouetteVerts
+        dedupVertexCount: dedupVertexCount
     )
-    return (silhouetteRings, stats)
+    return (deduped.rings, stats)
 }
 
 func simplifyRingsForUnion(
@@ -2586,21 +3225,33 @@ func simplifyRingsForUnion(
     minRingArea: Double,
     weldEps: Double,
     edgeEps: Double,
-    inputFilter: UnionInputFilter
-) throws -> (rings: [Ring], preCount: Int, postCount: Int, cleanup: CleanupStats) {
+    inputFilter: UnionInputFilter,
+    silhouetteK: Int,
+    silhouetteDropContained: Bool
+) throws -> (rings: [Ring], preCount: Int, postCount: Int, cleanup: CleanupStats, silhouette: SilhouetteStats?) {
     let cleaned = cleanupRingsForUnion(
         rings,
         areaEps: areaEps,
         minRingArea: minRingArea,
         weldEps: weldEps,
-        edgeEps: edgeEps,
-        inputFilter: inputFilter
+        edgeEps: edgeEps
     )
     let preCount = cleaned.stats.preVertexCount
+    var ringsForSimplify = cleaned.rings
+    var silhouetteStats: SilhouetteStats?
+    if inputFilter == .silhouette {
+        let filtered = applySilhouetteFilter(
+            cleaned.rings,
+            k: silhouetteK,
+            dropContained: silhouetteDropContained
+        )
+        ringsForSimplify = filtered.rings
+        silhouetteStats = filtered.stats
+    }
     var postCount = 0
     var simplified: [Ring] = []
-    simplified.reserveCapacity(cleaned.rings.count)
-    for ring in cleaned.rings {
+    simplified.reserveCapacity(ringsForSimplify.count)
+    for ring in ringsForSimplify {
         var tolerance = baseTolerance
         var simplifiedRing = ring
         var success = false
@@ -2619,7 +3270,7 @@ func simplifyRingsForUnion(
         postCount += simplifiedRing.count
         simplified.append(simplifiedRing)
     }
-    return (simplified, preCount, postCount, cleaned.stats)
+    return (simplified, preCount, postCount, cleaned.stats, silhouetteStats)
 }
 
 private struct SimplifyingUnioner: PolygonUnioning {
@@ -2632,23 +3283,32 @@ private struct SimplifyingUnioner: PolygonUnioning {
     let edgeEps: Double
     let batchSize: Int
     let inputFilter: UnionInputFilter
+    let silhouetteK: Int
+    let silhouetteDropContained: Bool
+    let dumpInputPath: String?
     let verbose: Bool
     let label: String
 
     func union(subjectRings: [Ring]) throws -> PolygonSet {
         let start = Date()
+        let validated = filterInvalidRings(label: label, rings: subjectRings, epsilon: 1.0e-6, dropInvalid: false)
         let simplified = try simplifyRingsForUnion(
-            subjectRings,
+            validated,
             baseTolerance: simplifyTolerance,
             maxVertices: maxVertices,
             areaEps: areaEps,
             minRingArea: minRingArea,
             weldEps: weldEps,
             edgeEps: edgeEps,
-            inputFilter: inputFilter
+            inputFilter: inputFilter,
+            silhouetteK: silhouetteK,
+            silhouetteDropContained: silhouetteDropContained
         )
         if verbose {
             logCleanupStats(label: label, stats: simplified.cleanup)
+            if let silhouetteStats = simplified.silhouette {
+                logSilhouetteStats(label: label, k: silhouetteK, stats: silhouetteStats)
+            }
             print("\(label) union simplify verts \(simplified.cleanup.tinyVertexCount) -> \(simplified.postCount)")
         }
         let cleanedCount = simplified.rings.count
@@ -2656,11 +3316,17 @@ private struct SimplifyingUnioner: PolygonUnioning {
             rings: simplified.rings,
             batchSize: batchSize,
             unioner: base,
+            dumpPath: dumpInputPath,
             verbose: verbose,
             label: label
         )
         if verbose {
             print("\(label) union batches \(cleanedCount) -> \(batches.count)")
+        }
+        let finalMetrics = ringMetrics(batches)
+        logUnionAdapterCall(label: label, batch: 0, metrics: finalMetrics)
+        if let dumpInputPath {
+            dumpUnionInputOnce(batches, to: dumpInputPath)
         }
         let result = try base.union(subjectRings: batches)
         if verbose {
@@ -2682,6 +3348,9 @@ private struct AutoUnioner: PolygonUnioning {
     let batchSize: Int
     let autoTimeBudgetMs: Int
     let inputFilter: UnionInputFilter
+    let silhouetteK: Int
+    let silhouetteDropContained: Bool
+    let dumpInputPath: String?
     let verbose: Bool
     let label: String
 
@@ -2691,25 +3360,86 @@ private struct AutoUnioner: PolygonUnioning {
             areaEps: areaEps,
             minRingArea: minRingArea,
             weldEps: weldEps,
-            edgeEps: edgeEps,
-            inputFilter: inputFilter
+            edgeEps: edgeEps
         )
-        let ringCount = cleaned.rings.count
-        let totalVerts = cleaned.rings.reduce(0) { $0 + $1.count }
-        let estimatedCost = Double(ringCount) * Double(max(1, totalVerts))
-        let maxVertsCap = maxVertices
-        let shouldUnion = totalVerts <= (maxVertsCap * 2)
+        var unionInput = cleaned.rings
+        var silhouetteStats: SilhouetteStats?
+        if inputFilter == .silhouette {
+            let filtered = applySilhouetteFilter(
+                unionInput,
+                k: silhouetteK,
+                dropContained: silhouetteDropContained
+            )
+            unionInput = filtered.rings
+            silhouetteStats = filtered.stats
+        }
+        unionInput = filterInvalidRings(label: label, rings: unionInput, epsilon: 1.0e-6, dropInvalid: true)
+        let coincidentCleanup = cleanupCoincidentEdges(
+            rings: unionInput.enumerated().map { IndexedRing(index: $0.offset, ring: $0.element) },
+            snapTol: 1.0e-3,
+            minRemainingCount: 120
+        )
+        if verbose {
+            logCoincidentEdgeCleanup(label: label, result: coincidentCleanup)
+        }
+        unionInput = coincidentCleanup.rings.map { $0.ring }
         let effectiveBatchSize = min(batchSize, 50)
         if verbose {
             logCleanupStats(label: label, stats: cleaned.stats)
-            ringStatsReport(label: label, rings: cleaned.rings)
-            print("\(label) union auto inputs rings \(ringCount) verts \(totalVerts) maxVertsCap \(maxVertsCap) simplifyTol \(simplifyTolerance) batch \(effectiveBatchSize) estCost \(String(format: "%.0f", estimatedCost))")
+            ringStatsReport(label: label, rings: unionInput)
+            if let silhouetteStats {
+                logSilhouetteStats(label: label, k: silhouetteK, stats: silhouetteStats)
+            }
         }
-        if ringCount > 250 {
+        if unionInput.count > 250 {
+            let baseRings = cleaned.rings
+            let primary = applySilhouetteFilter(
+                baseRings,
+                k: silhouetteK,
+                dropContained: silhouetteDropContained
+            )
             if verbose {
-                print("\(label) auto union skipped: ringCountCap")
+                logSilhouetteStats(label: label, k: silhouetteK, stats: primary.stats)
+            }
+            unionInput = primary.rings
+            if unionInput.count > 250 {
+                let retryK = min(30, unionInput.count)
+                let retry = applySilhouetteFilter(
+                    baseRings,
+                    k: retryK,
+                    dropContained: silhouetteDropContained
+                )
+                if verbose {
+                    logSilhouetteStats(label: label, k: retryK, stats: retry.stats)
+                }
+                unionInput = retry.rings
+            }
+            if unionInput.count > 250 {
+                if verbose {
+                    print("\(label) auto union skipped: ringCountCap")
+                }
+                return cleaned.rings.map { Polygon(outer: $0) }
+            }
+        }
+        let safeMaxRingsAuto = 120
+        let safeMaxTotalVertsAuto = 3000
+        let safeMaxRingVertsAuto = 128
+        let metrics = ringMetrics(unionInput)
+        if metrics.ringCount > safeMaxRingsAuto
+            || metrics.totalVerts > safeMaxTotalVertsAuto
+            || metrics.maxRingVerts > safeMaxRingVertsAuto {
+            if verbose {
+                print("\(label) auto union skipped: safeCaps (rings=\(metrics.ringCount), totalVerts=\(metrics.totalVerts), maxRingVerts=\(metrics.maxRingVerts))")
             }
             return cleaned.rings.map { Polygon(outer: $0) }
+        }
+        let ringCount = metrics.ringCount
+        let totalVerts = metrics.totalVerts
+        let estimatedCost = Double(ringCount) * Double(max(1, totalVerts))
+        let maxVertsCap = maxVertices
+        let shouldUnion = totalVerts <= (maxVertsCap * 2)
+        if verbose {
+            print("\(label) union auto inputs rings \(ringCount) verts \(totalVerts) maxVertsCap \(maxVertsCap) simplifyTol \(simplifyTolerance) batch \(effectiveBatchSize) estCost \(String(format: "%.0f", estimatedCost))")
         }
         if !shouldUnion {
             if verbose {
@@ -2720,6 +3450,7 @@ private struct AutoUnioner: PolygonUnioning {
         if verbose {
             print("\(label) union auto -> always")
         }
+        let isSilhouetteAttempt = (inputFilter == .silhouette) || (unionInput.count != cleaned.rings.count)
         let unioner = SimplifyingUnioner(
             base: base,
             simplifyTolerance: simplifyTolerance,
@@ -2730,21 +3461,26 @@ private struct AutoUnioner: PolygonUnioning {
             edgeEps: edgeEps,
             batchSize: batchSize,
             inputFilter: inputFilter,
+            silhouetteK: silhouetteK,
+            silhouetteDropContained: silhouetteDropContained,
+            dumpInputPath: dumpInputPath,
             verbose: verbose,
             label: label
         )
         if autoTimeBudgetMs <= 0 {
-            return try unioner.union(subjectRings: cleaned.rings)
+            return try unioner.union(subjectRings: unionInput)
         }
         let simplified = try simplifyRingsForUnion(
-            cleaned.rings,
-            baseTolerance: simplifyTolerance,
+            unionInput,
+            baseTolerance: (isSilhouetteAttempt ? 0.0 : simplifyTolerance),
             maxVertices: maxVertices,
             areaEps: areaEps,
             minRingArea: minRingArea,
             weldEps: weldEps,
             edgeEps: edgeEps,
-            inputFilter: inputFilter
+            inputFilter: .none,
+            silhouetteK: silhouetteK,
+            silhouetteDropContained: silhouetteDropContained
         )
         if verbose {
             logCleanupStats(label: label, stats: simplified.cleanup)
@@ -2756,6 +3492,7 @@ private struct AutoUnioner: PolygonUnioning {
             unioner: base,
             overallBudgetMs: max(1, autoTimeBudgetMs),
             perBatchBudgetMs: 250,
+            dumpPath: dumpInputPath,
             verbose: verbose,
             label: label
         )
@@ -2764,20 +3501,25 @@ private struct AutoUnioner: PolygonUnioning {
             break
         case .batchTimeExceeded(let batch, let ms):
             if verbose {
-                print("\(label) union auto bailed at batch \(batch): batchTime=\(String(format: "%.3f", Double(ms) / 1000.0))s")
+                print("\(label) auto union bailed at batch \(batch): batchTime=\(String(format: "%.3f", Double(ms) / 1000.0))s")
             }
             return simplified.rings.map { Polygon(outer: $0) }
         case .overallBudgetExceeded:
             if verbose {
-                print("\(label) union auto bailout: time budget exceeded")
+                print("\(label) auto union bailed: timeBudget")
             }
             return simplified.rings.map { Polygon(outer: $0) }
         }
         if batchResult.elapsedMs > autoTimeBudgetMs {
             if verbose {
-                print("\(label) union auto bailout: time budget exceeded")
+                print("\(label) auto union bailed: timeBudget")
             }
             return simplified.rings.map { Polygon(outer: $0) }
+        }
+        let finalMetrics = ringMetrics(batchResult.rings)
+        logUnionAdapterCall(label: label, batch: 0, metrics: finalMetrics)
+        if let dumpInputPath {
+            dumpUnionInputOnce(batchResult.rings, to: dumpInputPath)
         }
         return try base.union(subjectRings: batchResult.rings)
     }
@@ -2850,11 +3592,60 @@ private func ringBounds(_ ring: Ring) -> CGRect {
     return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
 }
 
+private func bboxContains(_ outer: CGRect, _ inner: CGRect, epsilon: Double) -> Bool {
+    return inner.minX >= outer.minX - epsilon
+        && inner.maxX <= outer.maxX + epsilon
+        && inner.minY >= outer.minY - epsilon
+        && inner.maxY <= outer.maxY + epsilon
+}
+
 private struct DedupeResult {
     let rings: [Ring]
     let droppedCount: Int
     let droppedVertexCount: Int
     let totalVertexCount: Int
+}
+
+func applySilhouetteFilter(
+    _ rings: [Ring],
+    k: Int,
+    dropContained: Bool
+) -> (rings: [Ring], stats: SilhouetteStats) {
+    guard !rings.isEmpty else {
+        return ([], SilhouetteStats(inputCount: 0, keptCount: 0, containedDropCount: 0))
+    }
+    let keepCount = max(1, min(k, rings.count))
+    let sorted = rings.enumerated().sorted { lhs, rhs in
+        let lhsArea = ringBounds(lhs.element).width * ringBounds(lhs.element).height
+        let rhsArea = ringBounds(rhs.element).width * ringBounds(rhs.element).height
+        if lhsArea == rhsArea { return lhs.offset < rhs.offset }
+        return lhsArea > rhsArea
+    }
+    let kept = sorted.prefix(keepCount).map { $0.element }
+    if !dropContained {
+        return (kept, SilhouetteStats(inputCount: rings.count, keptCount: kept.count, containedDropCount: 0))
+    }
+    var filtered: [Ring] = []
+    filtered.reserveCapacity(kept.count)
+    var keptBounds: [CGRect] = []
+    var containedDrop = 0
+    for ring in kept {
+        let candidateBounds = ringBounds(ring)
+        var isContained = false
+        for bounds in keptBounds {
+            if bboxContains(bounds, candidateBounds, epsilon: 0.01) {
+                isContained = true
+                break
+            }
+        }
+        if isContained {
+            containedDrop += 1
+            continue
+        }
+        filtered.append(ring)
+        keptBounds.append(candidateBounds)
+    }
+    return (filtered, SilhouetteStats(inputCount: rings.count, keptCount: filtered.count, containedDropCount: containedDrop))
 }
 
 private func dedupeRingsByQuantizedPoints(_ rings: [Ring], tolerance: Double) -> DedupeResult {
@@ -2919,7 +3710,7 @@ private func canonicalizeRing(_ ring: Ring, tolerance: Double) -> (ring: Ring, k
     return (closed, key)
 }
 
-private func batchedUnion(rings: [Ring], batchSize: Int, unioner: PolygonUnioning, verbose: Bool = false, label: String = "") -> [Ring] {
+private func batchedUnion(rings: [Ring], batchSize: Int, unioner: PolygonUnioning, dumpPath: String?, verbose: Bool = false, label: String = "") -> [Ring] {
     guard rings.count > batchSize else { return rings }
     var intermediates: [Ring] = []
     intermediates.reserveCapacity((rings.count / batchSize) + 1)
@@ -2928,6 +3719,11 @@ private func batchedUnion(rings: [Ring], batchSize: Int, unioner: PolygonUnionin
     while index < rings.count {
         let end = min(rings.count, index + batchSize)
         let chunk = Array(rings[index..<end])
+        if let dumpPath, batchIndex == 0 {
+            dumpUnionInputOnce(chunk, to: dumpPath)
+        }
+        let metrics = ringMetrics(chunk)
+        logUnionAdapterCall(label: label, batch: batchIndex + 1, metrics: metrics)
         let batchStart = Date()
         if let unioned = try? unioner.union(subjectRings: chunk) {
             intermediates.append(contentsOf: unioned.map { $0.outer })
@@ -2956,6 +3752,7 @@ private func batchedUnionWithBudget(
     unioner: PolygonUnioning,
     overallBudgetMs: Int,
     perBatchBudgetMs: Int,
+    dumpPath: String?,
     verbose: Bool = false,
     label: String = ""
 ) -> (rings: [Ring], reason: AutoUnionBailReason, batchesUsed: Int, elapsedMs: Int) {
@@ -2972,6 +3769,11 @@ private func batchedUnionWithBudget(
         }
         let end = min(rings.count, index + batchSize)
         let chunk = Array(rings[index..<end])
+        if let dumpPath, batchIndex == 0 {
+            dumpUnionInputOnce(chunk, to: dumpPath)
+        }
+        let metrics = ringMetrics(chunk)
+        logUnionAdapterCall(label: label, batch: batchIndex + 1, metrics: metrics)
         let batchStart = Date()
         if let unioned = try? unioner.union(subjectRings: chunk) {
             intermediates.append(contentsOf: unioned.map { $0.outer })
@@ -3009,9 +3811,10 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
+    stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--snap-tol N] [--dry-run] [--print-ring-original-index N]\n".utf8))
     exit(1)
 }
