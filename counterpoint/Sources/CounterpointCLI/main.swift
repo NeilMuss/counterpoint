@@ -244,6 +244,7 @@ struct CLI {
 
         var selection = try computeUnionDumpSelection(rings: originalRings, options: options)
         let snapTol = options.snapTol ?? 1.0e-3
+        let touchEps = options.touchEps ?? ((options.snapTol ?? 0.0) > 0 ? (options.snapTol ?? 1.0e-3) * 0.5 : 1.0e-6)
         if options.cleanupCoincidentEdges {
             let indexed = selection.keptOriginalIndices.map { index in
                 IndexedRing(index: index, ring: originalRings[index])
@@ -259,6 +260,22 @@ struct CLI {
                 dropOriginalIndices: selection.dropOriginalIndices + cleanup.dropped.map { $0.index }
             )
             logCoincidentEdgeCleanup(label: "union-dump", result: cleanup)
+        }
+        if options.cleanupTouchingEdges {
+            let indexed = selection.keptOriginalIndices.map { index in
+                IndexedRing(index: index, ring: originalRings[index])
+            }
+            let cleanup = cleanupTouchingEdges(
+                rings: indexed,
+                epsilon: touchEps,
+                minRemainingCount: nil
+            )
+            selection = UnionDumpSelection(
+                rings: cleanup.rings.map { $0.ring },
+                keptOriginalIndices: cleanup.rings.map { $0.index },
+                dropOriginalIndices: selection.dropOriginalIndices + cleanup.dropped.map { $0.index }
+            )
+            logTouchingCleanup(label: "union-dump", result: cleanup)
         }
         let stats = ringSummary(selection.rings)
         let keptList = selection.keptOriginalIndices.sorted().map(String.init).joined(separator: ",")
@@ -712,6 +729,8 @@ private struct UnionDumpOptions {
     var printRingOriginalIndex: Int?
     var cleanupCoincidentEdges: Bool
     var snapTol: Double?
+    var cleanupTouchingEdges: Bool
+    var touchEps: Double?
     var noUnion: Bool
     var dumpAfterCleanupPath: String?
 }
@@ -1084,6 +1103,8 @@ private func parseUnionDumpOptions(_ args: [String]) throws -> UnionDumpOptions 
         printRingOriginalIndex: nil,
         cleanupCoincidentEdges: false,
         snapTol: nil,
+        cleanupTouchingEdges: false,
+        touchEps: nil,
         noUnion: false,
         dumpAfterCleanupPath: nil
     )
@@ -1117,11 +1138,23 @@ private func parseUnionDumpOptions(_ args: [String]) throws -> UnionDumpOptions 
             }
             options.cleanupCoincidentEdges = value != 0
             index += 1
+        case "--cleanup-touching-edges":
+            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
+                throw CLIError.invalidArguments("--cleanup-touching-edges requires 0 or 1")
+            }
+            options.cleanupTouchingEdges = value != 0
+            index += 1
         case "--snap-tol":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
                 throw CLIError.invalidArguments("--snap-tol requires a number")
             }
             options.snapTol = value
+            index += 1
+        case "--touch-eps":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--touch-eps requires a number")
+            }
+            options.touchEps = value
             index += 1
         case "--keep-first":
             guard index + 1 < args.count, let value = Int(args[index + 1]) else {
@@ -1202,6 +1235,13 @@ private struct CoincidentEdgeCleanupResult {
     let rings: [IndexedRing]
     let dropped: [IndexedRing]
     let coincidentEdgeCount: Int
+    let involvedIndices: [Int]
+}
+
+private struct TouchingCleanupResult {
+    let rings: [IndexedRing]
+    let dropped: [(ring: IndexedRing, degree: Int)]
+    let pairCount: Int
     let involvedIndices: [Int]
 }
 
@@ -1292,6 +1332,176 @@ private func cleanupCoincidentEdges(
     )
 }
 
+private func cleanupTouchingEdges(
+    rings: [IndexedRing],
+    epsilon: Double,
+    minRemainingCount: Int?
+) -> TouchingCleanupResult {
+    guard epsilon > 0, rings.count > 1 else {
+        return TouchingCleanupResult(rings: rings, dropped: [], pairCount: 0, involvedIndices: [])
+    }
+    var working = rings
+    var dropped: [(ring: IndexedRing, degree: Int)] = []
+    var lastPairCount = 0
+    var lastInvolved: [Int] = []
+
+    while true {
+        let touchInfo = touchingPairs(rings: working, epsilon: epsilon)
+        lastPairCount = touchInfo.pairCount
+        lastInvolved = Array(touchInfo.involvedIndices).sorted()
+        if touchInfo.pairCount == 0 || touchInfo.involvedIndices.isEmpty {
+            break
+        }
+        if let minRemainingCount, working.count <= minRemainingCount {
+            break
+        }
+        guard let candidate = selectTouchDropCandidate(rings: working, degrees: touchInfo.degrees) else {
+            break
+        }
+        working.removeAll { $0.index == candidate.ring.index }
+        dropped.append(candidate)
+    }
+
+    return TouchingCleanupResult(
+        rings: working,
+        dropped: dropped,
+        pairCount: lastPairCount,
+        involvedIndices: lastInvolved
+    )
+}
+
+private func touchingPairs(
+    rings: [IndexedRing],
+    epsilon: Double
+) -> (pairCount: Int, involvedIndices: Set<Int>, degrees: [Int: Int]) {
+    var pairCount = 0
+    var involved: Set<Int> = []
+    var degrees: [Int: Int] = [:]
+    for i in 0..<rings.count {
+        let a = rings[i]
+        for j in (i + 1)..<rings.count {
+            let b = rings[j]
+            if ringsTouch(a.ring, b.ring, epsilon: epsilon) {
+                pairCount += 1
+                involved.insert(a.index)
+                involved.insert(b.index)
+                degrees[a.index, default: 0] += 1
+                degrees[b.index, default: 0] += 1
+            }
+        }
+    }
+    return (pairCount, involved, degrees)
+}
+
+private func selectTouchDropCandidate(
+    rings: [IndexedRing],
+    degrees: [Int: Int]
+) -> (ring: IndexedRing, degree: Int)? {
+    var best: (ring: IndexedRing, degree: Int)?
+    for ring in rings {
+        guard let degree = degrees[ring.index], degree > 0 else { continue }
+        if let current = best {
+            if degree > current.degree {
+                best = (ring, degree)
+            } else if degree == current.degree {
+                if abs(ring.area - current.ring.area) > 1.0e-9 {
+                    if ring.area < current.ring.area {
+                        best = (ring, degree)
+                    }
+                } else if ring.index < current.ring.index {
+                    best = (ring, degree)
+                }
+            }
+        } else {
+            best = (ring, degree)
+        }
+    }
+    return best
+}
+
+private func ringsTouch(_ a: Ring, _ b: Ring, epsilon: Double) -> Bool {
+    guard a.count > 1, b.count > 1 else { return false }
+    for point in a {
+        if pointOnRing(point, ring: b, epsilon: epsilon) { return true }
+    }
+    for point in b {
+        if pointOnRing(point, ring: a, epsilon: epsilon) { return true }
+    }
+    let aCount = a.count
+    let bCount = b.count
+    for i in 0..<aCount {
+        let a1 = a[i]
+        let a2 = a[(i + 1) % aCount]
+        for j in 0..<bCount {
+            let b1 = b[j]
+            let b2 = b[(j + 1) % bCount]
+            if segmentsTouch(a1, a2, b1, b2, epsilon: epsilon) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+private func pointOnRing(_ point: Point, ring: Ring, epsilon: Double) -> Bool {
+    guard ring.count > 1 else { return false }
+    for i in 0..<ring.count {
+        let a = ring[i]
+        let b = ring[(i + 1) % ring.count]
+        if pointToSegmentDistanceSquared(point, a, b) <= epsilon * epsilon {
+            return true
+        }
+    }
+    return false
+}
+
+private func segmentsTouch(_ p1: Point, _ p2: Point, _ q1: Point, _ q2: Point, epsilon: Double) -> Bool {
+    if segmentsIntersectInclusive(p1, p2, q1, q2, epsilon: epsilon) {
+        return true
+    }
+    if pointToSegmentDistanceSquared(p1, q1, q2) <= epsilon * epsilon { return true }
+    if pointToSegmentDistanceSquared(p2, q1, q2) <= epsilon * epsilon { return true }
+    if pointToSegmentDistanceSquared(q1, p1, p2) <= epsilon * epsilon { return true }
+    if pointToSegmentDistanceSquared(q2, p1, p2) <= epsilon * epsilon { return true }
+    return false
+}
+
+private func segmentsIntersectInclusive(_ p1: Point, _ p2: Point, _ q1: Point, _ q2: Point, epsilon: Double) -> Bool {
+    func orientation(_ a: Point, _ b: Point, _ c: Point) -> Double {
+        (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
+    }
+    func onSegment(_ a: Point, _ b: Point, _ c: Point) -> Bool {
+        min(a.x, c.x) - epsilon <= b.x && b.x <= max(a.x, c.x) + epsilon &&
+        min(a.y, c.y) - epsilon <= b.y && b.y <= max(a.y, c.y) + epsilon &&
+        abs(pointToSegmentDistanceSquared(b, a, c)) <= epsilon * epsilon
+    }
+
+    let o1 = orientation(p1, p2, q1)
+    let o2 = orientation(p1, p2, q2)
+    let o3 = orientation(q1, q2, p1)
+    let o4 = orientation(q1, q2, p2)
+
+    if (o1 * o2 < 0) && (o3 * o4 < 0) {
+        return true
+    }
+    if abs(o1) <= epsilon && onSegment(p1, q1, p2) { return true }
+    if abs(o2) <= epsilon && onSegment(p1, q2, p2) { return true }
+    if abs(o3) <= epsilon && onSegment(q1, p1, q2) { return true }
+    if abs(o4) <= epsilon && onSegment(q1, p2, q2) { return true }
+    return false
+}
+
+private func pointToSegmentDistanceSquared(_ p: Point, _ a: Point, _ b: Point) -> Double {
+    let ab = b - a
+    let ap = p - a
+    let abLen2 = ab.dot(ab)
+    if abLen2 <= 0 { return ap.dot(ap) }
+    let t = max(0.0, min(1.0, ap.dot(ab) / abLen2))
+    let proj = Point(x: a.x + ab.x * t, y: a.y + ab.y * t)
+    let delta = p - proj
+    return delta.dot(delta)
+}
+
 private func coincidentEdgeInfo(
     rings: [IndexedRing],
     snapTol: Double
@@ -1348,6 +1558,21 @@ private func logCoincidentEdgeCleanup(label: String, result: CoincidentEdgeClean
         print("cleanup-coincident-edges dropped=[] remaining=\(result.rings.count)")
     } else {
         print("cleanup-coincident-edges dropped=[\(dropped)] remaining=\(result.rings.count)")
+    }
+}
+
+private func logTouchingCleanup(label: String, result: TouchingCleanupResult) {
+    if result.pairCount == 0 {
+        print("cleanup-touching foundPairs=0 involvedRings=[]")
+        return
+    }
+    let involved = result.involvedIndices.map(String.init).joined(separator: ",")
+    let dropped = result.dropped.map { "\($0.ring.index):\(String(format: "%.4f", $0.ring.area)):\($0.degree)" }.joined(separator: ",")
+    print("cleanup-touching foundPairs=\(result.pairCount) involvedRings=[\(involved)]")
+    if dropped.isEmpty {
+        print("cleanup-touching dropped=[] remaining=\(result.rings.count)")
+    } else {
+        print("cleanup-touching dropped=[\(dropped)] remaining=\(result.rings.count)")
     }
 }
 
@@ -3398,10 +3623,14 @@ private struct AutoUnioner: PolygonUnioning {
             snapTol: 1.0e-3,
             minRemainingCount: 120
         )
-        if verbose {
-            logCoincidentEdgeCleanup(label: label, result: coincidentCleanup)
-        }
-        unionInput = coincidentCleanup.rings.map { $0.ring }
+        logCoincidentEdgeCleanup(label: label, result: coincidentCleanup)
+        let touchCleanup = cleanupTouchingEdges(
+            rings: coincidentCleanup.rings,
+            epsilon: 5.0e-4,
+            minRemainingCount: 120
+        )
+        logTouchingCleanup(label: label, result: touchCleanup)
+        unionInput = touchCleanup.rings.map { $0.ring }
         let effectiveBatchSize = min(batchSize, 50)
         if verbose {
             logCleanupStats(label: label, stats: cleaned.stats)
@@ -3834,6 +4063,6 @@ do {
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
-    stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--snap-tol N] [--no-union|--cleanup-only] [--dump-after-cleanup <path>] [--dry-run] [--print-ring-original-index N]\n".utf8))
+    stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--cleanup-touching-edges 0|1] [--snap-tol N] [--touch-eps N] [--no-union|--cleanup-only] [--dump-after-cleanup <path>] [--dry-run] [--print-ring-original-index N]\n".utf8))
     exit(1)
 }
