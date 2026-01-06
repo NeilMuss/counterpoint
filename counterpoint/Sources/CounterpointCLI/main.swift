@@ -243,6 +243,7 @@ struct CLI {
         }
 
         var selection = try computeUnionDumpSelection(rings: originalRings, options: options)
+        let selectedOriginal = selection.keptOriginalIndices
         let snapTol = options.snapTol ?? 1.0e-3
         let touchEps = options.touchEps ?? ((options.snapTol ?? 0.0) > 0 ? (options.snapTol ?? 1.0e-3) * 0.5 : 1.0e-6)
         if options.cleanupCoincidentEdges {
@@ -280,6 +281,10 @@ struct CLI {
         let stats = ringSummary(selection.rings)
         let keptList = selection.keptOriginalIndices.sorted().map(String.init).joined(separator: ",")
         let providedDrop = (options.dropOriginalIndices + options.dropIndices).sorted().map(String.init).joined(separator: ",")
+        let finalSet = Set(selection.keptOriginalIndices)
+        let cleanupDropped = selectedOriginal.filter { !finalSet.contains($0) }
+        let allDropped = (options.dropOriginalIndices + options.dropIndices + cleanupDropped).sorted()
+        let droppedList = allDropped.map(String.init).joined(separator: ",")
         if let dumpPath = options.dumpAfterCleanupPath {
             dumpUnionInputRings(selection.rings, to: dumpPath)
         }
@@ -288,7 +293,8 @@ struct CLI {
             return
         }
         if options.noUnion {
-            print("union-dump cleanup-only inputRings=\(originalRings.count) keptOriginal=\(keptList.isEmpty ? "[]" : "[\(keptList)]") finalRings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts)")
+            let selectedList = selectedOriginal.sorted().map(String.init).joined(separator: ",")
+            print("union-dump cleanup-only inputRings=\(originalRings.count) selectedOriginal=\(selectedList.isEmpty ? "[]" : "[\(selectedList)]") droppedOriginal=\(droppedList.isEmpty ? "[]" : "[\(droppedList)]") finalOriginal=\(keptList.isEmpty ? "[]" : "[\(keptList)]") finalRings=\(stats.ringCount) totalVerts=\(stats.totalVerts) maxRingVerts=\(stats.maxRingVerts)")
             return
         }
         if keptList.isEmpty {
@@ -3627,20 +3633,6 @@ private struct AutoUnioner: PolygonUnioning {
             unionInput = filtered.rings
             silhouetteStats = filtered.stats
         }
-        unionInput = filterInvalidRings(label: label, rings: unionInput, epsilon: 1.0e-6, dropInvalid: true)
-        let coincidentCleanup = cleanupCoincidentEdges(
-            rings: unionInput.enumerated().map { IndexedRing(index: $0.offset, ring: $0.element) },
-            snapTol: 1.0e-3,
-            minRemainingCount: 120
-        )
-        logCoincidentEdgeCleanup(label: label, result: coincidentCleanup)
-        let touchCleanup = cleanupTouchingEdges(
-            rings: coincidentCleanup.rings,
-            epsilon: 5.0e-4,
-            minRemainingCount: 120
-        )
-        logTouchingCleanup(label: label, result: touchCleanup)
-        unionInput = touchCleanup.rings.map { $0.ring }
         let effectiveBatchSize = min(batchSize, 50)
         if verbose {
             logCleanupStats(label: label, stats: cleaned.stats)
@@ -3679,6 +3671,20 @@ private struct AutoUnioner: PolygonUnioning {
                 return cleaned.rings.map { Polygon(outer: $0) }
             }
         }
+        unionInput = filterInvalidRings(label: label, rings: unionInput, epsilon: 1.0e-6, dropInvalid: true)
+        let coincidentCleanup = cleanupCoincidentEdges(
+            rings: unionInput.enumerated().map { IndexedRing(index: $0.offset, ring: $0.element) },
+            snapTol: 1.0e-3,
+            minRemainingCount: 120
+        )
+        logCoincidentEdgeCleanup(label: label, result: coincidentCleanup)
+        let touchCleanup = cleanupTouchingEdges(
+            rings: coincidentCleanup.rings,
+            epsilon: 5.0e-4,
+            minRemainingCount: 120
+        )
+        logTouchingCleanup(label: label, result: touchCleanup)
+        unionInput = touchCleanup.rings.map { $0.ring }
         let safeMaxRingsAuto = 120
         let safeMaxTotalVertsAuto = 3000
         let safeMaxRingVertsAuto = 128
