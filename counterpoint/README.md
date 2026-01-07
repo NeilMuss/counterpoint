@@ -405,6 +405,9 @@ Preview sampling controls:
 - `--union-min-ring-area N` (default 5.0; drop tiny rings before union)
 - `--union-auto-time-budget-ms N` (default 1500; auto union bailout time budget)
 - `--union-input-filter none|silhouette` (default none; keep largest rings by bbox)
+- `--union-silhouette-k N` (default 60; number of rings kept when silhouette filtering)
+- `--union-silhouette-drop-contained 0|1` (default 1; drop rings whose bbox is contained by a larger ring)
+- `--union-dump-input <path>` (dump adapter input rings as JSON)
 
 Outline fitting (glyph JSON):
 - `--outline-fit none|simplify|bezier` (default none)

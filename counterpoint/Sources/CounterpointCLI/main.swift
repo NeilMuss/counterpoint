@@ -805,6 +805,7 @@ enum FinalUnionMode: String {
     case auto
     case never
     case always
+    case trace
 }
 
 struct ScurveGeometry {
@@ -919,10 +920,10 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.previewUnionMode = parsed
             index += 1
         case "--final-union":
-            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always") }
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always|trace") }
             let mode = args[index + 1].lowercased()
             guard let parsed = FinalUnionMode(rawValue: mode) else {
-                throw CLIError.invalidArguments("--final-union must be auto|never|always")
+                throw CLIError.invalidArguments("--final-union must be auto|never|always|trace")
             }
             options.finalUnionMode = parsed
             index += 1
@@ -2779,6 +2780,10 @@ func defaultFitTolerance(polygons: PolygonSet) -> Double {
     return max(0.5, diag * 0.001)
 }
 
+private func traceEpsilon(unionSimplifyTolerance: Double) -> Double {
+    max(0.01, unionSimplifyTolerance * 0.01)
+}
+
 func outlineCornerThresholdDegrees(for joinStyle: JoinStyle) -> Double {
     switch joinStyle {
     case .round:
@@ -3082,10 +3087,12 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 verbose: options.verbose,
                 label: "authored-stroke \(stroke.id)"
             )
+        case .trace:
+            unioner = PassthroughPolygonUnioner()
         }
 
         let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: unioner)
-        let outline: PolygonSet
+        var outline: PolygonSet
         do {
             outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges)
         } catch {
@@ -3098,6 +3105,11 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
             } else {
                 throw error
             }
+        }
+        if case .trace = unionMode {
+            let epsilon = traceEpsilon(unionSimplifyTolerance: unionSimplifyTolerance)
+            print("authored-stroke \(stroke.id) trace silhouette epsilon=\(String(format: "%.6f", epsilon))")
+            outline = OutlineTracer.traceSilhouette(outline, epsilon: epsilon)
         }
         polygons.append(contentsOf: outline)
     }
@@ -4084,7 +4096,7 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always|trace] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))

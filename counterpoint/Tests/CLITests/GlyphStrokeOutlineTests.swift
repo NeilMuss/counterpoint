@@ -77,6 +77,9 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             unionMinRingArea: 1.0,
             unionAutoTimeBudgetMs: nil,
             unionInputFilter: nil,
+            unionSilhouetteK: nil,
+            unionSilhouetteDropContained: nil,
+            unionDumpInputPath: nil,
             outlineFit: OutlineFitMode.none,
             fitTolerance: nil,
             simplifyTolerance: nil,
@@ -115,7 +118,9 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             minRingArea: 0.0,
             weldEps: 1.0e-5,
             edgeEps: 1.0e-5,
-            inputFilter: .none
+            inputFilter: .none,
+            silhouetteK: 60,
+            silhouetteDropContained: true
         )
         XCTAssertTrue(result.preCount > result.postCount)
         XCTAssertTrue(result.rings.first?.count ?? 0 <= 60)
