@@ -2,7 +2,7 @@ import XCTest
 import Domain
 
 final class OutlineTracerTests: XCTestCase {
-    func testTraceSilhouetteReturnsInput() {
+    func testTraceSilhouetteRectangleProducesPolygon() {
         let ring: Ring = [
             Point(x: 0, y: 0),
             Point(x: 10, y: 0),
@@ -11,7 +11,8 @@ final class OutlineTracerTests: XCTestCase {
             Point(x: 0, y: 0)
         ]
         let input: PolygonSet = [Polygon(outer: ring)]
-        let output = OutlineTracer.traceSilhouette(input, epsilon: 0.01)
-        XCTAssertEqual(output, input)
+        let output = OutlineTracer.traceSilhouette(input, epsilon: 0.5)
+        XCTAssertEqual(output.count, 1)
+        XCTAssertTrue(output[0].holes.isEmpty)
     }
 }
