@@ -53,6 +53,8 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             showEnvelopeUnion: false,
             showRays: nil,
             showAlpha: false,
+            showJunctions: false,
+            showRefDiff: false,
             alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
@@ -72,6 +74,7 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             unionSimplifyTolerance: 0.75,
             unionMaxVertices: 5000,
             finalUnionMode: .auto,
+            finalEnvelopeMode: nil,
             unionBatchSize: 50,
             unionAreaEps: 1.0e-6,
             unionWeldEps: 1.0e-5,
@@ -91,7 +94,8 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             traceStrokeId: nil,
             traceTMin: nil,
             traceTMax: nil,
-            dumpKeyframes: false
+            dumpKeyframes: false,
+            diffResolution: nil
         )
 
         let authored = try buildAuthoredStrokePolygons(document: document, options: options)
@@ -110,6 +114,77 @@ final class GlyphStrokeOutlineTests: XCTestCase {
         XCTAssertFalse(expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "Golden file is empty.")
 
         XCTAssertEqual(normalize(svg), normalize(expected), "Golden mismatch for glyph J final.")
+    }
+
+    func testGlyphDirectJunctionUsesBridge() throws {
+        let glyphURL = try fixtureURL(pathComponents: ["Fixtures", "glyphs", "J.v0.json"])
+        let data = try Data(contentsOf: glyphURL)
+        let document = try GlyphDocument.load(from: data)
+
+        let options = CLIOptions(
+            inputPath: glyphURL.path,
+            exampleName: nil,
+            svgOutputPath: nil,
+            svgSize: nil,
+            padding: 10.0,
+            quiet: true,
+            useBridges: true,
+            debugSamples: false,
+            dumpSamplesPath: nil,
+            quality: "final",
+            showEnvelope: nil,
+            showEnvelopeUnion: false,
+            showRays: nil,
+            showAlpha: false,
+            showJunctions: false,
+            showRefDiff: false,
+            alphaProbeT: nil,
+            counterpointSize: nil,
+            angleModeOverride: nil,
+            envelopeTolerance: nil,
+            flattenTolerance: nil,
+            maxSamples: nil,
+            centerlineOnly: false,
+            strokePreview: false,
+            previewSamples: nil,
+            previewQuality: nil,
+            previewAngleMode: nil,
+            previewAngleDeg: nil,
+            previewWidth: nil,
+            previewHeight: nil,
+            previewNibRotateDeg: nil,
+            previewUnionMode: .never,
+            unionSimplifyTolerance: 0.75,
+            unionMaxVertices: 5000,
+            finalUnionMode: .auto,
+            finalEnvelopeMode: .direct,
+            unionBatchSize: 50,
+            unionAreaEps: 1.0e-6,
+            unionWeldEps: 1.0e-5,
+            unionEdgeEps: 1.0e-5,
+            unionMinRingArea: 1.0,
+            unionAutoTimeBudgetMs: nil,
+            unionInputFilter: nil,
+            unionSilhouetteK: nil,
+            unionSilhouetteDropContained: nil,
+            unionDumpInputPath: nil,
+            outlineFit: OutlineFitMode.none,
+            fitTolerance: nil,
+            simplifyTolerance: nil,
+            verbose: false,
+            alphaDemo: nil,
+            alphaDebug: false,
+            traceStrokeId: nil,
+            traceTMin: nil,
+            traceTMax: nil,
+            dumpKeyframes: false,
+            diffResolution: nil
+        )
+
+        let authored = try buildAuthoredStrokePolygons(document: document, options: options)
+        XCTAssertFalse(authored.junctionDiagnostics.isEmpty, "Expected junction diagnostics for direct envelope.")
+        let fallbackCount = authored.junctionDiagnostics.filter { !$0.usedBridge }.count
+        XCTAssertEqual(fallbackCount, 0, "Expected direct junctions to use tangent bridge, got \(fallbackCount) fallback(s).")
     }
 
     func testUnionSimplifyReducesVertices() throws {

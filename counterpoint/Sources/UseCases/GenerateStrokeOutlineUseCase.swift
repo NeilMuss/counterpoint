@@ -18,6 +18,11 @@ public struct GenerateStrokeOutlineUseCase {
         let segmentIndex: Int?
     }
 
+    public struct ConcatenatedSamples {
+        public let samples: [Sample]
+        public let junctionPairs: [(Int, Int)]
+    }
+
     public init(sampler: PathSampling, evaluator: ParamEvaluating, unioner: PolygonUnioning) {
         self.sampler = sampler
         self.evaluator = evaluator
@@ -42,10 +47,122 @@ public struct GenerateStrokeOutlineUseCase {
 
     public func generateSamples(for spec: StrokeSpec) -> [Sample] {
         let policy = samplingPolicy(for: spec)
+        let maxSpacing = spec.sampling.maxSpacing ?? spec.sampling.baseSpacing
         let polyline = sampler.makePolyline(path: spec.path, tolerance: policy.flattenTolerance)
         let translation = outputTranslation(for: spec, polyline: polyline)
-        let maxSpacing = spec.sampling.maxSpacing ?? spec.sampling.baseSpacing
+        return generateSamples(
+            for: spec,
+            polyline: polyline,
+            translation: translation,
+            policy: policy,
+            maxSpacing: maxSpacing
+        )
+    }
 
+    public func generateConcatenatedSamples(for spec: StrokeSpec, paths: [BezierPath]) -> [Sample] {
+        return generateConcatenatedSamplesWithJunctions(for: spec, paths: paths).samples
+    }
+
+    public func generateConcatenatedSamplesWithJunctions(for spec: StrokeSpec, paths: [BezierPath]) -> ConcatenatedSamples {
+        guard !paths.isEmpty else { return ConcatenatedSamples(samples: [], junctionPairs: []) }
+        let policy = samplingPolicy(for: spec)
+        let maxSpacing = spec.sampling.maxSpacing ?? spec.sampling.baseSpacing
+        let translationPolyline = sampler.makePolyline(path: paths[0], tolerance: policy.flattenTolerance)
+        let translation = outputTranslation(for: spec, polyline: translationPolyline)
+
+        struct ConcatSeed {
+            let uGeom: Double
+            let uGrid: Double
+            let basePoint: Point
+            let tangentAngle: Double
+            let centerPoint: Point
+        }
+
+        var seeds: [ConcatSeed] = []
+        var junctionPairs: [(Int, Int)] = []
+        var previousSegmentLastIndex: Int?
+        for (index, path) in paths.enumerated() {
+            let polyline = sampler.makePolyline(path: path, tolerance: policy.flattenTolerance)
+            let localSamples = generateSamples(
+                for: spec,
+                polyline: polyline,
+                translation: translation,
+                policy: policy,
+                maxSpacing: maxSpacing
+            )
+            if localSamples.isEmpty { continue }
+            let trimmedSamples = (index == paths.count - 1) ? localSamples : Array(localSamples.dropLast())
+            let firstIndexInSegment = seeds.count
+            for sample in trimmedSamples {
+                let basePoint = polyline.point(at: sample.uGeom)
+                let tangentAngle = polyline.tangentAngle(at: sample.uGeom, fallbackAngle: sample.tangentAngle)
+                seeds.append(ConcatSeed(
+                    uGeom: sample.uGeom,
+                    uGrid: sample.uGrid,
+                    basePoint: basePoint,
+                    tangentAngle: tangentAngle,
+                    centerPoint: sample.point
+                ))
+            }
+            if !trimmedSamples.isEmpty {
+                let lastIndexInSegment = seeds.count - 1
+                if let previous = previousSegmentLastIndex {
+                    junctionPairs.append((previous, firstIndexInSegment))
+                }
+                previousSegmentLastIndex = lastIndexInSegment
+            }
+        }
+
+        guard !seeds.isEmpty else { return ConcatenatedSamples(samples: [], junctionPairs: []) }
+        if seeds.count == 1 {
+            let seed = seeds[0]
+            return ConcatenatedSamples(samples: [
+                makeSampleFromBase(
+                    uGeom: seed.uGeom,
+                    uGrid: seed.uGrid,
+                    progress: 0.0,
+                    basePoint: seed.basePoint,
+                    tangentAngle: seed.tangentAngle,
+                    spec: spec,
+                    translation: translation
+                )
+            ], junctionPairs: [])
+        }
+
+        var cumulative: [Double] = []
+        cumulative.reserveCapacity(seeds.count)
+        cumulative.append(0.0)
+        var total = 0.0
+        for index in 1..<seeds.count {
+            total += (seeds[index].centerPoint - seeds[index - 1].centerPoint).length
+            cumulative.append(total)
+        }
+        let denom = max(1.0e-9, total)
+        var samples: [Sample] = []
+        samples.reserveCapacity(seeds.count)
+        for (index, seed) in seeds.enumerated() {
+            let progress = cumulative[index] / denom
+            let sample = makeSampleFromBase(
+                uGeom: seed.uGeom,
+                uGrid: seed.uGrid,
+                progress: progress,
+                basePoint: seed.basePoint,
+                tangentAngle: seed.tangentAngle,
+                spec: spec,
+                translation: translation
+            )
+            samples.append(sample)
+        }
+        return ConcatenatedSamples(samples: samples, junctionPairs: junctionPairs)
+    }
+
+    private func generateSamples(
+        for spec: StrokeSpec,
+        polyline: PathPolyline,
+        translation: Point,
+        policy: SamplingPolicy,
+        maxSpacing: Double
+    ) -> [Sample] {
         switch spec.sampling.mode {
         case .adaptive:
             guard let start = makeSampleAtU(0.0, progress: 0.0, spec: spec, polyline: polyline, translation: translation, fallbackTangent: nil),

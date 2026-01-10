@@ -2,3 +2,6 @@
 .swiftpm/
 .DS_Store
 out.svg
+.build-tmp/
+.swiftpm-cache/
+.clang-module-cache/

@@ -53,9 +53,12 @@
             "theta":  { "keyframes": [{ "t": 0, "value": 0 }, { "t": 1, "value": 0 }] },
             "width": { "keyframes": [
               { "t": 0.0, "value": 180 },
-              { "t": 0.01, "value": 180, "interpolationToNext": { "alpha": -2.85 } },
-              { "t": 0.1, "value": 85 },
-              { "t": 1.0, "value": 1 }
+              { "t": 0.01, "value": 180, "interpolationToNext": { "alpha": -2.85} },
+              { "t": 0.1, "value": 70 },
+              { "t": 0.8, "value": 70, "interpolationToNext": { "alpha": 2}  },
+              { "t": 0.9, "value": 10, "interpolationToNext": { "alpha": 1}   },
+              { "t": 0.98, "value": 90, "interpolationToNext": { "alpha": 2}    },
+              { "t": 1.0, "value": 0.0005 }
             ] },
             "height": { "keyframes": [
               { "t": 0, "value": 6  }, 

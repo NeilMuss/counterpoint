@@ -48,6 +48,17 @@ struct SVGPathBuilder {
         let dMid: Double
     }
 
+    struct RefDiffOverlay: Equatable {
+        let origin: Point
+        let pixelSize: Double
+        let width: Int
+        let height: Int
+        let data: [UInt8]
+        let matchCount: Int
+        let missingCount: Int
+        let excessCount: Int
+    }
+
     static func loadBackgroundGlyph(from svgPath: String) -> BackgroundGlyphSource? {
         let url = URL(fileURLWithPath: svgPath)
         guard let data = try? Data(contentsOf: url),
@@ -110,11 +121,12 @@ struct SVGPathBuilder {
         centerlinePaths: [String] = [],
         polygons: PolygonSet = [],
         fittedPaths: [FittedPath]? = nil,
-        debugRects: [DebugRect] = []
+        debugRects: [DebugRect] = [],
+        debugOverlay: SVGDebugOverlay? = nil
     ) -> String {
         let generatedBounds = frameBounds
         let referenceBounds = reference.map { transformedBackgroundBounds($0, generatedBounds: generatedBounds) }
-        let polygonBounds = (polygons.isEmpty && fittedPaths == nil) ? nil : boundsFor(polygons: polygons, fittedPaths: fittedPaths, debugOverlay: nil)
+        let polygonBounds = (polygons.isEmpty && fittedPaths == nil && debugOverlay == nil) ? nil : boundsFor(polygons: polygons, fittedPaths: fittedPaths, debugOverlay: debugOverlay)
         let bounds = unionBounds(unionBounds(generatedBounds, referenceBounds), polygonBounds)
         let padded = bounds.insetBy(dx: -padding, dy: -padding)
         let viewBox = padded
@@ -123,6 +135,7 @@ struct SVGPathBuilder {
         let referenceGroup = reference.map { backgroundGlyphElements($0, generatedBounds: generatedBounds) } ?? ""
         let centerlines = centerlinePaths.joined(separator: "\n")
         let debugRectGroup = debugRects.isEmpty ? "" : debugRectElements(debugRects)
+        let debugGroupContent = debugOverlay.map { debugGroup($0, polygons: polygons, viewBox: viewBox) } ?? ""
         let polygonPaths: String
         if let fittedPaths {
             polygonPaths = fittedPaths.map { pathData(for: $0) }.joined(separator: "\n")
@@ -130,7 +143,7 @@ struct SVGPathBuilder {
             polygonPaths = polygons.map { pathData(for: $0) }.joined(separator: "\n")
         }
 
-        let elements = [referenceGroup, centerlines, debugRectGroup, polygonPaths].filter { !$0.isEmpty }
+        let elements = [referenceGroup, centerlines, debugRectGroup, polygonPaths, debugGroupContent].filter { !$0.isEmpty }
         let body = elements.joined(separator: "\n  ")
 
         return """
@@ -292,6 +305,38 @@ struct SVGPathBuilder {
                 minY = min(minY, point.y)
                 maxY = max(maxY, point.y)
             }
+            for ring in overlay.junctionPatches {
+                for point in ring {
+                    minX = min(minX, point.x)
+                    maxX = max(maxX, point.x)
+                    minY = min(minY, point.y)
+                    maxY = max(maxY, point.y)
+                }
+            }
+            for ring in overlay.junctionCorridors {
+                for point in ring {
+                    minX = min(minX, point.x)
+                    maxX = max(maxX, point.x)
+                    minY = min(minY, point.y)
+                    maxY = max(maxY, point.y)
+                }
+            }
+            for point in overlay.junctionControlPoints {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
+            if let refDiff = overlay.refDiff {
+                let refMinX = refDiff.origin.x
+                let refMinY = refDiff.origin.y
+                let refMaxX = refDiff.origin.x + Double(refDiff.width) * refDiff.pixelSize
+                let refMaxY = refDiff.origin.y + Double(refDiff.height) * refDiff.pixelSize
+                minX = min(minX, refMinX)
+                maxX = max(maxX, refMaxX)
+                minY = min(minY, refMinY)
+                maxY = max(maxY, refMaxY)
+            }
         }
 
         let width = max(0.0, maxX - minX)
@@ -318,6 +363,15 @@ struct SVGPathBuilder {
         let outlineRail = overlay.envelopeOutline.isEmpty ? "" : ringPath(overlay.envelopeOutline)
         let points = overlay.samplePoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(0.6))\" fill=\"#222222\" fill-opacity=\"0.5\"/>" }.joined(separator: "\n    ")
         let capPoints = overlay.capPoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(1.4))\" fill=\"#ff0033\" fill-opacity=\"0.85\"/>" }.joined(separator: "\n    ")
+        let junctionOutline = overlay.junctionPatches.map { ringPath($0) }.filter { !$0.isEmpty }.map {
+            "<path fill=\"none\" stroke=\"#d32f2f\" stroke-opacity=\"0.8\" stroke-width=\"0.8\" d=\"\($0)\"/>"
+        }.joined(separator: "\n    ")
+        let junctionCorridors = overlay.junctionCorridors.map { ringPath($0) }.filter { !$0.isEmpty }.map {
+            "<path fill=\"none\" stroke=\"#00897b\" stroke-opacity=\"0.7\" stroke-width=\"0.7\" stroke-dasharray=\"3 2\" d=\"\($0)\"/>"
+        }.joined(separator: "\n    ")
+        let junctionControls = overlay.junctionControlPoints.map {
+            "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(1.8))\" fill=\"#d32f2f\" fill-opacity=\"0.9\" stroke=\"#ffffff\" stroke-width=\"0.6\"/>"
+        }.joined(separator: "\n    ")
 
         let stampElements = stampPaths.map { "<path fill=\"none\" stroke=\"#0066ff\" stroke-opacity=\"0.3\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
         let bridgeElements = bridgePaths.map { "<path fill=\"none\" stroke=\"#00aa66\" stroke-opacity=\"0.25\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
@@ -329,15 +383,20 @@ struct SVGPathBuilder {
             outlineRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.35\" stroke-width=\"0.6\" d=\"\(outlineRail)\"/>"
         ].compactMap { $0 }.joined(separator: "\n    ")
         let alphaChart = overlay.alphaChart.map { alphaChartElements($0, viewBox: viewBox) } ?? ""
+        let refDiff = overlay.refDiff.map { refDiffElements($0) } ?? ""
 
         return """
         <g id=\"debug\">
+          \(refDiff)
           <path fill=\"none\" stroke=\"#ff3366\" stroke-opacity=\"0.6\" stroke-width=\"0.5\" d=\"\(skeletonPath)\"/>
           <path fill=\"none\" stroke=\"#ff9900\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(tangentPath)\"/>
           <path fill=\"none\" stroke=\"#222222\" stroke-opacity=\"0.7\" stroke-width=\"0.6\" d=\"\(anglePath)\"/>
           <path fill=\"none\" stroke=\"#00aaff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(offsetPath)\"/>
           \(points)
           \(capPoints)
+          \(junctionOutline)
+          \(junctionCorridors)
+          \(junctionControls)
           \(envelopeElements)
           \(stampElements)
           \(bridgeElements)
@@ -457,6 +516,60 @@ struct SVGPathBuilder {
         """
     }
 
+    private func refDiffElements(_ overlay: RefDiffOverlay) -> String {
+        let matchColor = "#c0c0c0"
+        let missingColor = "#2563eb"
+        let excessColor = "#dc2626"
+        let opacity = "0.55"
+        let width = overlay.width
+        let height = overlay.height
+        let pixelSize = overlay.pixelSize
+
+        var elements: [String] = []
+        elements.reserveCapacity(height * 2)
+        for y in 0..<height {
+            var x = 0
+            while x < width {
+                let index = y * width + x
+                let state = overlay.data[index]
+                if state == 0 {
+                    x += 1
+                    continue
+                }
+                var end = x + 1
+                while end < width && overlay.data[y * width + end] == state {
+                    end += 1
+                }
+                let rectX = overlay.origin.x + Double(x) * pixelSize
+                let rectY = overlay.origin.y + Double(y) * pixelSize
+                let rectW = Double(end - x) * pixelSize
+                let rectH = pixelSize
+                let fill: String
+                switch state {
+                case 1:
+                    fill = matchColor
+                case 2:
+                    fill = missingColor
+                case 3:
+                    fill = excessColor
+                default:
+                    fill = matchColor
+                }
+                elements.append("<rect x=\"\(format(rectX))\" y=\"\(format(rectY))\" width=\"\(format(rectW))\" height=\"\(format(rectH))\" fill=\"\(fill)\" fill-opacity=\"\(opacity)\"/>")
+                x = end
+            }
+        }
+        let summary = "diff match=\(overlay.matchCount) missing=\(overlay.missingCount) excess=\(overlay.excessCount)"
+        let label = "<text x=\"\(format(overlay.origin.x + 4.0))\" y=\"\(format(overlay.origin.y + 14.0))\" font-size=\"10\" fill=\"#111111\" font-family=\"Menlo, monospace\">\(summary)</text>"
+        let body = elements.joined(separator: "\n    ")
+        return """
+        <g id=\"ref-diff\">
+          \(body)
+          \(label)
+        </g>
+        """
+    }
+
     private func backgroundGlyphElements(_ background: BackgroundGlyphRender, generatedBounds: CGRect) -> String {
         let global = backgroundTransform(background, generatedBounds: generatedBounds)
         let globalTransform = svgMatrix(global)
@@ -468,6 +581,19 @@ struct SVGPathBuilder {
             return "<path transform=\"\(transform)\" d=\"\(element.d)\"/>"
         }.joined(separator: "\n  ")
         return "<g id=\"background-glyph\" \(attributes)>\n  \(paths)\n</g>"
+    }
+
+    func referencePolygons(from background: BackgroundGlyphRender, generatedBounds: CGRect, sampleSteps: Int = 16) -> PolygonSet {
+        let global = backgroundTransform(background, generatedBounds: generatedBounds)
+        var polygons: PolygonSet = []
+        for element in background.elements {
+            let combined = global.concatenating(element.transform)
+            let rings = flattenPath(d: element.d, transform: combined, steps: sampleSteps)
+            for ring in rings where ring.count >= 3 {
+                polygons.append(Polygon(outer: ring, holes: []))
+            }
+        }
+        return polygons
     }
 
     private static func parseViewBox(from xml: String) -> CGRect? {
@@ -1061,6 +1187,173 @@ private enum PathToken {
     case number(Double)
 }
 
+private func flattenPath(d: String, transform: CGAffineTransform, steps: Int) -> [Ring] {
+    var tokenizer = PathTokenizer(d)
+    var current = CGPoint.zero
+    var start = CGPoint.zero
+    var lastControl: CGPoint?
+    var command: Character?
+    var rings: [Ring] = []
+    var currentRing: Ring = []
+
+    func pushPoint(_ point: CGPoint) {
+        let transformed = point.applying(transform)
+        currentRing.append(Point(x: transformed.x, y: transformed.y))
+    }
+
+    func finishRingIfNeeded() {
+        if currentRing.count >= 3 {
+            rings.append(currentRing)
+        }
+        currentRing = []
+    }
+
+    func sampleCubic(_ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint) {
+        let count = max(2, steps)
+        for i in 1...count {
+            let t = Double(i) / Double(count)
+            let mt = 1.0 - t
+            let a = mt * mt * mt
+            let b = 3.0 * mt * mt * t
+            let c = 3.0 * mt * t * t
+            let d = t * t * t
+            let x = a * p0.x + b * p1.x + c * p2.x + d * p3.x
+            let y = a * p0.y + b * p1.y + c * p2.y + d * p3.y
+            pushPoint(CGPoint(x: x, y: y))
+        }
+        current = p3
+        lastControl = p2
+    }
+
+    func sampleQuad(_ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint) {
+        let count = max(2, steps)
+        for i in 1...count {
+            let t = Double(i) / Double(count)
+            let mt = 1.0 - t
+            let a = mt * mt
+            let b = 2.0 * mt * t
+            let c = t * t
+            let x = a * p0.x + b * p1.x + c * p2.x
+            let y = a * p0.y + b * p1.y + c * p2.y
+            pushPoint(CGPoint(x: x, y: y))
+        }
+        current = p2
+        lastControl = p1
+    }
+
+    while let token = tokenizer.nextToken() {
+        switch token {
+        case .command(let cmd):
+            command = cmd
+            if cmd == "Z" || cmd == "z" {
+                pushPoint(start)
+                finishRingIfNeeded()
+                lastControl = nil
+            }
+        case .number(let number):
+            guard let cmd = command else { continue }
+            tokenizer.pushback(number)
+            switch cmd {
+            case "M", "m":
+                let isRelative = cmd == "m"
+                guard let x = tokenizer.nextNumber(), let y = tokenizer.nextNumber() else { break }
+                let point = CGPoint(x: x, y: y)
+                current = isRelative ? CGPoint(x: current.x + point.x, y: current.y + point.y) : point
+                start = current
+                finishRingIfNeeded()
+                pushPoint(current)
+            case "L", "l":
+                let isRelative = cmd == "l"
+                guard let x = tokenizer.nextNumber(), let y = tokenizer.nextNumber() else { break }
+                let point = CGPoint(x: x, y: y)
+                let target = isRelative ? CGPoint(x: current.x + point.x, y: current.y + point.y) : point
+                pushPoint(target)
+                current = target
+                lastControl = nil
+            case "H", "h":
+                let isRelative = cmd == "h"
+                guard let x = tokenizer.nextNumber() else { break }
+                let targetX = isRelative ? current.x + x : x
+                let target = CGPoint(x: targetX, y: current.y)
+                pushPoint(target)
+                current = target
+                lastControl = nil
+            case "V", "v":
+                let isRelative = cmd == "v"
+                guard let y = tokenizer.nextNumber() else { break }
+                let targetY = isRelative ? current.y + y : y
+                let target = CGPoint(x: current.x, y: targetY)
+                pushPoint(target)
+                current = target
+                lastControl = nil
+            case "C", "c":
+                let isRelative = cmd == "c"
+                guard let x1 = tokenizer.nextNumber(),
+                      let y1 = tokenizer.nextNumber(),
+                      let x2 = tokenizer.nextNumber(),
+                      let y2 = tokenizer.nextNumber(),
+                      let x = tokenizer.nextNumber(),
+                      let y = tokenizer.nextNumber() else { break }
+                let p1 = CGPoint(x: x1, y: y1)
+                let p2 = CGPoint(x: x2, y: y2)
+                let p3 = CGPoint(x: x, y: y)
+                let c1 = isRelative ? CGPoint(x: current.x + p1.x, y: current.y + p1.y) : p1
+                let c2 = isRelative ? CGPoint(x: current.x + p2.x, y: current.y + p2.y) : p2
+                let end = isRelative ? CGPoint(x: current.x + p3.x, y: current.y + p3.y) : p3
+                sampleCubic(current, c1, c2, end)
+            case "S", "s":
+                let isRelative = cmd == "s"
+                guard let x2 = tokenizer.nextNumber(),
+                      let y2 = tokenizer.nextNumber(),
+                      let x = tokenizer.nextNumber(),
+                      let y = tokenizer.nextNumber() else { break }
+                let p2 = CGPoint(x: x2, y: y2)
+                let p3 = CGPoint(x: x, y: y)
+                let reflected = lastControl.map { CGPoint(x: 2 * current.x - $0.x, y: 2 * current.y - $0.y) } ?? current
+                let c2 = isRelative ? CGPoint(x: current.x + p2.x, y: current.y + p2.y) : p2
+                let end = isRelative ? CGPoint(x: current.x + p3.x, y: current.y + p3.y) : p3
+                sampleCubic(current, reflected, c2, end)
+            case "Q", "q":
+                let isRelative = cmd == "q"
+                guard let x1 = tokenizer.nextNumber(),
+                      let y1 = tokenizer.nextNumber(),
+                      let x = tokenizer.nextNumber(),
+                      let y = tokenizer.nextNumber() else { break }
+                let p1 = CGPoint(x: x1, y: y1)
+                let p2 = CGPoint(x: x, y: y)
+                let c1 = isRelative ? CGPoint(x: current.x + p1.x, y: current.y + p1.y) : p1
+                let end = isRelative ? CGPoint(x: current.x + p2.x, y: current.y + p2.y) : p2
+                sampleQuad(current, c1, end)
+            case "T", "t":
+                let isRelative = cmd == "t"
+                guard let x = tokenizer.nextNumber(),
+                      let y = tokenizer.nextNumber() else { break }
+                let p = CGPoint(x: x, y: y)
+                let end = isRelative ? CGPoint(x: current.x + p.x, y: current.y + p.y) : p
+                let reflected = lastControl.map { CGPoint(x: 2 * current.x - $0.x, y: 2 * current.y - $0.y) } ?? current
+                sampleQuad(current, reflected, end)
+            case "A", "a":
+                let isRelative = cmd == "a"
+                guard tokenizer.nextNumber() != nil,
+                      tokenizer.nextNumber() != nil,
+                      tokenizer.nextNumber() != nil,
+                      tokenizer.nextNumber() != nil,
+                      tokenizer.nextNumber() != nil,
+                      let x = tokenizer.nextNumber(),
+                      let y = tokenizer.nextNumber() else { break }
+                let end = isRelative ? CGPoint(x: current.x + x, y: current.y + y) : CGPoint(x: x, y: y)
+                pushPoint(end)
+                current = end
+                lastControl = nil
+            default:
+                break
+            }
+        }
+    }
+    finishRingIfNeeded()
+    return rings
+}
+
 struct SVGDebugOverlay {
     var skeleton: [Point]
     var stamps: [Ring]
@@ -1073,7 +1366,11 @@ struct SVGDebugOverlay {
     var envelopeRight: [Point]
     var envelopeOutline: Ring
     var capPoints: [Point]
+    var junctionPatches: [Ring]
+    var junctionCorridors: [Ring]
+    var junctionControlPoints: [Point]
     var showUnionOutline: Bool
     var unionPolygons: PolygonSet?
     var alphaChart: SVGPathBuilder.AlphaDebugChart?
+    var refDiff: SVGPathBuilder.RefDiffOverlay? = nil
 }

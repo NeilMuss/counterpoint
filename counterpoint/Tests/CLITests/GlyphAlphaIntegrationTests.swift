@@ -36,8 +36,8 @@ final class GlyphAlphaIntegrationTests: XCTestCase {
         XCTAssertFalse(debug.alphaWasNil)
         XCTAssertEqual(debug.alphaFromStart ?? 0.0, -2.85, accuracy: 1.0e-6)
         XCTAssertGreaterThan(debug.uBiased, debug.uRaw)
-        let linear = debug.v0 + (debug.v1 - debug.v0) * debug.uRaw
-        XCTAssertGreaterThan(abs(debug.value - linear), 1.0)
+        let linearWidth = debug.v0 + (debug.v1 - debug.v0) * debug.uRaw
+        XCTAssertGreaterThan(abs(debug.value - linearWidth), 1.0)
 
         let sampler = DefaultPathSampler()
         let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
@@ -55,8 +55,8 @@ final class GlyphAlphaIntegrationTests: XCTestCase {
         let l0 = DirectSilhouetteTracer.leftRailPoint(sample: sample0)
         let l1 = DirectSilhouetteTracer.leftRailPoint(sample: sample1)
         let lm = DirectSilhouetteTracer.leftRailPoint(sample: sampleM)
-        let linear = Point(x: ScalarMath.lerp(l0.x, l1.x, 0.5), y: ScalarMath.lerp(l0.y, l1.y, 0.5))
-        let deviation = (lm - linear).length
+        let linearRail = Point(x: ScalarMath.lerp(l0.x, l1.x, 0.5), y: ScalarMath.lerp(l0.y, l1.y, 0.5))
+        let deviation = (lm - linearRail).length
         XCTAssertGreaterThan(deviation, max(0.25, 0.002 * 180.0))
     }
 

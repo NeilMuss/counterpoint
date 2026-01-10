@@ -156,6 +156,10 @@ final class ShowcaseTests: XCTestCase {
             envelopeLeft: config.view.contains(.rails) ? geometry.envelopeLeft : [],
             envelopeRight: config.view.contains(.rails) ? geometry.envelopeRight : [],
             envelopeOutline: config.view.contains(.envelope) ? geometry.envelopeOutline : [],
+            capPoints: [],
+            junctionPatches: config.view.contains(.junctions) ? geometry.junctionPatches : [],
+            junctionCorridors: config.view.contains(.junctions) ? geometry.junctionCorridors : [],
+            junctionControlPoints: config.view.contains(.junctions) ? geometry.junctionControlPoints : [],
             showUnionOutline: config.view.contains(.union),
             unionPolygons: geometry.unionPolygons
         )

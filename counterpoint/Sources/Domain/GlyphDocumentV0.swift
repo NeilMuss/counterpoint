@@ -394,10 +394,12 @@ public struct ParamCurve: Codable, Equatable {
 public struct ParamKeyframe: Codable, Equatable {
     public var t: Double
     public var value: Double
+    public var interpolationToNext: Interpolation?
 
-    public init(t: Double, value: Double) {
+    public init(t: Double, value: Double, interpolationToNext: Interpolation? = nil) {
         self.t = t
         self.value = value
+        self.interpolationToNext = interpolationToNext
     }
 }
 

@@ -468,6 +468,9 @@ struct CLI {
             envelopeRight: config.view.contains(.rails) ? geometry.envelopeRight : [],
             envelopeOutline: config.view.contains(.envelope) ? geometry.envelopeOutline : [],
             capPoints: geometry.capPoints,
+            junctionPatches: config.view.contains(.junctions) ? geometry.junctionPatches : [],
+            junctionCorridors: config.view.contains(.junctions) ? geometry.junctionCorridors : [],
+            junctionControlPoints: config.view.contains(.junctions) ? geometry.junctionControlPoints : [],
             showUnionOutline: config.view.contains(.union),
             unionPolygons: geometry.unionPolygons,
             alphaChart: alphaChart
@@ -721,6 +724,8 @@ struct CLIOptions {
     var showEnvelopeUnion: Bool
     var showRays: Bool?
     var showAlpha: Bool
+    var showJunctions: Bool
+    var showRefDiff: Bool
     var alphaProbeT: Double?
     var counterpointSize: Double?
     var angleModeOverride: AngleMode?
@@ -761,6 +766,7 @@ struct CLIOptions {
     var traceTMin: Double?
     var traceTMax: Double?
     var dumpKeyframes: Bool
+    var diffResolution: Int?
 }
 
 enum UnionInputFilter: String {
@@ -829,10 +835,12 @@ enum ScurveView: String {
     case rays
     case rails
     case caps
+    case junctions
     case union
     case centerline
     case offset
     case alpha
+    case refDiff
 }
 
 enum EnvelopeMode: String {
@@ -863,6 +871,9 @@ struct ScurveGeometry {
     var envelopeRight: [Point]
     var envelopeOutline: Ring
     var capPoints: [Point]
+    var junctionPatches: [Ring]
+    var junctionCorridors: [Ring]
+    var junctionControlPoints: [Point]
     var unionPolygons: PolygonSet
     var stampRings: [Ring]
     var samplePoints: [Point]
@@ -881,7 +892,7 @@ struct ShowcaseOptions {
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
-    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, showAlpha: false, alphaProbeT: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, finalEnvelopeMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, unionSilhouetteK: nil, unionSilhouetteDropContained: nil, unionDumpInputPath: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false, alphaDemo: nil, alphaDebug: false, traceStrokeId: nil, traceTMin: nil, traceTMax: nil, dumpKeyframes: false)
+    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, showAlpha: false, showJunctions: false, showRefDiff: false, alphaProbeT: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, finalEnvelopeMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, unionSilhouetteK: nil, unionSilhouetteDropContained: nil, unionDumpInputPath: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false, alphaDemo: nil, alphaDebug: false, traceStrokeId: nil, traceTMin: nil, traceTMax: nil, dumpKeyframes: false, diffResolution: nil)
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -1120,12 +1131,15 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
                 options.showRays = false
                 options.showEnvelopeUnion = false
                 options.showAlpha = false
+                options.showJunctions = false
             } else {
                 if viewModes.contains(.samples) { options.debugSamples = true }
                 if viewModes.contains(.rays) { options.showRays = true }
                 if viewModes.contains(.envelope) { options.showEnvelope = true }
                 if viewModes.contains(.union) { options.showEnvelopeUnion = true }
                 if viewModes.contains(.alpha) { options.showAlpha = true }
+                if viewModes.contains(.junctions) { options.showJunctions = true }
+                if viewModes.contains(.refDiff) { options.showRefDiff = true }
             }
             index += 1
         case "--alpha-probe-t":
@@ -1134,6 +1148,12 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             }
             options.alphaProbeT = value
             options.showAlpha = true
+            index += 1
+        case "--diff-resolution":
+            guard index + 1 < args.count, let value = Int(args[index + 1]), value > 0 else {
+                throw CLIError.invalidArguments("--diff-resolution requires a positive integer")
+            }
+            options.diffResolution = value
             index += 1
         case "--alpha-demo":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
@@ -2131,15 +2151,22 @@ func parseShowcaseOptions(_ args: [String]) throws -> ShowcaseOptions {
 private func parseViewModes(_ text: String) throws -> Set<ScurveView> {
     let raw = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
     if raw.contains("all") {
-        return Set([.envelope, .samples, .rays, .rails, .caps, .union, .centerline, .offset, .alpha])
+        return Set([.envelope, .samples, .rays, .rails, .caps, .junctions, .union, .centerline, .offset, .alpha, .refDiff])
     }
     if raw.contains("none") {
         return []
     }
     var result: Set<ScurveView> = []
     for item in raw where !item.isEmpty {
-        guard let mode = ScurveView(rawValue: item) else {
-            throw CLIError.invalidArguments("--view must be envelope|samples|rays|rails|caps|union|centerline|offset|alpha|all|none")
+        let resolved: String
+        switch item {
+        case "diff", "ref-diff":
+            resolved = "refDiff"
+        default:
+            resolved = item
+        }
+        guard let mode = ScurveView(rawValue: resolved) else {
+            throw CLIError.invalidArguments("--view must be envelope|samples|rays|rails|caps|junctions|union|centerline|offset|alpha|ref-diff|all|none")
         }
         result.insert(mode)
     }
@@ -2566,6 +2593,9 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
     var envelopeOutline: Ring = []
     var capPoints: [Point] = []
     var unionPolygons: PolygonSet = []
+    var junctionPatches: [Ring] = []
+    var junctionCorridors: [Ring] = []
+    var junctionControlPoints: [Point] = []
     if envelopeUsesDirect {
         let railTolerance = config.tolerance > 0 ? config.tolerance : 0.5
         let paramsProvider: DirectSilhouetteTracer.DirectSilhouetteParamProvider = { t, tangentAngle in
@@ -2589,12 +2619,16 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
             samples: directSamples,
             capStyle: .round,
             railTolerance: railTolerance,
-            paramsProvider: paramsProvider
+            paramsProvider: paramsProvider,
+            verbose: config.verbose
         )
         envelopeLeft = direct.leftRail
         envelopeRight = direct.rightRail
         envelopeOutline = showEnvelope ? direct.outline : []
         capPoints = config.view.contains(.caps) ? direct.capPoints : []
+        junctionPatches = config.view.contains(.junctions) ? direct.junctionPatches : []
+        junctionCorridors = config.view.contains(.junctions) ? direct.junctionCorridors : []
+        junctionControlPoints = config.view.contains(.junctions) ? direct.junctionControlPoints : []
         unionPolygons = direct.junctionPatches.map { Polygon(outer: $0) }
     } else {
         if !envelopeLeft.isEmpty,
@@ -2637,6 +2671,9 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         envelopeRight: envelopeRight,
         envelopeOutline: envelopeOutline,
         capPoints: capPoints,
+        junctionPatches: junctionPatches,
+        junctionCorridors: junctionCorridors,
+        junctionControlPoints: junctionControlPoints,
         unionPolygons: unionPolygons,
         stampRings: stampRings,
         samplePoints: samplePoints,
@@ -3015,6 +3052,9 @@ func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay 
         envelopeRight: envelopeRight,
         envelopeOutline: envelopeOutline,
         capPoints: [],
+        junctionPatches: [],
+        junctionCorridors: [],
+        junctionControlPoints: [],
         showUnionOutline: showUnionOutline,
         unionPolygons: nil,
         alphaChart: alphaChart
@@ -3134,6 +3174,7 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
     let strokePreviewPolygons: PolygonSet
     let authoredPolygons: PolygonSet
     let authoredFittedPaths: [FittedPath]?
+    let debugOverlay: SVGDebugOverlay?
     if options.centerlineOnly {
         let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
         var rendered: [String] = []
@@ -3158,17 +3199,76 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
         strokePreviewPolygons = []
         authoredPolygons = []
         authoredFittedPaths = nil
+        debugOverlay = nil
     } else if options.strokePreview {
         centerlines = []
         strokePreviewPolygons = buildStrokePreviewPolygons(document: document, options: options)
         authoredPolygons = []
         authoredFittedPaths = nil
+        debugOverlay = nil
     } else {
         centerlines = []
         strokePreviewPolygons = []
         let authored = try buildAuthoredStrokePolygons(document: document, options: options)
         authoredPolygons = authored.polygons
         authoredFittedPaths = authored.fittedPaths
+        var overlay: SVGDebugOverlay? = nil
+        if options.showJunctions,
+           !authored.junctionPatches.isEmpty || !authored.junctionControlPoints.isEmpty {
+            overlay = SVGDebugOverlay(
+                skeleton: [],
+                stamps: [],
+                bridges: [],
+                samplePoints: [],
+                tangentRays: [],
+                angleRays: [],
+                offsetRays: [],
+                envelopeLeft: [],
+                envelopeRight: [],
+                envelopeOutline: [],
+                capPoints: [],
+                junctionPatches: authored.junctionPatches,
+                junctionCorridors: authored.junctionCorridors,
+                junctionControlPoints: authored.junctionControlPoints,
+                showUnionOutline: false,
+                unionPolygons: nil
+            )
+        }
+        if options.showRefDiff, options.finalEnvelopeMode == .direct,
+           let referenceRender {
+            let resolution = options.diffResolution ?? 1024
+            if let diffOverlay = buildReferenceDiffOverlay(
+                current: authoredPolygons,
+                reference: referenceRender,
+                generatedBounds: frameBounds,
+                resolution: resolution,
+                builder: builder,
+                verbose: options.verbose
+            ) {
+                if overlay == nil {
+                    overlay = SVGDebugOverlay(
+                        skeleton: [],
+                        stamps: [],
+                        bridges: [],
+                        samplePoints: [],
+                        tangentRays: [],
+                        angleRays: [],
+                        offsetRays: [],
+                        envelopeLeft: [],
+                        envelopeRight: [],
+                        envelopeOutline: [],
+                        capPoints: [],
+                        junctionPatches: [],
+                        junctionCorridors: [],
+                        junctionControlPoints: [],
+                        showUnionOutline: false,
+                        unionPolygons: nil
+                    )
+                }
+                overlay?.refDiff = diffOverlay
+            }
+        }
+        debugOverlay = overlay
     }
     let debugRects = traceDebugRects(polygons: authoredPolygons, options: options)
     let svg = builder.svgDocumentForGlyphReference(
@@ -3179,9 +3279,106 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
         centerlinePaths: centerlines,
         polygons: strokePreviewPolygons + authoredPolygons,
         fittedPaths: authoredFittedPaths,
-        debugRects: debugRects
+        debugRects: debugRects,
+        debugOverlay: debugOverlay
     )
     try svg.write(to: outputURL, atomically: true, encoding: .utf8)
+}
+
+private func buildReferenceDiffOverlay(
+    current: PolygonSet,
+    reference: SVGPathBuilder.BackgroundGlyphRender,
+    generatedBounds: CGRect,
+    resolution: Int,
+    builder: SVGPathBuilder,
+    verbose: Bool
+) -> SVGPathBuilder.RefDiffOverlay? {
+    let referencePolygons = builder.referencePolygons(from: reference, generatedBounds: generatedBounds, sampleSteps: 16)
+    guard let bounds = unionPolygonBounds(current, referencePolygons) else { return nil }
+    let maxDim = max(bounds.width, bounds.height)
+    let pixelSize = max(maxDim / Double(resolution), 1.0e-4)
+    let width = max(1, Int(ceil(bounds.width / pixelSize)))
+    let height = max(1, Int(ceil(bounds.height / pixelSize)))
+    let fixedBounds = Rasterizer.RasterBounds(
+        minX: bounds.minX,
+        minY: bounds.minY,
+        maxX: bounds.minX + Double(width) * pixelSize,
+        maxY: bounds.minY + Double(height) * pixelSize
+    )
+
+    let currentResult = Rasterizer.rasterizeFixed(polygons: current, bounds: fixedBounds, pixelSize: pixelSize)
+    let referenceResult = Rasterizer.rasterizeFixed(polygons: referencePolygons, bounds: fixedBounds, pixelSize: pixelSize)
+    let count = currentResult.grid.width * currentResult.grid.height
+    var data: [UInt8] = Array(repeating: 0, count: count)
+    var matchCount = 0
+    var missingCount = 0
+    var excessCount = 0
+
+    for idx in 0..<count {
+        let ref = referenceResult.grid.data[idx] != 0
+        let cur = currentResult.grid.data[idx] != 0
+        if ref && cur {
+            data[idx] = 1
+            matchCount += 1
+        } else if ref && !cur {
+            data[idx] = 2
+            missingCount += 1
+        } else if !ref && cur {
+            data[idx] = 3
+            excessCount += 1
+        }
+    }
+
+    if verbose {
+        let pixelArea = pixelSize * pixelSize
+        let matchArea = Double(matchCount) * pixelArea
+        let missingArea = Double(missingCount) * pixelArea
+        let excessArea = Double(excessCount) * pixelArea
+        print("ref-diff resolution=\(resolution) pixelSize=\(String(format: "%.4f", pixelSize)) grid=\(width)x\(height)")
+        print("ref-diff areas match=\(String(format: "%.2f", matchArea)) missing=\(String(format: "%.2f", missingArea)) excess=\(String(format: "%.2f", excessArea))")
+    }
+
+    return SVGPathBuilder.RefDiffOverlay(
+        origin: currentResult.origin,
+        pixelSize: currentResult.pixelSize,
+        width: currentResult.grid.width,
+        height: currentResult.grid.height,
+        data: data,
+        matchCount: matchCount,
+        missingCount: missingCount,
+        excessCount: excessCount
+    )
+}
+
+private func unionPolygonBounds(_ a: PolygonSet, _ b: PolygonSet) -> CGRect? {
+    guard let boundsA = polygonBounds(a) else { return polygonBounds(b) }
+    guard let boundsB = polygonBounds(b) else { return boundsA }
+    return boundsA.union(boundsB)
+}
+
+private func polygonBounds(_ polygons: PolygonSet) -> CGRect? {
+    var minX = Double.greatestFiniteMagnitude
+    var maxX = -Double.greatestFiniteMagnitude
+    var minY = Double.greatestFiniteMagnitude
+    var maxY = -Double.greatestFiniteMagnitude
+    for polygon in polygons {
+        for point in polygon.outer {
+            minX = min(minX, point.x)
+            maxX = max(maxX, point.x)
+            minY = min(minY, point.y)
+            maxY = max(maxY, point.y)
+        }
+        for hole in polygon.holes {
+            for point in hole {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
+        }
+    }
+    guard minX.isFinite, maxX.isFinite, minY.isFinite, maxY.isFinite else { return nil }
+    return CGRect(x: minX, y: minY, width: max(0.0, maxX - minX), height: max(0.0, maxY - minY))
 }
 
 private func traceDebugRects(polygons: PolygonSet, options: CLIOptions) -> [SVGPathBuilder.DebugRect] {
@@ -3333,7 +3530,16 @@ private func buildStrokePreviewPolygons(document: GlyphDocument, options: CLIOpt
     return polygons
 }
 
-func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) throws -> (polygons: PolygonSet, fittedPaths: [FittedPath]?) {
+struct AuthoredStrokeRender {
+    let polygons: PolygonSet
+    let fittedPaths: [FittedPath]?
+    let junctionPatches: [Ring]
+    let junctionCorridors: [Ring]
+    let junctionControlPoints: [Point]
+    let junctionDiagnostics: [DirectSilhouetteTracer.JunctionDiagnostic]
+}
+
+func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) throws -> AuthoredStrokeRender {
     let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
     let quality = options.quality ?? "preview"
     let isFinal = quality == "final"
@@ -3362,6 +3568,10 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
     var polygons: PolygonSet = []
     polygons.reserveCapacity(document.inputs.geometry.strokes.count)
     var directFittedPaths: [FittedPath] = []
+    var junctionPatches: [Ring] = []
+    var junctionCorridors: [Ring] = []
+    var junctionControlPoints: [Point] = []
+    var junctionDiagnostics: [DirectSilhouetteTracer.JunctionDiagnostic] = []
 
     for stroke in document.inputs.geometry.strokes {
         guard let spec = strokeSpec(from: stroke, paths: pathById, quality: quality) else { continue }
@@ -3370,11 +3580,19 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
             if !skeletonPaths.isEmpty {
                 let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
                 let concatenated = useCase.generateConcatenatedSamplesWithJunctions(for: spec, paths: skeletonPaths)
-                let junctions = concatenated.junctionPairs.compactMap { pair -> (Sample, Sample)? in
+                let junctions = concatenated.junctionPairs.enumerated().compactMap { index, pair -> DirectSilhouetteTracer.JunctionContext? in
                     guard pair.0 >= 0, pair.1 >= 0,
                           pair.0 < concatenated.samples.count,
                           pair.1 < concatenated.samples.count else { return nil }
-                    return (concatenated.samples[pair.0], concatenated.samples[pair.1])
+                    let prev = pair.0 > 0 ? concatenated.samples[pair.0 - 1] : nil
+                    let next = pair.1 + 1 < concatenated.samples.count ? concatenated.samples[pair.1 + 1] : nil
+                    return DirectSilhouetteTracer.JunctionContext(
+                        joinIndex: index,
+                        prev: prev,
+                        a: concatenated.samples[pair.0],
+                        b: concatenated.samples[pair.1],
+                        next: next
+                    )
                 }
                 let railTolerance = spec.samplingPolicy?.envelopeTolerance ?? 0.5
                 let traceWindow: DirectSilhouetteTraceWindow?
@@ -3433,7 +3651,8 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                     capStyle: spec.capStyle,
                     railTolerance: railTolerance,
                     paramsProvider: paramsProvider,
-                    traceWindow: (options.traceStrokeId == nil || options.traceStrokeId == stroke.id) ? traceWindow : nil
+                    traceWindow: (options.traceStrokeId == nil || options.traceStrokeId == stroke.id) ? traceWindow : nil,
+                    verbose: options.verbose
                 )
                 if !directResult.outline.isEmpty {
                     polygons.append(Polygon(outer: directResult.outline))
@@ -3446,6 +3665,10 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                             directFittedPaths.append(patchPath)
                         }
                     }
+                    junctionPatches.append(contentsOf: directResult.junctionPatches)
+                    junctionCorridors.append(contentsOf: directResult.junctionCorridors)
+                    junctionControlPoints.append(contentsOf: directResult.junctionControlPoints)
+                    junctionDiagnostics.append(contentsOf: directResult.junctionDiagnostics)
                     continue
                 } else if options.verbose {
                     print("authored-stroke \(stroke.id) direct envelope empty; falling back to union")
@@ -3524,10 +3747,26 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
         polygons.append(contentsOf: outline)
     }
 
-    guard !polygons.isEmpty else { return ([], nil) }
+    guard !polygons.isEmpty else {
+        return AuthoredStrokeRender(
+            polygons: [],
+            fittedPaths: nil,
+            junctionPatches: junctionPatches,
+            junctionCorridors: junctionCorridors,
+            junctionControlPoints: junctionControlPoints,
+            junctionDiagnostics: junctionDiagnostics
+        )
+    }
 
     if useDirectEnvelope, !directFittedPaths.isEmpty {
-        return (polygons, directFittedPaths)
+        return AuthoredStrokeRender(
+            polygons: polygons,
+            fittedPaths: directFittedPaths,
+            junctionPatches: junctionPatches,
+            junctionCorridors: junctionCorridors,
+            junctionControlPoints: junctionControlPoints,
+            junctionDiagnostics: junctionDiagnostics
+        )
     }
 
     let outlineFit = options.outlineFit ?? .none
@@ -3536,7 +3775,14 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
     let cornerThreshold = 60.0
     switch outlineFit {
     case .none:
-        return (polygons, nil)
+        return AuthoredStrokeRender(
+            polygons: polygons,
+            fittedPaths: nil,
+            junctionPatches: junctionPatches,
+            junctionCorridors: junctionCorridors,
+            junctionControlPoints: junctionControlPoints,
+            junctionDiagnostics: junctionDiagnostics
+        )
     case .simplify:
         let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
         let simplified = polygons.map { polygon in
@@ -3544,7 +3790,14 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
             let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
             return Polygon(outer: outer, holes: holes)
         }
-        return (simplified, nil)
+        return AuthoredStrokeRender(
+            polygons: simplified,
+            fittedPaths: nil,
+            junctionPatches: junctionPatches,
+            junctionCorridors: junctionCorridors,
+            junctionControlPoints: junctionControlPoints,
+            junctionDiagnostics: junctionDiagnostics
+        )
     case .bezier:
         let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
         let simplified = polygons.map { polygon in
@@ -3554,7 +3807,14 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
         }
         let fitter = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThreshold)
         let fitted = fitter.fitPolygonSet(simplified)
-        return ([], fitted)
+        return AuthoredStrokeRender(
+            polygons: [],
+            fittedPaths: fitted,
+            junctionPatches: junctionPatches,
+            junctionCorridors: junctionCorridors,
+            junctionControlPoints: junctionControlPoints,
+            junctionDiagnostics: junctionDiagnostics
+        )
     }
 }
 
@@ -4536,9 +4796,9 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always|trace] [--final-envelope direct] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,caps,union,centerline,offset,alpha|all|none] [--alpha-probe-t N] [--alpha-demo N] [--alpha-debug] [--trace-alpha-window tmin tmax] [--trace-stroke <id>] [--trace-tmin N] [--trace-tmax N] [--dump-keyframes] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
-    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union|direct] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,caps,union,centerline,offset,alpha|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
-    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union|direct] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,caps,union,centerline,offset,alpha|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always|trace] [--final-envelope direct] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,caps,junctions,union,centerline,offset,alpha,ref-diff|all|none] [--alpha-probe-t N] [--alpha-demo N] [--alpha-debug] [--diff-resolution N] [--trace-alpha-window tmin tmax] [--trace-stroke <id>] [--trace-tmin N] [--trace-tmax N] [--dump-keyframes] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union|direct] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,caps,junctions,union,centerline,offset,alpha,ref-diff|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
+    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union|direct] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,caps,junctions,union,centerline,offset,alpha,ref-diff|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
     stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--cleanup-touching-edges 0|1] [--snap-tol N] [--touch-eps N] [--no-union|--cleanup-only] [--dump-after-cleanup <path>] [--dry-run] [--print-ring-original-index N]\n".utf8))
     exit(1)

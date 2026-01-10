@@ -79,7 +79,7 @@ final class OutlineTraceRasterTests: XCTestCase {
             }
         }
         grid[2, 2] = 0
-        let closed = closeMask(grid)
+        let closed = closeMask(grid, passes: 2)
         XCTAssertEqual(closed[2, 2], 1)
         XCTAssertEqual(closed[0, 0], 0)
     }
@@ -95,5 +95,36 @@ final class OutlineTraceRasterTests: XCTestCase {
         let input: PolygonSet = [Polygon(outer: ring)]
         let output = OutlineTracer.traceSilhouette(input, epsilon: 1.0)
         XCTAssertTrue(output.isEmpty)
+    }
+
+    func testRelativeAreaFilteringKeepsMeaningfulSecondComponent() {
+        let large: Ring = [
+            Point(x: 0, y: 0),
+            Point(x: 100, y: 0),
+            Point(x: 100, y: 100),
+            Point(x: 0, y: 100),
+            Point(x: 0, y: 0)
+        ]
+        let mediumDrop: Ring = [
+            Point(x: 0, y: 0),
+            Point(x: 10, y: 0),
+            Point(x: 10, y: 5),
+            Point(x: 0, y: 5),
+            Point(x: 0, y: 0)
+        ]
+        let mediumKeep: Ring = [
+            Point(x: 0, y: 0),
+            Point(x: 15, y: 0),
+            Point(x: 15, y: 10),
+            Point(x: 0, y: 10),
+            Point(x: 0, y: 0)
+        ]
+        let polygons: PolygonSet = [
+            Polygon(outer: large),
+            Polygon(outer: mediumDrop),
+            Polygon(outer: mediumKeep)
+        ]
+        let result = filterSmallPolygons(polygons, minArea: 1.0, keepTop: 20, relativeKeepRatio: 0.01)
+        XCTAssertEqual(result.polygons.count, 2)
     }
 }
