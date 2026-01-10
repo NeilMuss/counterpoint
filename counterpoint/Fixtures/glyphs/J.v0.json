@@ -49,22 +49,30 @@
           "skeletons": ["ink:spine", "ink:hook"],
 
           "params": {
-            "angleMode": "tangentRelative",
+            "angleMode": "absolute",
             "theta":  { "keyframes": [{ "t": 0, "value": 0 }, { "t": 1, "value": 0 }] },
-            "width":  { "keyframes": [{ "t": 0, "value": 28 }, { "t": 1, "value": 28 }] },
-            "height": { "keyframes": [{ "t": 0, "value": 6  }, { "t": 1, "value": 6  }] }
+            "width": { "keyframes": [
+              { "t": 0.0, "value": 180 },
+              { "t": 0.01, "value": 180, "interpolationToNext": { "alpha": -2.85 } },
+              { "t": 0.1, "value": 85 },
+              { "t": 1.0, "value": 1 }
+            ] },
+            "height": { "keyframes": [
+              { "t": 0, "value": 6  }, 
+              { "t": 1, "value": 6  }
+              ] }
           },
 
           "samplingPolicy": {
-            "flattenTolerance": 2.0,
-            "envelopeTolerance": 2.0,
-            "maxSamples": 40,
-            "maxRecursionDepth": 6,
-            "minParamStep": 0.05
-          },
+  "flattenTolerance": 0.5,
+  "envelopeTolerance": 0.5,
+  "maxSamples": 400,
+  "maxRecursionDepth": 12,
+  "minParamStep": 0.002
+},
 
           "joins": {
-            "capStyle": "round",
+            "capStyle": "butt",
             "joinStyle": { "type": "bevel" }
           }
         }

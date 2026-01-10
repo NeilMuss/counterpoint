@@ -22,6 +22,8 @@ final class GlobalAngleOverlayTests: XCTestCase {
             showEnvelope: nil,
             showEnvelopeUnion: false,
             showRays: true,
+            showAlpha: false,
+            alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
             envelopeTolerance: nil,
@@ -53,7 +55,13 @@ final class GlobalAngleOverlayTests: XCTestCase {
             outlineFit: nil,
             fitTolerance: nil,
             simplifyTolerance: nil,
-            verbose: false
+            verbose: false,
+            alphaDemo: nil,
+            alphaDebug: false,
+            traceStrokeId: nil,
+            traceTMin: nil,
+            traceTMax: nil,
+            dumpKeyframes: false
         )
 
         let overlay = makeDebugOverlay(spec: spec, options: options)
@@ -82,6 +90,8 @@ final class GlobalAngleOverlayTests: XCTestCase {
             showEnvelope: true,
             showEnvelopeUnion: false,
             showRays: false,
+            showAlpha: false,
+            alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
             envelopeTolerance: nil,
@@ -113,7 +123,13 @@ final class GlobalAngleOverlayTests: XCTestCase {
             outlineFit: nil,
             fitTolerance: nil,
             simplifyTolerance: nil,
-            verbose: false
+            verbose: false,
+            alphaDemo: nil,
+            alphaDebug: false,
+            traceStrokeId: nil,
+            traceTMin: nil,
+            traceTMax: nil,
+            dumpKeyframes: false
         )
 
         let overlayA = makeDebugOverlay(spec: spec, options: options)

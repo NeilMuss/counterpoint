@@ -52,6 +52,8 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             showEnvelope: nil,
             showEnvelopeUnion: false,
             showRays: nil,
+            showAlpha: false,
+            alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
             envelopeTolerance: nil,
@@ -83,7 +85,13 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             outlineFit: OutlineFitMode.none,
             fitTolerance: nil,
             simplifyTolerance: nil,
-            verbose: false
+            verbose: false,
+            alphaDemo: nil,
+            alphaDebug: false,
+            traceStrokeId: nil,
+            traceTMin: nil,
+            traceTMax: nil,
+            dumpKeyframes: false
         )
 
         let authored = try buildAuthoredStrokePolygons(document: document, options: options)
@@ -153,6 +161,10 @@ final class GlyphStrokeOutlineTests: XCTestCase {
         let unified = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let lines = unified.split(separator: "\n", omittingEmptySubsequences: false)
         let trimmed = lines.map { $0.replacingOccurrences(of: "[ \t]+$", with: "", options: .regularExpression) }
-        return trimmed.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let collapsed = trimmed.reduce(into: [String]()) { acc, line in
+            if line.isEmpty, acc.last?.isEmpty == true { return }
+            acc.append(line)
+        }
+        return collapsed.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

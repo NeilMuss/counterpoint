@@ -26,6 +26,28 @@ struct SVGPathBuilder {
         let manualTransform: CGAffineTransform
     }
 
+    struct DebugRect: Equatable {
+        let min: Point
+        let max: Point
+        let stroke: String
+        let strokeWidth: Double
+    }
+
+    struct AlphaDebugChart: Equatable {
+        let alphaRaw: Double
+        let alphaUsed: Double
+        let t0: Double
+        let t1: Double
+        let trackLabel: String
+        let biasSamples: [Point]
+        let valueSamples: [Point]
+        let valueMin: Double
+        let valueMax: Double
+        let startValue: Double
+        let endValue: Double
+        let dMid: Double
+    }
+
     static func loadBackgroundGlyph(from svgPath: String) -> BackgroundGlyphSource? {
         let url = URL(fileURLWithPath: svgPath)
         guard let data = try? Data(contentsOf: url),
@@ -68,7 +90,7 @@ struct SVGPathBuilder {
         }
         let background = backgroundGlyph.map { backgroundGlyphElements($0, generatedBounds: generatedBounds) } ?? ""
         let reference = debugReference.map { debugReferencePath($0) } ?? ""
-        let debug = debugOverlay.map { debugGroup($0, polygons: polygons) } ?? ""
+        let debug = debugOverlay.map { debugGroup($0, polygons: polygons, viewBox: viewBox) } ?? ""
 
         return """
         <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"\(format(width))\" height=\"\(format(height))\" viewBox=\"\(format(viewBox.minX)) \(format(viewBox.minY)) \(format(viewBox.width)) \(format(viewBox.height))\">
@@ -87,7 +109,8 @@ struct SVGPathBuilder {
         reference: BackgroundGlyphRender?,
         centerlinePaths: [String] = [],
         polygons: PolygonSet = [],
-        fittedPaths: [FittedPath]? = nil
+        fittedPaths: [FittedPath]? = nil,
+        debugRects: [DebugRect] = []
     ) -> String {
         let generatedBounds = frameBounds
         let referenceBounds = reference.map { transformedBackgroundBounds($0, generatedBounds: generatedBounds) }
@@ -99,6 +122,7 @@ struct SVGPathBuilder {
         let height = size?.height ?? viewBox.height
         let referenceGroup = reference.map { backgroundGlyphElements($0, generatedBounds: generatedBounds) } ?? ""
         let centerlines = centerlinePaths.joined(separator: "\n")
+        let debugRectGroup = debugRects.isEmpty ? "" : debugRectElements(debugRects)
         let polygonPaths: String
         if let fittedPaths {
             polygonPaths = fittedPaths.map { pathData(for: $0) }.joined(separator: "\n")
@@ -106,11 +130,12 @@ struct SVGPathBuilder {
             polygonPaths = polygons.map { pathData(for: $0) }.joined(separator: "\n")
         }
 
+        let elements = [referenceGroup, centerlines, debugRectGroup, polygonPaths].filter { !$0.isEmpty }
+        let body = elements.joined(separator: "\n  ")
+
         return """
         <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"\(format(width))\" height=\"\(format(height))\" viewBox=\"\(format(viewBox.minX)) \(format(viewBox.minY)) \(format(viewBox.width)) \(format(viewBox.height))\">
-          \(referenceGroup)
-          \(centerlines)
-          \(polygonPaths)
+          \(body)
         </svg>
         """
     }
@@ -174,6 +199,17 @@ struct SVGPathBuilder {
             return ring + [first]
         }
         return ring
+    }
+
+    private func debugRectElements(_ rects: [DebugRect]) -> String {
+        let elements = rects.map { rect in
+            let x = rect.min.x
+            let y = rect.min.y
+            let width = rect.max.x - rect.min.x
+            let height = rect.max.y - rect.min.y
+            return "<rect x=\"\(format(x))\" y=\"\(format(y))\" width=\"\(format(width))\" height=\"\(format(height))\" fill=\"none\" stroke=\"\(rect.stroke)\" stroke-width=\"\(format(rect.strokeWidth))\"/>"
+        }
+        return elements.joined(separator: "\n")
     }
 
     private func boundsFor(
@@ -270,7 +306,7 @@ struct SVGPathBuilder {
         return String(format: "%0.*f", precision, rounded)
     }
 
-    private func debugGroup(_ overlay: SVGDebugOverlay, polygons: PolygonSet) -> String {
+    private func debugGroup(_ overlay: SVGDebugOverlay, polygons: PolygonSet, viewBox: CGRect) -> String {
         let skeletonPath = polylinePath(overlay.skeleton)
         let stampPaths = overlay.stamps.map { ringPath($0) }.filter { !$0.isEmpty }
         let bridgePaths = overlay.bridges.map { ringPath($0) }.filter { !$0.isEmpty }
@@ -281,6 +317,7 @@ struct SVGPathBuilder {
         let rightRail = polylinePath(overlay.envelopeRight)
         let outlineRail = overlay.envelopeOutline.isEmpty ? "" : ringPath(overlay.envelopeOutline)
         let points = overlay.samplePoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(0.6))\" fill=\"#222222\" fill-opacity=\"0.5\"/>" }.joined(separator: "\n    ")
+        let capPoints = overlay.capPoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(1.4))\" fill=\"#ff0033\" fill-opacity=\"0.85\"/>" }.joined(separator: "\n    ")
 
         let stampElements = stampPaths.map { "<path fill=\"none\" stroke=\"#0066ff\" stroke-opacity=\"0.3\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
         let bridgeElements = bridgePaths.map { "<path fill=\"none\" stroke=\"#00aa66\" stroke-opacity=\"0.25\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
@@ -291,6 +328,7 @@ struct SVGPathBuilder {
             rightRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(rightRail)\"/>",
             outlineRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.35\" stroke-width=\"0.6\" d=\"\(outlineRail)\"/>"
         ].compactMap { $0 }.joined(separator: "\n    ")
+        let alphaChart = overlay.alphaChart.map { alphaChartElements($0, viewBox: viewBox) } ?? ""
 
         return """
         <g id=\"debug\">
@@ -299,10 +337,12 @@ struct SVGPathBuilder {
           <path fill=\"none\" stroke=\"#222222\" stroke-opacity=\"0.7\" stroke-width=\"0.6\" d=\"\(anglePath)\"/>
           <path fill=\"none\" stroke=\"#00aaff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(offsetPath)\"/>
           \(points)
+          \(capPoints)
           \(envelopeElements)
           \(stampElements)
           \(bridgeElements)
           \(unionOutline)
+          \(alphaChart)
         </g>
         """
     }
@@ -313,6 +353,108 @@ struct SVGPathBuilder {
         let opacity = reference.opacity.map { " opacity=\"\(format($0))\"" } ?? ""
         let transform = reference.transform.map { " transform=\"\($0)\"" } ?? ""
         return "<path id=\"debug-reference\" fill=\"none\" stroke=\"#999999\" stroke-opacity=\"0.6\" stroke-width=\"0.7\"\(opacity)\(transform) d=\"\(trimmed)\"/>"
+    }
+
+    private func alphaChartElements(_ chart: AlphaDebugChart, viewBox: CGRect) -> String {
+        let chartWidth: Double = 220.0
+        let chartHeight: Double = 140.0
+        let origin = Point(x: viewBox.minX + 8.0, y: viewBox.minY + 8.0)
+
+        let border = "<rect x=\"\(format(origin.x))\" y=\"\(format(origin.y))\" width=\"\(format(chartWidth))\" height=\"\(format(chartHeight))\" fill=\"none\" stroke=\"#222222\" stroke-width=\"0.8\"/>"
+
+        let diagStart = Point(x: origin.x, y: origin.y + chartHeight)
+        let diagEnd = Point(x: origin.x + chartWidth, y: origin.y)
+        let diagPath = "M \(format(diagStart.x)) \(format(diagStart.y)) L \(format(diagEnd.x)) \(format(diagEnd.y))"
+
+        let sampleCount = 64
+        var biasPoints: [Point] = []
+        var valuePoints: [Point] = []
+        biasPoints.reserveCapacity(sampleCount)
+        valuePoints.reserveCapacity(sampleCount)
+        let span = chart.endValue - chart.startValue
+        let valueSpan = chart.valueMax - chart.valueMin
+
+        for i in 0..<sampleCount {
+            let u = Double(i) / Double(sampleCount - 1)
+            let uPrime = DefaultParamEvaluator.biasCurveValue(u, bias: chart.alphaUsed)
+            let x = origin.x + u * chartWidth
+            let y = origin.y + (1.0 - uPrime) * chartHeight
+            biasPoints.append(Point(x: x, y: y))
+            if valueSpan > 1.0e-12 {
+                let value = chart.startValue + span * uPrime
+                let normalized = ScalarMath.clamp01((value - chart.valueMin) / valueSpan)
+                let valueY = origin.y + (1.0 - normalized) * chartHeight
+                valuePoints.append(Point(x: x, y: valueY))
+            }
+        }
+
+        let biasPath = polylinePath(biasPoints)
+        let valuePath = valuePoints.isEmpty ? "" : polylinePath(valuePoints)
+
+        let labelAlpha = "alphaRaw=\(String(format: "%.3f", chart.alphaRaw)) alphaUsed=\(String(format: "%.3f", chart.alphaUsed))"
+        let labelSegment = "segment [\(String(format: "%.3f", chart.t0))..\(String(format: "%.3f", chart.t1))]"
+        let labelTrack = "\(chart.trackLabel) [\(String(format: "%.3f", chart.valueMin))..\(String(format: "%.3f", chart.valueMax))]"
+
+        let textX = format(origin.x + 6.0)
+        let textY = format(origin.y + 14.0)
+        let textY2 = format(origin.y + 26.0)
+        let textY3 = format(origin.y + 38.0)
+        let textY4 = format(origin.y + 50.0)
+        let textY5 = format(origin.y + 62.0)
+        let textY6 = format(origin.y + 74.0)
+
+        let valuePathElement = valuePath.isEmpty ? "" : "<path fill=\"none\" stroke=\"#fb8c00\" stroke-opacity=\"0.8\" stroke-width=\"1.0\" d=\"\(valuePath)\"/>"
+
+        let f025 = DefaultParamEvaluator.biasCurveValue(0.25, bias: chart.alphaUsed)
+        let f050 = DefaultParamEvaluator.biasCurveValue(0.50, bias: chart.alphaUsed)
+        let f075 = DefaultParamEvaluator.biasCurveValue(0.75, bias: chart.alphaUsed)
+        let labelF = "f(0.25)=\(String(format: "%.3f", f025)) f(0.5)=\(String(format: "%.3f", f050)) f(0.75)=\(String(format: "%.3f", f075))"
+        let labelMid = "dMid=\(String(format: "%.3f", chart.dMid))"
+        let sampleUs: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
+        let sampleValues = sampleUs.map { DefaultParamEvaluator.biasCurveValue($0, bias: chart.alphaUsed) }
+        let minValue = sampleValues.min() ?? 0.0
+        let maxValue = sampleValues.max() ?? 0.0
+        var monotone = true
+        let epsilon = 1.0e-9
+        for index in 1..<sampleValues.count {
+            if sampleValues[index] + epsilon < sampleValues[index - 1] {
+                monotone = false
+                break
+            }
+        }
+        if minValue < -epsilon || maxValue > 1.0 + epsilon {
+            monotone = false
+        }
+        let labelMonotone = "monotone=\(monotone) u'[min=\(String(format: "%.3f", minValue)) max=\(String(format: "%.3f", maxValue))]"
+
+        let markerUs: [Double] = [0.25, 0.5, 0.75]
+        let markerRadius = format(6.0)
+        let markerElements = markerUs.map { u -> String in
+            let diagX = origin.x + u * chartWidth
+            let diagY = origin.y + (1.0 - u) * chartHeight
+            let uPrime = DefaultParamEvaluator.biasCurveValue(u, bias: chart.alphaUsed)
+            let biasX = diagX
+            let biasY = origin.y + (1.0 - uPrime) * chartHeight
+            let diagCircle = "<circle cx=\"\(format(diagX))\" cy=\"\(format(diagY))\" r=\"\(markerRadius)\" fill=\"#ffffff\" stroke=\"#333333\" stroke-width=\"1.5\"/>"
+            let biasCircle = "<circle cx=\"\(format(biasX))\" cy=\"\(format(biasY))\" r=\"\(markerRadius)\" fill=\"#1565c0\" stroke=\"#ffffff\" stroke-width=\"1.5\"/>"
+            return diagCircle + "\n          " + biasCircle
+        }.joined(separator: "\n          ")
+
+        return """
+        <g id=\"alpha-chart\">
+          \(border)
+          <path fill=\"none\" stroke=\"#777777\" stroke-opacity=\"0.6\" stroke-width=\"2.0\" stroke-dasharray=\"4 3\" d=\"\(diagPath)\"/>
+          <path fill=\"none\" stroke=\"#1565c0\" stroke-opacity=\"0.9\" stroke-width=\"8.0\" d=\"\(biasPath)\"/>
+          \(markerElements)
+          \(valuePathElement)
+          <text x=\"\(textX)\" y=\"\(textY)\" font-size=\"8\" fill=\"#222222\">\(labelAlpha)</text>
+          <text x=\"\(textX)\" y=\"\(textY2)\" font-size=\"8\" fill=\"#222222\">\(labelSegment)</text>
+          <text x=\"\(textX)\" y=\"\(textY3)\" font-size=\"8\" fill=\"#222222\">\(labelTrack)</text>
+          <text x=\"\(textX)\" y=\"\(textY4)\" font-size=\"8\" fill=\"#222222\">\(labelF)</text>
+          <text x=\"\(textX)\" y=\"\(textY5)\" font-size=\"8\" fill=\"#222222\">\(labelMid)</text>
+          <text x=\"\(textX)\" y=\"\(textY6)\" font-size=\"8\" fill=\"#222222\">\(labelMonotone)</text>
+        </g>
+        """
     }
 
     private func backgroundGlyphElements(_ background: BackgroundGlyphRender, generatedBounds: CGRect) -> String {
@@ -930,6 +1072,8 @@ struct SVGDebugOverlay {
     var envelopeLeft: [Point]
     var envelopeRight: [Point]
     var envelopeOutline: Ring
+    var capPoints: [Point]
     var showUnionOutline: Bool
     var unionPolygons: PolygonSet?
+    var alphaChart: SVGPathBuilder.AlphaDebugChart?
 }
