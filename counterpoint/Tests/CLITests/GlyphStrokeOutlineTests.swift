@@ -1,6 +1,8 @@
 import XCTest
 import CoreGraphics
 import Domain
+import UseCases
+import Adapters
 @testable import CounterpointCLI
 
 final class GlyphStrokeOutlineTests: XCTestCase {
@@ -55,6 +57,8 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             showAlpha: false,
             showJunctions: false,
             showRefDiff: false,
+            showKeyframes: false,
+            referenceOnTop: false,
             alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
@@ -138,6 +142,8 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             showAlpha: false,
             showJunctions: false,
             showRefDiff: false,
+            showKeyframes: false,
+            referenceOnTop: false,
             alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
@@ -207,6 +213,57 @@ final class GlyphStrokeOutlineTests: XCTestCase {
         )
         XCTAssertTrue(result.preCount > result.postCount)
         XCTAssertTrue(result.rings.first?.count ?? 0 <= 60)
+    }
+
+    func testGlyphThetaDegreesConvertedAndTangentRelativeApplied() throws {
+        let path = PathGeometry(
+            id: "ink:stem",
+            segments: [
+                .cubic(CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 0, y: 0),
+                    p2: Point(x: 0, y: 100),
+                    p3: Point(x: 0, y: 100)
+                ))
+            ]
+        )
+        let paths = ["ink:stem": path]
+        let useCase = GenerateStrokeOutlineUseCase(
+            sampler: DefaultPathSampler(),
+            evaluator: DefaultParamEvaluator(),
+            unioner: PassthroughPolygonUnioner()
+        )
+
+        func assertEffectiveRotation(thetaDegrees: Double) throws {
+            let stroke = StrokeGeometry(
+                id: "stroke:test",
+                skeletons: ["ink:stem"],
+                params: StrokeParams(
+                    angleMode: .tangentRelative,
+                    width: ParamCurve(keyframes: [ParamKeyframe(t: 0, value: 10), ParamKeyframe(t: 1, value: 10)]),
+                    height: ParamCurve(keyframes: [ParamKeyframe(t: 0, value: 5), ParamKeyframe(t: 1, value: 5)]),
+                    theta: ParamCurve(keyframes: [ParamKeyframe(t: 0, value: thetaDegrees), ParamKeyframe(t: 1, value: thetaDegrees)])
+                )
+            )
+            guard let spec = strokeSpec(from: stroke, paths: paths, quality: "preview") else {
+                XCTFail("Failed to build StrokeSpec from glyph stroke.")
+                return
+            }
+            let samples = useCase.generateSamples(for: spec)
+            guard !samples.isEmpty else {
+                XCTFail("No samples generated for glyph stroke.")
+                return
+            }
+            let sample = samples[samples.count / 2]
+            let thetaRad = thetaDegrees * .pi / 180.0
+            let thetaInternal = AngleMath.wrapPi(thetaRad + (.pi / 2.0))
+            let expected = AngleMath.wrapPi(sample.tangentAngle + thetaInternal)
+            let delta = AngleMath.angularDifference(sample.effectiveRotation, expected)
+            XCTAssertLessThan(abs(delta), 1.0e-4)
+        }
+
+        try assertEffectiveRotation(thetaDegrees: 0.0)
+        try assertEffectiveRotation(thetaDegrees: 90.0)
     }
 
     private func glyphFrameBounds(_ frame: GlyphFrame, reference: SVGPathBuilder.BackgroundGlyphRender?) -> CGRect {

@@ -4,6 +4,7 @@ import Domain
 public struct GenerateStrokeOutlineUseCase {
     public static var logSampleEvaluation = false
     private static var didLogSampleEvaluation = false
+    public static var logLaneOffsetSamples = false
 
     private let sampler: PathSampling
     private let evaluator: ParamEvaluating
@@ -50,13 +51,14 @@ public struct GenerateStrokeOutlineUseCase {
         let maxSpacing = spec.sampling.maxSpacing ?? spec.sampling.baseSpacing
         let polyline = sampler.makePolyline(path: spec.path, tolerance: policy.flattenTolerance)
         let translation = outputTranslation(for: spec, polyline: polyline)
-        return generateSamples(
+        let samples = generateSamples(
             for: spec,
             polyline: polyline,
             translation: translation,
             policy: policy,
             maxSpacing: maxSpacing
         )
+        return applyLaneOffsetContinuity(samples: samples, spec: spec)
     }
 
     public func generateConcatenatedSamples(for spec: StrokeSpec, paths: [BezierPath]) -> [Sample] {
@@ -90,8 +92,9 @@ public struct GenerateStrokeOutlineUseCase {
                 policy: policy,
                 maxSpacing: maxSpacing
             )
-            if localSamples.isEmpty { continue }
-            let trimmedSamples = (index == paths.count - 1) ? localSamples : Array(localSamples.dropLast())
+            let adjustedSamples = applyLaneOffsetContinuity(samples: localSamples, spec: spec)
+            if adjustedSamples.isEmpty { continue }
+            let trimmedSamples = (index == paths.count - 1) ? adjustedSamples : Array(adjustedSamples.dropLast())
             let firstIndexInSegment = seeds.count
             for sample in trimmedSamples {
                 let basePoint = polyline.point(at: sample.uGeom)
@@ -116,7 +119,7 @@ public struct GenerateStrokeOutlineUseCase {
         guard !seeds.isEmpty else { return ConcatenatedSamples(samples: [], junctionPairs: []) }
         if seeds.count == 1 {
             let seed = seeds[0]
-            return ConcatenatedSamples(samples: [
+            let samples = applyLaneOffsetContinuity(samples: [
                 makeSampleFromBase(
                     uGeom: seed.uGeom,
                     uGrid: seed.uGrid,
@@ -126,7 +129,8 @@ public struct GenerateStrokeOutlineUseCase {
                     spec: spec,
                     translation: translation
                 )
-            ], junctionPairs: [])
+            ], spec: spec)
+            return ConcatenatedSamples(samples: samples, junctionPairs: [])
         }
 
         var cumulative: [Double] = []
@@ -153,7 +157,8 @@ public struct GenerateStrokeOutlineUseCase {
             )
             samples.append(sample)
         }
-        return ConcatenatedSamples(samples: samples, junctionPairs: junctionPairs)
+        let adjusted = applyLaneOffsetContinuity(samples: samples, spec: spec)
+        return ConcatenatedSamples(samples: adjusted, junctionPairs: junctionPairs)
     }
 
     private func generateSamples(
@@ -203,17 +208,18 @@ public struct GenerateStrokeOutlineUseCase {
         let alpha = spec.alpha.map { evaluator.evaluate($0, at: progress) } ?? 0.0
         let width = evaluator.evaluate(spec.width, at: progress)
         let height = evaluator.evaluate(spec.height, at: progress)
-        let theta = evaluator.evaluateAngle(spec.theta, at: progress)
+        let theta = AngleMath.wrapPi(evaluator.evaluateAngle(spec.theta, at: progress))
         let effectiveRotation: Double
         switch spec.angleMode {
         case .absolute:
             effectiveRotation = theta
         case .tangentRelative:
-            effectiveRotation = theta + tangentAngle
+            effectiveRotation = AngleMath.wrapPi(theta + tangentAngle)
         }
         let offsetValue = spec.offset.map { evaluator.evaluate($0, at: progress) } ?? 0.0
-        let axis = Point(x: cos(effectiveRotation), y: sin(effectiveRotation))
-        let center = basePoint + axis.leftNormal() * offsetValue + translation
+        let tangent = Point(x: cos(tangentAngle), y: sin(tangentAngle))
+        let laneNormal = Point(x: tangent.y, y: -tangent.x)
+        let center = basePoint + laneNormal * offsetValue + translation
         return Sample(
             uGeom: uGeom,
             uGrid: uGrid,
@@ -226,6 +232,39 @@ public struct GenerateStrokeOutlineUseCase {
             effectiveRotation: effectiveRotation,
             alpha: alpha
         )
+    }
+
+    private func applyLaneOffsetContinuity(samples: [Sample], spec: StrokeSpec) -> [Sample] {
+        guard let offset = spec.offset, !samples.isEmpty else { return samples }
+        var adjusted = samples
+        var prevNormal: Point? = nil
+        var remainingLogs = GenerateStrokeOutlineUseCase.logLaneOffsetSamples ? min(3, adjusted.count) : 0
+        for index in adjusted.indices {
+            let sample = adjusted[index]
+            let tangent = Point(x: cos(sample.tangentAngle), y: sin(sample.tangentAngle))
+            var normal = Point(x: tangent.y, y: -tangent.x)
+            let offsetValue = evaluator.evaluate(offset, at: sample.t)
+            var point = sample.point
+            if let prev = prevNormal, normal.dot(prev) < 0.0 {
+                point = point - normal * (2.0 * offsetValue)
+                adjusted[index].point = point
+                normal = normal * -1.0
+            }
+            if remainingLogs > 0 {
+                let basePoint = point - normal * offsetValue
+                let shiftedPoint = point
+                print(String(format: "lane-offset t=%.6f P=(%.3f,%.3f) T=(%.3f,%.3f) N=(%.3f,%.3f) d=%.3f P'=(%.3f,%.3f)",
+                             sample.t,
+                             basePoint.x, basePoint.y,
+                             tangent.x, tangent.y,
+                             normal.x, normal.y,
+                             offsetValue,
+                             shiftedPoint.x, shiftedPoint.y))
+                remainingLogs -= 1
+            }
+            prevNormal = normal
+        }
+        return adjusted
     }
 
     private func adaptiveSamples(spec: StrokeSpec, polyline: PathPolyline, policy: SamplingPolicy, translation: Point, start: Sample, end: Sample) -> [Sample] {

@@ -36,9 +36,9 @@
           "segments": [
             { "type": "cubic",
               "p0": { "x": 138, "y": 375 },
-              "p1": { "x": 138, "y": 500 },
-              "p2": { "x": -60, "y": 460 },
-              "p3": { "x": 65, "y": 400 }
+              "p1": { "x": 138, "y": 470 },
+              "p2": { "x": 20, "y": 478 },
+              "p3": { "x": 34, "y": 420 }
             }
           ]
         },
@@ -49,21 +49,30 @@
           "skeletons": ["ink:spine", "ink:hook"],
 
           "params": {
-            "angleMode": "absolute",
+            "angleMode": "tangentRelative",
             "theta":  { "keyframes": [{ "t": 0, "value": 0 }, { "t": 1, "value": 0 }] },
             "width": { "keyframes": [
-              { "t": 0.0, "value": 180 },
-              { "t": 0.01, "value": 180, "interpolationToNext": { "alpha": -2.85} },
+              { "t": 0.0, "value": 195 },
+              { "t": 0.01, "value": 195, "interpolationToNext": { "alpha": -2.9} },
               { "t": 0.1, "value": 70 },
-              { "t": 0.8, "value": 70, "interpolationToNext": { "alpha": 2}  },
-              { "t": 0.9, "value": 10, "interpolationToNext": { "alpha": 1}   },
-              { "t": 0.98, "value": 90, "interpolationToNext": { "alpha": 2}    },
-              { "t": 1.0, "value": 0.0005 }
+              { "t": 0.65, "value": 70   },
+              { "t": 0.7, "value": 60  },
+              { "t": 0.9, "value": 10   },
+              { "t": 0.95, "value": 10, "interpolationToNext": { "alpha": -1.0}    },
+              { "t": 0.97, "value": 35 },
+              { "t": 1.0, "value": 65 }
             ] },
             "height": { "keyframes": [
               { "t": 0, "value": 6  }, 
               { "t": 1, "value": 6  }
-              ] }
+              ] },
+              "offset": { "keyframes": [
+  { "t": 0.0,  "value": -2.7 },
+  { "t": 0.65,  "value": 0 },
+  { "t": 0.7,  "value": -6.0 },
+  { "t": 1.0,  "value": 0.0 }
+] }
+
           },
 
           "samplingPolicy": {

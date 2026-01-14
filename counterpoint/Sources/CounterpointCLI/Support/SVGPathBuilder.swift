@@ -59,6 +59,21 @@ struct SVGPathBuilder {
         let excessCount: Int
     }
 
+    struct KeyframeMarker: Equatable {
+        let point: Point
+        let color: String
+        let radius: Double
+        let shape: KeyframeMarkerShape
+    }
+
+    enum KeyframeMarkerShape: String, Equatable {
+        case circle
+        case square
+        case diamond
+        case triangle
+        case invertedTriangle
+    }
+
     static func loadBackgroundGlyph(from svgPath: String) -> BackgroundGlyphSource? {
         let url = URL(fileURLWithPath: svgPath)
         guard let data = try? Data(contentsOf: url),
@@ -118,6 +133,7 @@ struct SVGPathBuilder {
         size: CGSize?,
         padding: Double,
         reference: BackgroundGlyphRender?,
+        referenceOnTop: Bool = false,
         centerlinePaths: [String] = [],
         polygons: PolygonSet = [],
         fittedPaths: [FittedPath]? = nil,
@@ -132,7 +148,28 @@ struct SVGPathBuilder {
         let viewBox = padded
         let width = size?.width ?? viewBox.width
         let height = size?.height ?? viewBox.height
-        let referenceGroup = reference.map { backgroundGlyphElements($0, generatedBounds: generatedBounds) } ?? ""
+        let referenceGroup: String
+        if let reference {
+            let render: BackgroundGlyphRender
+            if referenceOnTop {
+                render = BackgroundGlyphRender(
+                    elements: reference.elements,
+                    bounds: reference.bounds,
+                    fill: "none",
+                    stroke: "#ffd200",
+                    strokeWidth: reference.strokeWidth,
+                    opacity: reference.opacity,
+                    zoom: reference.zoom,
+                    align: reference.align,
+                    manualTransform: reference.manualTransform
+                )
+            } else {
+                render = reference
+            }
+            referenceGroup = backgroundGlyphElements(render, generatedBounds: generatedBounds)
+        } else {
+            referenceGroup = ""
+        }
         let centerlines = centerlinePaths.joined(separator: "\n")
         let debugRectGroup = debugRects.isEmpty ? "" : debugRectElements(debugRects)
         let debugGroupContent = debugOverlay.map { debugGroup($0, polygons: polygons, viewBox: viewBox) } ?? ""
@@ -143,7 +180,12 @@ struct SVGPathBuilder {
             polygonPaths = polygons.map { pathData(for: $0) }.joined(separator: "\n")
         }
 
-        let elements = [referenceGroup, centerlines, debugRectGroup, polygonPaths, debugGroupContent].filter { !$0.isEmpty }
+        let elements: [String]
+        if referenceOnTop {
+            elements = [centerlines, debugRectGroup, polygonPaths, debugGroupContent, referenceGroup].filter { !$0.isEmpty }
+        } else {
+            elements = [referenceGroup, centerlines, debugRectGroup, polygonPaths, debugGroupContent].filter { !$0.isEmpty }
+        }
         let body = elements.joined(separator: "\n  ")
 
         return """
@@ -293,6 +335,12 @@ struct SVGPathBuilder {
                 minY = min(minY, point.y)
                 maxY = max(maxY, point.y)
             }
+            for point in overlay.offsetCenterline {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
             for ray in overlay.tangentRays + overlay.angleRays + overlay.offsetRays {
                 minX = min(minX, ray.0.x, ray.1.x)
                 maxX = max(maxX, ray.0.x, ray.1.x)
@@ -358,10 +406,12 @@ struct SVGPathBuilder {
         let tangentPath = rayPath(overlay.tangentRays)
         let anglePath = rayPath(overlay.angleRays)
         let offsetPath = rayPath(overlay.offsetRays)
+        let offsetCenterlinePath = polylinePath(overlay.offsetCenterline)
         let leftRail = polylinePath(overlay.envelopeLeft)
         let rightRail = polylinePath(overlay.envelopeRight)
         let outlineRail = overlay.envelopeOutline.isEmpty ? "" : ringPath(overlay.envelopeOutline)
         let points = overlay.samplePoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(0.6))\" fill=\"#222222\" fill-opacity=\"0.5\"/>" }.joined(separator: "\n    ")
+        let keyframeMarkers = overlay.keyframeMarkers.map { markerElement($0) }.joined(separator: "\n    ")
         let capPoints = overlay.capPoints.map { "<circle cx=\"\(format($0.x))\" cy=\"\(format($0.y))\" r=\"\(format(1.4))\" fill=\"#ff0033\" fill-opacity=\"0.85\"/>" }.joined(separator: "\n    ")
         let junctionOutline = overlay.junctionPatches.map { ringPath($0) }.filter { !$0.isEmpty }.map {
             "<path fill=\"none\" stroke=\"#d32f2f\" stroke-opacity=\"0.8\" stroke-width=\"0.8\" d=\"\($0)\"/>"
@@ -375,6 +425,10 @@ struct SVGPathBuilder {
 
         let stampElements = stampPaths.map { "<path fill=\"none\" stroke=\"#0066ff\" stroke-opacity=\"0.3\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
         let bridgeElements = bridgePaths.map { "<path fill=\"none\" stroke=\"#00aa66\" stroke-opacity=\"0.25\" stroke-width=\"0.5\" d=\"\($0)\"/>" }.joined(separator: "\n    ")
+        let offsetElements = [
+            offsetCenterlinePath.isEmpty ? nil : "<path fill=\"none\" stroke=\"#00aaff\" stroke-opacity=\"0.6\" stroke-width=\"0.7\" stroke-dasharray=\"3 2\" d=\"\(offsetCenterlinePath)\"/>",
+            offsetPath.isEmpty ? nil : "<path fill=\"none\" stroke=\"#00aaff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(offsetPath)\"/>"
+        ].compactMap { $0 }.joined(separator: "\n    ")
         let unionSource = overlay.unionPolygons ?? polygons
         let unionOutline = overlay.showUnionOutline ? unionSource.map { outlinePath(for: $0) }.joined(separator: "\n    ") : ""
         let envelopeElements = [
@@ -391,8 +445,9 @@ struct SVGPathBuilder {
           <path fill=\"none\" stroke=\"#ff3366\" stroke-opacity=\"0.6\" stroke-width=\"0.5\" d=\"\(skeletonPath)\"/>
           <path fill=\"none\" stroke=\"#ff9900\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(tangentPath)\"/>
           <path fill=\"none\" stroke=\"#222222\" stroke-opacity=\"0.7\" stroke-width=\"0.6\" d=\"\(anglePath)\"/>
-          <path fill=\"none\" stroke=\"#00aaff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(offsetPath)\"/>
+          \(offsetElements)
           \(points)
+          \(keyframeMarkers)
           \(capPoints)
           \(junctionOutline)
           \(junctionCorridors)
@@ -404,6 +459,34 @@ struct SVGPathBuilder {
           \(alphaChart)
         </g>
         """
+    }
+
+    private func markerElement(_ marker: SVGPathBuilder.KeyframeMarker) -> String {
+        let stroke = "stroke=\"#ffffff\" stroke-width=\"0.5\""
+        let fill = "fill=\"\(marker.color)\" fill-opacity=\"0.85\""
+        let x = marker.point.x
+        let y = marker.point.y
+        let r = marker.radius
+        switch marker.shape {
+        case .circle:
+            return "<circle cx=\"\(format(x))\" cy=\"\(format(y))\" r=\"\(format(r))\" \(fill) \(stroke)/>"
+        case .square:
+            let side = r * 1.6
+            let half = side * 0.5
+            return "<rect x=\"\(format(x - half))\" y=\"\(format(y - half))\" width=\"\(format(side))\" height=\"\(format(side))\" \(fill) \(stroke)/>"
+        case .diamond:
+            let d = r * 1.8
+            let path = "M \(format(x)) \(format(y - d)) L \(format(x + d)) \(format(y)) L \(format(x)) \(format(y + d)) L \(format(x - d)) \(format(y)) Z"
+            return "<path d=\"\(path)\" \(fill) \(stroke)/>"
+        case .triangle:
+            let d = r * 1.9
+            let path = "M \(format(x)) \(format(y - d)) L \(format(x + d)) \(format(y + d)) L \(format(x - d)) \(format(y + d)) Z"
+            return "<path d=\"\(path)\" \(fill) \(stroke)/>"
+        case .invertedTriangle:
+            let d = r * 1.9
+            let path = "M \(format(x)) \(format(y + d)) L \(format(x + d)) \(format(y - d)) L \(format(x - d)) \(format(y - d)) Z"
+            return "<path d=\"\(path)\" \(fill) \(stroke)/>"
+        }
     }
 
     private func debugReferencePath(_ reference: DebugReference) -> String {
@@ -1359,9 +1442,11 @@ struct SVGDebugOverlay {
     var stamps: [Ring]
     var bridges: [Ring]
     var samplePoints: [Point]
+    var keyframeMarkers: [SVGPathBuilder.KeyframeMarker] = []
     var tangentRays: [(Point, Point)]
     var angleRays: [(Point, Point)]
     var offsetRays: [(Point, Point)]
+    var offsetCenterline: [Point] = []
     var envelopeLeft: [Point]
     var envelopeRight: [Point]
     var envelopeOutline: Ring

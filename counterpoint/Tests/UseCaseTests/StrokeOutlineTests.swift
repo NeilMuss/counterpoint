@@ -178,6 +178,62 @@ final class StrokeOutlineTests: XCTestCase {
         XCTAssertEqual(first.y, 20, accuracy: 1.0e-6)
     }
 
+    func testLaneOffsetUsesTangentRightNormal() {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 33, y: 0),
+                    p2: Point(x: 66, y: 0),
+                    p3: Point(x: 100, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(10),
+            height: ParamTrack.constant(10),
+            theta: ParamTrack.constant(0),
+            offset: ParamTrack.constant(10),
+            angleMode: .absolute,
+            sampling: SamplingSpec()
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        let probeIndices = [0, samples.count / 2, max(0, samples.count - 1)]
+        for index in probeIndices {
+            let sample = samples[index]
+            XCTAssertEqual(sample.point.y, -10.0, accuracy: 1.0e-6)
+        }
+    }
+
+    func testLaneOffsetContinuityOnTangentReversal() {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 33, y: 0),
+                    p2: Point(x: 66, y: 0),
+                    p3: Point(x: 100, y: 0)
+                ),
+                CubicBezier(
+                    p0: Point(x: 100, y: 0),
+                    p1: Point(x: 66, y: 0),
+                    p2: Point(x: 33, y: 0),
+                    p3: Point(x: 0, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(10),
+            height: ParamTrack.constant(10),
+            theta: ParamTrack.constant(0),
+            offset: ParamTrack.constant(10),
+            angleMode: .absolute,
+            sampling: SamplingSpec()
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        for sample in samples {
+            XCTAssertEqual(sample.point.y, -10.0, accuracy: 1.0e-6)
+        }
+    }
+
     func testThetaEvalFollowsKeyframes() {
         let spec = StrokeSpec(
             path: BezierPath(segments: [

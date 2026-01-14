@@ -5,3 +5,4 @@ out.svg
 .build-tmp/
 .swiftpm-cache/
 .clang-module-cache/
+.clang-module-cache/
