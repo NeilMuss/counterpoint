@@ -42,4 +42,42 @@ final class RailRun2AdapterTests: XCTestCase {
             XCTAssertEqual(railSample.sourceGT ?? -1.0, sample.gt, accuracy: 1.0e-9)
         }
     }
+
+    func testRailsWithStitchBreakProduceMultipleRailRuns2() {
+        let path = BezierPath(segments: [
+            CubicBezier(
+                p0: Point(x: 0, y: 0),
+                p1: Point(x: 33, y: 0),
+                p2: Point(x: 66, y: 0),
+                p3: Point(x: 100, y: 0)
+            ),
+            CubicBezier(
+                p0: Point(x: 1000, y: 0),
+                p1: Point(x: 1033, y: 0),
+                p2: Point(x: 1066, y: 0),
+                p3: Point(x: 1100, y: 0)
+            )
+        ])
+        let domain = PathDomain(path: path, samplesPerSegment: 8)
+        let samples = domain.samples
+        XCTAssertFalse(samples.isEmpty)
+
+        let runs = adaptRailsToRailRuns2(side: .left, samples: samples)
+        XCTAssertGreaterThanOrEqual(runs.count, 2)
+        XCTAssertTrue(runs.allSatisfy { !$0.samples.isEmpty })
+
+        let combinedSamples = runs.flatMap { $0.samples }
+        XCTAssertEqual(combinedSamples.count, samples.count)
+
+        for (sample, railSample) in zip(samples, combinedSamples) {
+            XCTAssertEqual(railSample.p.x, sample.point.x, accuracy: 1.0e-9)
+            XCTAssertEqual(railSample.p.y, sample.point.y, accuracy: 1.0e-9)
+        }
+
+        var lastKey = -Double.greatestFiniteMagnitude
+        for run in runs {
+            XCTAssertGreaterThan(run.sortKey, lastKey)
+            lastKey = run.sortKey
+        }
+    }
 }
