@@ -71,6 +71,102 @@ final class AdaptiveSamplingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(tailSamples.count, 2)
     }
 
+    func testWidthChangeForcesRefinement() throws {
+        let widthLeft = ParamTrack(keyframes: [
+            Keyframe(t: 0.0, value: 4.0),
+            Keyframe(t: 1.0, value: 40.0)
+        ])
+        let widthRight = ParamTrack(keyframes: [
+            Keyframe(t: 0.0, value: 4.0),
+            Keyframe(t: 1.0, value: 40.0)
+        ])
+        let spec = StrokeSpec(
+            path: straightPath(),
+            width: ParamTrack.constant(8.0),
+            widthLeft: widthLeft,
+            widthRight: widthRight,
+            height: ParamTrack.constant(10.0),
+            theta: ParamTrack.constant(0.0),
+            angleMode: .absolute,
+            sampling: SamplingSpec(),
+            samplingPolicy: SamplingPolicy(
+                flattenTolerance: 1.0,
+                envelopeTolerance: 0.25,
+                maxSamples: 64,
+                maxRecursionDepth: 6,
+                minParamStep: 0.01
+            )
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        XCTAssertGreaterThan(samples.count, 2)
+    }
+
+    func testProbeFailAtCapInsertsMidpointSample() throws {
+        let widthLeft = ParamTrack(keyframes: [
+            Keyframe(t: 0.0, value: 4.0),
+            Keyframe(t: 0.5, value: 40.0),
+            Keyframe(t: 1.0, value: 4.0)
+        ])
+        let widthRight = ParamTrack(keyframes: [
+            Keyframe(t: 0.0, value: 4.0),
+            Keyframe(t: 0.5, value: 40.0),
+            Keyframe(t: 1.0, value: 4.0)
+        ])
+        let spec = StrokeSpec(
+            path: straightPath(),
+            width: ParamTrack.constant(8.0),
+            widthLeft: widthLeft,
+            widthRight: widthRight,
+            height: ParamTrack.constant(6.0),
+            theta: ParamTrack.constant(0.0),
+            angleMode: .absolute,
+            sampling: SamplingSpec(baseSpacing: 1000.0, maxSpacing: 1000.0),
+            samplingPolicy: SamplingPolicy(
+                flattenTolerance: 1.0,
+                envelopeTolerance: 0.01,
+                maxSamples: 64,
+                maxRecursionDepth: 0,
+                minParamStep: 0.5
+            )
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        XCTAssertEqual(samples.count, 3)
+        XCTAssertTrue(samples.contains { abs($0.t - 0.5) < 0.01 })
+    }
+
+    func testTurnGatingPreventsWidthRateLimitOnStraightSpan() throws {
+        let widthLeft = ParamTrack(keyframes: [
+            Keyframe(t: 0.0, value: 4.0),
+            Keyframe(t: 1.0, value: 40.0)
+        ])
+        let widthRight = ParamTrack(keyframes: [
+            Keyframe(t: 0.0, value: 4.0),
+            Keyframe(t: 1.0, value: 40.0)
+        ])
+        let spec = StrokeSpec(
+            path: straightPath(),
+            width: ParamTrack.constant(8.0),
+            widthLeft: widthLeft,
+            widthRight: widthRight,
+            height: ParamTrack.constant(6.0),
+            theta: ParamTrack.constant(0.0),
+            angleMode: .absolute,
+            sampling: SamplingSpec(baseSpacing: 1000.0, maxSpacing: 1000.0),
+            samplingPolicy: SamplingPolicy(
+                flattenTolerance: 1.0,
+                envelopeTolerance: 0.25,
+                maxSamples: 64,
+                maxRecursionDepth: 6,
+                minParamStep: 0.01
+            )
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        XCTAssertLessThanOrEqual(samples.count, 3)
+    }
+
     func testPreviewUsesFewerSamplesThanFinalOnTeardropDemo() throws {
         var spec = try loadFixture(named: "teardrop-demo")
         let useCase = makeUseCase()

@@ -127,6 +127,106 @@ final class StrokeOutlineTests: XCTestCase {
         }
     }
 
+    func testTangentRelativePhaseDefaultsAndPhaseNinetyAffectsBounds() throws {
+        let path = BezierPath(segments: [
+            CubicBezier(
+                p0: Point(x: 0, y: 0),
+                p1: Point(x: 0, y: 0),
+                p2: Point(x: 0, y: 100),
+                p3: Point(x: 0, y: 100)
+            )
+        ])
+
+        let baseSpec = StrokeSpec(
+            path: path,
+            width: ParamTrack.constant(40),
+            widthLeft: ParamTrack.constant(20),
+            widthRight: ParamTrack.constant(20),
+            height: ParamTrack.constant(6),
+            theta: ParamTrack.constant(0),
+            angleMode: .tangentRelative,
+            sampling: SamplingSpec()
+        )
+
+        let outlineDefault = try makeUseCase().generateOutline(for: baseSpec)
+        let boundsDefault = boundsOf(polygons: outlineDefault)
+        XCTAssertEqual(boundsDefault.maxX - boundsDefault.minX, 6.0, accuracy: 1.0)
+
+        var phaseSpec = baseSpec
+        phaseSpec.tangentPhaseDegrees = 90.0
+        let outlinePhase = try makeUseCase().generateOutline(for: phaseSpec)
+        let boundsPhase = boundsOf(polygons: outlinePhase)
+        XCTAssertEqual(boundsPhase.maxX - boundsPhase.minX, 40.0, accuracy: 1.0)
+
+        let samples = makeUseCase().generateSamples(for: phaseSpec)
+        if let first = samples.first {
+            let expected = Double.pi
+            XCTAssertLessThan(abs(AngleMath.angularDifference(first.effectiveRotation, expected)), 1.0e-3)
+        }
+    }
+
+    func testAsymmetricWidthShiftsBoundsWithoutOffset() throws {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 33, y: 0),
+                    p2: Point(x: 66, y: 0),
+                    p3: Point(x: 100, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(40),
+            widthLeft: ParamTrack.constant(10),
+            widthRight: ParamTrack.constant(30),
+            height: ParamTrack.constant(20),
+            theta: ParamTrack.constant(0),
+            angleMode: .absolute,
+            sampling: SamplingSpec()
+        )
+
+        let outline = try makeUseCase().generateOutline(for: spec)
+        let bounds = boundsOf(polygons: outline)
+
+        XCTAssertEqual(bounds.minX, -10.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.maxX, 130.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.minY, -10.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.maxY, 10.0, accuracy: tolerance)
+    }
+
+    func testSymmetricFallbackMatchesExplicitHalves() throws {
+        let base = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 25, y: 0),
+                    p2: Point(x: 75, y: 0),
+                    p3: Point(x: 100, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(20),
+            height: ParamTrack.constant(12),
+            theta: ParamTrack.constant(0.1),
+            angleMode: .absolute,
+            sampling: SamplingSpec()
+        )
+
+        let explicit = StrokeSpec(
+            path: base.path,
+            width: base.width,
+            widthLeft: ParamTrack.constant(10),
+            widthRight: ParamTrack.constant(10),
+            height: base.height,
+            theta: base.theta,
+            angleMode: base.angleMode,
+            sampling: base.sampling
+        )
+
+        let outlineA = try makeUseCase().generateOutline(for: base)
+        let outlineB = try makeUseCase().generateOutline(for: explicit)
+
+        XCTAssertEqual(outlineA, outlineB)
+    }
+
     func testWidthVariationExpandsBounds() throws {
         let spec = StrokeSpec(
             path: BezierPath(segments: [
@@ -260,12 +360,129 @@ final class StrokeOutlineTests: XCTestCase {
         }
     }
 
+    func testTangentRelativeUsesSafeTangentAtDegenerateEndpoints() throws {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 0, y: 0),
+                    p2: Point(x: 0, y: 100),
+                    p3: Point(x: 0, y: 100)
+                )
+            ]),
+            width: ParamTrack.constant(40),
+            widthLeft: ParamTrack.constant(20),
+            widthRight: ParamTrack.constant(20),
+            height: ParamTrack.constant(6),
+            theta: ParamTrack.constant(0),
+            angleMode: .tangentRelative,
+            sampling: SamplingSpec()
+        )
+
+        let samples = makeUseCase().generateSamples(for: spec)
+        guard let first = samples.first, let last = samples.last else {
+            XCTFail("Missing samples for degenerate tangent test.")
+            return
+        }
+        let expected = Double.pi / 2.0
+        XCTAssertLessThan(abs(AngleMath.angularDifference(first.tangentAngle, expected)), 1.0e-3)
+        XCTAssertLessThan(abs(AngleMath.angularDifference(last.tangentAngle, expected)), 1.0e-3)
+        XCTAssertLessThan(abs(AngleMath.angularDifference(first.effectiveRotation, expected)), 1.0e-3)
+        XCTAssertLessThan(abs(AngleMath.angularDifference(last.effectiveRotation, expected)), 1.0e-3)
+
+        let outline = try makeUseCase().generateOutline(for: spec)
+        let bounds = boundsOf(polygons: outline)
+        XCTAssertEqual(bounds.maxX - bounds.minX, 6.0, accuracy: 1.0)
+    }
+
+    func testRailsOutlineRefinesOnCurve() throws {
+        let basePolicy = SamplingPolicy(
+            flattenTolerance: 0.5,
+            envelopeTolerance: 0.3,
+            railTolerance: 0.0,
+            maxSamples: 64,
+            maxRecursionDepth: 6,
+            minParamStep: 0.01
+        )
+        let refinedPolicy = SamplingPolicy(
+            flattenTolerance: 0.5,
+            envelopeTolerance: 0.3,
+            railTolerance: 0.3,
+            maxSamples: 64,
+            maxRecursionDepth: 6,
+            minParamStep: 0.01
+        )
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 20, y: 60),
+                    p2: Point(x: 60, y: -60),
+                    p3: Point(x: 80, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(20),
+            height: ParamTrack.constant(6),
+            theta: ParamTrack.constant(0),
+            angleMode: .tangentRelative,
+            sampling: SamplingSpec(),
+            samplingPolicy: basePolicy
+        )
+        let useCase = makeUseCase()
+        var unrefinedSpec = spec
+        unrefinedSpec.output = OutputSpec(coordinateMode: .normalized, outlineMethod: .rails)
+        let unrefinedOutline = try useCase.generateOutline(for: unrefinedSpec)
+
+        var refinedSpec = spec
+        refinedSpec.output = OutputSpec(coordinateMode: .normalized, outlineMethod: .rails)
+        refinedSpec.samplingPolicy = refinedPolicy
+        let refinedOutline = try useCase.generateOutline(for: refinedSpec)
+
+        let unrefinedVertices = vertexCount(polygons: unrefinedOutline)
+        let refinedVertices = vertexCount(polygons: refinedOutline)
+        XCTAssertGreaterThanOrEqual(refinedVertices, unrefinedVertices)
+    }
+
     private func makeUseCase() -> GenerateStrokeOutlineUseCase {
         GenerateStrokeOutlineUseCase(
             sampler: DefaultPathSampler(),
             evaluator: DefaultParamEvaluator(),
             unioner: PassthroughPolygonUnioner()
         )
+    }
+
+    private func zigzagCount(polygons: Domain.PolygonSet, angleThresholdDeg: Double, edgeMax: Double) -> Int {
+        var count = 0
+        let threshold = angleThresholdDeg * .pi / 180.0
+        for polygon in polygons {
+            var points = polygon.outer
+            if points.count < 4 { continue }
+            if points.first == points.last {
+                points.removeLast()
+            }
+            let n = points.count
+            guard n >= 3 else { continue }
+            for i in 0..<n {
+                let prev = points[(i - 1 + n) % n]
+                let cur = points[i]
+                let next = points[(i + 1) % n]
+                let v1 = cur - prev
+                let v2 = next - cur
+                let l1 = v1.length
+                let l2 = v2.length
+                if l1 == 0.0 || l2 == 0.0 { continue }
+                let dot = max(-1.0, min(1.0, v1.dot(v2) / (l1 * l2)))
+                let angle = acos(dot)
+                if angle >= threshold, min(l1, l2) <= edgeMax {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func vertexCount(polygons: Domain.PolygonSet) -> Int {
+        polygons.reduce(0) { $0 + $1.outer.count + $1.holes.reduce(0) { $0 + $1.count } }
     }
 
     private func boundsOf(polygons: Domain.PolygonSet) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {

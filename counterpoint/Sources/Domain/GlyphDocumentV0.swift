@@ -350,7 +350,10 @@ public struct StrokeGeometry: Codable, Equatable {
 
 public struct StrokeParams: Codable, Equatable {
     public var angleMode: AngleMode?
+    public var tangentPhaseDegrees: Double?
     public var width: ParamCurve
+    public var widthLeft: ParamCurve?
+    public var widthRight: ParamCurve?
     public var height: ParamCurve
     public var theta: ParamCurve
     public var offset: ParamCurve?
@@ -358,14 +361,20 @@ public struct StrokeParams: Codable, Equatable {
 
     public init(
         angleMode: AngleMode? = nil,
+        tangentPhaseDegrees: Double? = nil,
         width: ParamCurve,
+        widthLeft: ParamCurve? = nil,
+        widthRight: ParamCurve? = nil,
         height: ParamCurve,
         theta: ParamCurve,
         offset: ParamCurve? = nil,
         alpha: ParamCurve? = nil
     ) {
         self.angleMode = angleMode
+        self.tangentPhaseDegrees = tangentPhaseDegrees
         self.width = width
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
         self.height = height
         self.theta = theta
         self.offset = offset
@@ -374,10 +383,10 @@ public struct StrokeParams: Codable, Equatable {
 }
 
 public struct StrokeJoins: Codable, Equatable {
-    public var capStyle: CapStyle?
+    public var capStyle: CapStylePair?
     public var joinStyle: JoinStyle?
 
-    public init(capStyle: CapStyle? = nil, joinStyle: JoinStyle? = nil) {
+    public init(capStyle: CapStylePair? = nil, joinStyle: JoinStyle? = nil) {
         self.capStyle = capStyle
         self.joinStyle = joinStyle
     }

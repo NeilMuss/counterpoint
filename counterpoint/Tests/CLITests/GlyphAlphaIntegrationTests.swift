@@ -6,22 +6,69 @@ import Adapters
 
 final class GlyphAlphaIntegrationTests: XCTestCase {
     func testGlyphFixtureAlphaPreservedAndAffectsEvaluation() throws {
-        let glyphURL = try fixtureURL(pathComponents: ["Fixtures", "glyphs", "J.v0.json"])
-        let data = try Data(contentsOf: glyphURL)
-        let document = try JSONDecoder().decode(GlyphDocument.self, from: data)
+        let document = GlyphDocument(
+            schema: GlyphDocument.schemaId,
+            engine: nil,
+            glyph: nil,
+            frame: GlyphFrame(
+                origin: Point(x: 0, y: 0),
+                size: GlyphSize(width: 400, height: 400),
+                baselineY: 0,
+                advanceWidth: 400,
+                leftSidebearing: 20,
+                rightSidebearing: 20,
+                guides: nil
+            ),
+            inputs: GlyphInputs(
+                geometry: GlyphGeometryInputs(
+                    ink: [
+                        .path(PathGeometry(
+                            id: "path-stem",
+                            segments: [
+                                .cubic(CubicBezier(
+                                    p0: Point(x: 0, y: 0),
+                                    p1: Point(x: 0, y: 0),
+                                    p2: Point(x: 0, y: 100),
+                                    p3: Point(x: 0, y: 100)
+                                ))
+                            ]
+                        )),
+                        .stroke(StrokeGeometry(
+                            id: "stroke-main",
+                            skeletons: ["path-stem"],
+                            params: StrokeParams(
+                                angleMode: .absolute,
+                                width: ParamCurve(keyframes: [
+                                    ParamKeyframe(t: 0.0, value: 180.0),
+                                    ParamKeyframe(t: 0.05, value: 180.0, interpolationToNext: Interpolation(alpha: -2.5)),
+                                    ParamKeyframe(t: 0.16, value: 90.0),
+                                    ParamKeyframe(t: 1.0, value: 90.0)
+                                ]),
+                                height: ParamCurve(keyframes: [ParamKeyframe(t: 0.0, value: 6.0), ParamKeyframe(t: 1.0, value: 6.0)]),
+                                theta: ParamCurve(keyframes: [ParamKeyframe(t: 0.0, value: 0.0), ParamKeyframe(t: 1.0, value: 0.0)])
+                            )
+                        ))
+                    ],
+                    whitespace: []
+                ),
+                constraints: [],
+                operations: []
+            ),
+            derived: nil
+        )
 
-        guard let stroke = document.inputs.geometry.strokes.first(where: { $0.id == "stroke:J-main" }) else {
-            XCTFail("Missing stroke:J-main")
+        guard let stroke = document.inputs.geometry.strokes.first(where: { $0.id == "stroke-main" }) else {
+            XCTFail("Missing stroke-main")
             return
         }
-        guard let keyframe = stroke.params.width.keyframes.first(where: { abs($0.t - 0.01) < 1.0e-6 }) else {
-            XCTFail("Missing width keyframe at t=0.01")
+        guard let keyframe = stroke.params.width.keyframes.first(where: { abs($0.t - 0.05) < 1.0e-6 }) else {
+            XCTFail("Missing width keyframe at t=0.05")
             return
         }
         XCTAssertNotNil(keyframe.interpolationToNext)
-        XCTAssertEqual(keyframe.interpolationToNext?.alpha ?? 0.0, -2.85, accuracy: 1.0e-6)
+        XCTAssertEqual(keyframe.interpolationToNext?.alpha ?? 0.0, -2.5, accuracy: 1.0e-6)
 
-        let paths = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
+        let paths: [String: PathGeometry] = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
         guard let spec = strokeSpec(from: stroke, paths: paths, quality: "final") else {
             XCTFail("Failed to build stroke spec")
             return
@@ -34,7 +81,7 @@ final class GlyphAlphaIntegrationTests: XCTestCase {
             return
         }
         XCTAssertFalse(debug.alphaWasNil)
-        XCTAssertEqual(debug.alphaFromStart ?? 0.0, -2.85, accuracy: 1.0e-6)
+        XCTAssertEqual(debug.alphaFromStart ?? 0.0, -2.5, accuracy: 1.0e-6)
         XCTAssertGreaterThan(debug.uBiased, debug.uRaw)
         let linearWidth = debug.v0 + (debug.v1 - debug.v0) * debug.uRaw
         XCTAssertGreaterThan(abs(debug.value - linearWidth), 1.0)
@@ -43,9 +90,9 @@ final class GlyphAlphaIntegrationTests: XCTestCase {
         let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
         let skeletonPaths = stroke.skeletons.compactMap { paths[$0] }.compactMap(bezierPath(from:))
         let concatenated = useCase.generateConcatenatedSamplesWithJunctions(for: spec, paths: skeletonPaths)
-        let t0 = 0.01
-        let t1 = 0.1
-        let tm = 0.055
+        let t0 = 0.05
+        let t1 = 0.16
+        let tm = 0.105
         guard let sample0 = sample(at: t0, samples: concatenated.samples),
               let sample1 = sample(at: t1, samples: concatenated.samples),
               let sampleM = sample(at: tm, samples: concatenated.samples) else {
@@ -74,18 +121,5 @@ final class GlyphAlphaIntegrationTests: XCTestCase {
             }
         }
         return nil
-    }
-
-    private func fixtureURL(pathComponents: [String]) throws -> URL {
-        let fileURL = URL(fileURLWithPath: #file)
-        var dir = fileURL.deletingLastPathComponent()
-        while dir.path != "/" {
-            let candidate = pathComponents.reduce(dir) { $0.appendingPathComponent($1) }
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-            dir.deleteLastPathComponent()
-        }
-        throw NSError(domain: "GlyphAlphaIntegrationTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Fixtures not found."])
     }
 }

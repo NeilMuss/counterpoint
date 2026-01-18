@@ -72,6 +72,8 @@ struct SVGPathBuilder {
         case diamond
         case triangle
         case invertedTriangle
+        case triangleLeft
+        case triangleRight
     }
 
     static func loadBackgroundGlyph(from svgPath: String) -> BackgroundGlyphSource? {
@@ -182,9 +184,9 @@ struct SVGPathBuilder {
 
         let elements: [String]
         if referenceOnTop {
-            elements = [centerlines, debugRectGroup, polygonPaths, debugGroupContent, referenceGroup].filter { !$0.isEmpty }
+            elements = [debugRectGroup, polygonPaths, debugGroupContent, centerlines, referenceGroup].filter { !$0.isEmpty }
         } else {
-            elements = [referenceGroup, centerlines, debugRectGroup, polygonPaths, debugGroupContent].filter { !$0.isEmpty }
+            elements = [referenceGroup, debugRectGroup, polygonPaths, debugGroupContent, centerlines].filter { !$0.isEmpty }
         }
         let body = elements.joined(separator: "\n  ")
 
@@ -335,6 +337,20 @@ struct SVGPathBuilder {
                 minY = min(minY, point.y)
                 maxY = max(maxY, point.y)
             }
+            for sample in overlay.leftRailSamples + overlay.rightRailSamples {
+                minX = min(minX, sample.point.x)
+                maxX = max(maxX, sample.point.x)
+                minY = min(minY, sample.point.y)
+                maxY = max(maxY, sample.point.y)
+                if overlay.showRailsNormals {
+                    let dir = sample.normal.normalized() ?? Point(x: 0, y: 0)
+                    let end = sample.point + dir * 10.0
+                    minX = min(minX, end.x)
+                    maxX = max(maxX, end.x)
+                    minY = min(minY, end.y)
+                    maxY = max(maxY, end.y)
+                }
+            }
             for point in overlay.offsetCenterline {
                 minX = min(minX, point.x)
                 maxX = max(maxX, point.x)
@@ -436,6 +452,13 @@ struct SVGPathBuilder {
             rightRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(rightRail)\"/>",
             outlineRail.isEmpty ? nil : "<path fill=\"none\" stroke=\"#8844ff\" stroke-opacity=\"0.35\" stroke-width=\"0.6\" d=\"\(outlineRail)\"/>"
         ].compactMap { $0 }.joined(separator: "\n    ")
+        let railSampleElements = railsSampleGroup(overlay, viewBox: viewBox)
+        let railSupportElements = railsSupportGroup(overlay)
+        let railJumpElements = railsJumpsGroup(overlay)
+        let railRunsElements = railsRunsGroup(overlay)
+        let railRingElements = railsRingGroup(overlay, viewBox: viewBox, name: "railsRing", useWindow: true)
+        let railRingSelectedElements = railsRingGroup(overlay, viewBox: viewBox, name: "railsRingSelected", useWindow: true)
+        let railConnectorsOnlyElements = railsConnectorsOnlyGroup(overlay, viewBox: viewBox)
         let alphaChart = overlay.alphaChart.map { alphaChartElements($0, viewBox: viewBox) } ?? ""
         let refDiff = overlay.refDiff.map { refDiffElements($0) } ?? ""
 
@@ -446,19 +469,919 @@ struct SVGPathBuilder {
           <path fill=\"none\" stroke=\"#ff9900\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"\(tangentPath)\"/>
           <path fill=\"none\" stroke=\"#222222\" stroke-opacity=\"0.7\" stroke-width=\"0.6\" d=\"\(anglePath)\"/>
           \(offsetElements)
-          \(points)
-          \(keyframeMarkers)
-          \(capPoints)
-          \(junctionOutline)
-          \(junctionCorridors)
-          \(junctionControls)
           \(envelopeElements)
           \(stampElements)
           \(bridgeElements)
           \(unionOutline)
+          \(junctionOutline)
+          \(junctionCorridors)
+          \(junctionControls)
+          \(points)
+          \(keyframeMarkers)
+          \(capPoints)
+          \(railSampleElements)
+          \(railSupportElements)
+          \(railJumpElements)
+          \(railRunsElements)
+          \(railRingElements)
+          \(railRingSelectedElements)
+          \(railConnectorsOnlyElements)
           \(alphaChart)
         </g>
         """
+    }
+
+    private func railsConnectorsOnlyGroup(_ overlay: SVGDebugOverlay, viewBox: CGRect) -> String {
+        guard overlay.showRailsConnectorsOnly else { return "" }
+        let labelColor = "#ff1744"
+        let lineColor = "#ff1744"
+        let labelX = viewBox.minX + 20.0
+        let labelY = viewBox.minY + 80.0
+        var elements: [String] = []
+        let connectors = overlay.railConnectors
+        if connectors.isEmpty {
+            let emptyLabel = "<text x=\"\(format(labelX))\" y=\"\(format(labelY))\" font-size=\"10\" fill=\"\(labelColor)\">railsConnectorsOnly empty</text>"
+            return "<g id=\"debug-railsConnectorsOnly\">\(emptyLabel)</g>"
+        }
+        let requestedStart = max(0, overlay.ringSampleOptions.start)
+        let requestedCount = max(0, overlay.ringSampleOptions.count)
+        let windowEnd = requestedCount > 0 ? (requestedStart + requestedCount - 1) : requestedStart
+        let winT0 = overlay.railsWindowT0 ?? -Double.greatestFiniteMagnitude
+        let winT1 = overlay.railsWindowT1 ?? Double.greatestFiniteMagnitude
+        let rectFilter = overlay.railsWindowRect
+        var totalLen = 0.0
+        var maxLen = 0.0
+        var idx = 0
+        for connector in connectors {
+            totalLen += connector.length
+            maxLen = max(maxLen, connector.length)
+            let inIndexWindow = connector.railIndexStart >= requestedStart && connector.railIndexStart <= windowEnd
+            let inTWindow = connector.tEnd >= winT0 && connector.tStart <= winT1
+            let inRectWindow: Bool
+            if let rectFilter {
+                inRectWindow = connector.points.contains { rectFilter.contains(CGPoint(x: $0.x, y: $0.y)) }
+            } else {
+                inRectWindow = true
+            }
+            if requestedCount > 0 && !inIndexWindow {
+                idx += 1
+                continue
+            }
+            if !inTWindow || !inRectWindow {
+                idx += 1
+                continue
+            }
+            let path = polylinePath(connector.points)
+            if !path.isEmpty {
+                elements.append("<path fill=\"none\" stroke=\"\(lineColor)\" stroke-width=\"2.0\" stroke-opacity=\"0.9\" d=\"\(path)\"/>")
+            }
+            if let mid = connector.points.dropFirst().dropLast().first ?? connector.points.first {
+                let label = "connector#\(idx) k=\(connector.railIndexStart) len=\(format(connector.length))"
+                elements.append("<text x=\"\(format(mid.x + 3.0))\" y=\"\(format(mid.y + 3.0))\" font-size=\"9\" fill=\"\(labelColor)\">\(label)</text>")
+            }
+            idx += 1
+        }
+        let summary = "<text x=\"\(format(labelX))\" y=\"\(format(labelY))\" font-size=\"10\" fill=\"\(labelColor)\">railsConnectors count=\(connectors.count) totalLen=\(format(totalLen)) maxLen=\(format(maxLen))</text>"
+        elements.append(summary)
+        return """
+        <g id=\"debug-railsConnectorsOnly\">
+            \(elements.joined(separator: "\n    "))
+        </g>
+        """
+    }
+
+    private struct RailSampleStats {
+        let items: [(index: Int, sample: SVGDebugOverlay.RailDebugSample, globalT: Double?)]
+        let total: Int
+        let afterWindow: Int
+        let afterDecimation: Int
+        let drawn: Int
+        let requestedStart: Int
+        let requestedCount: Int
+        let clampedStart: Int
+        let clampedCount: Int
+        let available: Int
+        let totalMinT: Double?
+        let totalMaxT: Double?
+        let windowMinT: Double?
+        let windowMaxT: Double?
+        let totalMinGlobalT: Double?
+        let totalMaxGlobalT: Double?
+        let windowMinGlobalT: Double?
+        let windowMaxGlobalT: Double?
+    }
+
+    private func railsSampleGroup(_ overlay: SVGDebugOverlay, viewBox: CGRect) -> String {
+        guard overlay.showRailsSamples || overlay.showRailsNormals || overlay.showRailsIndices else { return "" }
+        let ringPoints = overlay.railsRings.first.map { ring in
+            (ring.count > 1 && ring.first == ring.last) ? Array(ring.dropLast()) : ring
+        }
+        let ringGT = ringPoints.flatMap { arcLengthParam(points: $0) }
+        let resolvedRingWindow = resolveRingWindowGT(overlay: overlay, ringPoints: ringPoints, ringGT: ringGT)
+        let left = filteredRailSamples(overlay.leftRailSamples, options: overlay.railsSampleOptions, overlay: overlay, ringPoints: ringPoints, ringGT: ringGT, ringWindowGT0: resolvedRingWindow.gt0, ringWindowGT1: resolvedRingWindow.gt1)
+        let right = filteredRailSamples(overlay.rightRailSamples, options: overlay.railsSampleOptions, overlay: overlay, ringPoints: ringPoints, ringGT: ringGT, ringWindowGT0: resolvedRingWindow.gt0, ringWindowGT1: resolvedRingWindow.gt1)
+
+        let totalL = left.total
+        let totalR = right.total
+        let windowedL = left.afterWindow
+        let windowedR = right.afterWindow
+        let afterDecimation = left.afterDecimation + right.afterDecimation
+        let drawn = afterDecimation
+
+        let leftColor = "#ff2bd6"
+        let rightColor = "#00c8ff"
+        let radius = 1.5
+        let normalLen = 10.0
+
+        let leftPoints = overlay.showRailsSamples ? left.items.map { item in
+            "<circle cx=\"\(format(item.sample.point.x))\" cy=\"\(format(item.sample.point.y))\" r=\"\(format(radius))\" fill=\"\(leftColor)\" fill-opacity=\"0.65\" stroke=\"#ffffff\" stroke-width=\"0.3\"/>"
+        }.joined(separator: "\n    ") : ""
+
+        let rightPoints = overlay.showRailsSamples ? right.items.map { item in
+            "<circle cx=\"\(format(item.sample.point.x))\" cy=\"\(format(item.sample.point.y))\" r=\"\(format(radius))\" fill=\"\(rightColor)\" fill-opacity=\"0.65\" stroke=\"#ffffff\" stroke-width=\"0.3\"/>"
+        }.joined(separator: "\n    ") : ""
+
+        let leftNormals = overlay.showRailsNormals ? left.items.map { item in
+            let start = item.sample.point
+            let dir = item.sample.normal.normalized() ?? Point(x: 0, y: 0)
+            let end = start + dir * normalLen
+            return "<path fill=\"none\" stroke=\"\(leftColor)\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"M \(format(start.x)) \(format(start.y)) L \(format(end.x)) \(format(end.y))\"/>"
+        }.joined(separator: "\n    ") : ""
+
+        let rightNormals = overlay.showRailsNormals ? right.items.map { item in
+            let start = item.sample.point
+            let dir = item.sample.normal.normalized() ?? Point(x: 0, y: 0)
+            let end = start + dir * normalLen
+            return "<path fill=\"none\" stroke=\"\(rightColor)\" stroke-opacity=\"0.6\" stroke-width=\"0.6\" d=\"M \(format(start.x)) \(format(start.y)) L \(format(end.x)) \(format(end.y))\"/>"
+        }.joined(separator: "\n    ") : ""
+
+        let windowActive = overlay.railsWindowT0 != nil || overlay.railsWindowT1 != nil || overlay.railsWindowGT0 != nil || overlay.railsWindowGT1 != nil || overlay.railsWindowRect != nil || overlay.railsWindowSkeleton != nil
+        let labelStride = windowActive ? 1 : max(1, overlay.railsSampleOptions.step * 5)
+        var drawnLabelsLeft = 0
+        var drawnLabelsRight = 0
+        let leftLabels = overlay.showRailsIndices ? left.items.enumerated().compactMap { idx, item in
+            guard idx % labelStride == 0 else { return nil }
+            let globalText = item.globalT.map { format($0) } ?? "nil"
+            let label = windowActive ? "i=\(item.index) gt=\(globalText) t=\(format(item.sample.t))" : "L\(item.index)"
+            drawnLabelsLeft += 1
+            return "<text x=\"\(format(item.sample.point.x + 2.5))\" y=\"\(format(item.sample.point.y - 2.5))\" font-size=\"6\" fill=\"\(leftColor)\" stroke=\"#ffffff\" stroke-opacity=\"0.7\" stroke-width=\"0.25\">\(label)</text>"
+        }.joined(separator: "\n    ") : ""
+
+        let rightLabels = overlay.showRailsIndices ? right.items.enumerated().compactMap { idx, item in
+            guard idx % labelStride == 0 else { return nil }
+            let globalText = item.globalT.map { format($0) } ?? "nil"
+            let label = windowActive ? "i=\(item.index) gt=\(globalText) t=\(format(item.sample.t))" : "R\(item.index)"
+            drawnLabelsRight += 1
+            return "<text x=\"\(format(item.sample.point.x + 2.5))\" y=\"\(format(item.sample.point.y - 2.5))\" font-size=\"6\" fill=\"\(rightColor)\" stroke=\"#ffffff\" stroke-opacity=\"0.7\" stroke-width=\"0.25\">\(label)</text>"
+        }.joined(separator: "\n    ") : ""
+
+        let labelX = viewBox.minX + 20.0
+        let labelY = viewBox.minY + 40.0
+        let preMin = [left.totalMinT, right.totalMinT].compactMap { $0 }.min()
+        let preMax = [left.totalMaxT, right.totalMaxT].compactMap { $0 }.max()
+        let postMin = [left.windowMinT, right.windowMinT].compactMap { $0 }.min()
+        let postMax = [left.windowMaxT, right.windowMaxT].compactMap { $0 }.max()
+        let preMinGlobal = [left.totalMinGlobalT, right.totalMinGlobalT].compactMap { $0 }.min()
+        let preMaxGlobal = [left.totalMaxGlobalT, right.totalMaxGlobalT].compactMap { $0 }.max()
+        let postMinGlobal = [left.windowMinGlobalT, right.windowMinGlobalT].compactMap { $0 }.min()
+        let postMaxGlobal = [left.windowMaxGlobalT, right.windowMaxGlobalT].compactMap { $0 }.max()
+        let preMinText = preMin.map { format($0) } ?? "nil"
+        let preMaxText = preMax.map { format($0) } ?? "nil"
+        let postMinText = postMin.map { format($0) } ?? "nil"
+        let postMaxText = postMax.map { format($0) } ?? "nil"
+        let preMinGlobalText = preMinGlobal.map { format($0) } ?? "nil"
+        let preMaxGlobalText = preMaxGlobal.map { format($0) } ?? "nil"
+        let postMinGlobalText = postMinGlobal.map { format($0) } ?? "nil"
+        let postMaxGlobalText = postMaxGlobal.map { format($0) } ?? "nil"
+        let label = "<text x=\"\(format(labelX))\" y=\"\(format(labelY))\" font-size=\"9\" fill=\"#00A3FF\">railsSamples source=\(overlay.railsSamplesSource) L=\(totalL) R=\(totalR) windowedL=\(windowedL) windowedR=\(windowedR) decim=\(afterDecimation) drawn=\(drawn) step=\(overlay.railsSampleOptions.step) reqStart=\(left.requestedStart) reqCount=\(left.requestedCount) clampL=\(left.clampedStart)+\(left.clampedCount) clampR=\(right.clampedStart)+\(right.clampedCount) availL=\(left.available) availR=\(right.available) tPre=[\(preMinText)..\(preMaxText)] tWin=[\(postMinText)..\(postMaxText)] gtPre=[\(preMinGlobalText)..\(preMaxGlobalText)] gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)]</text>"
+        let crossX = labelX - 10.0
+        let crossY = labelY - 10.0
+        let crosshair = """
+        <line x1="\(format(crossX - 3.0))" y1="\(format(crossY))" x2="\(format(crossX + 3.0))" y2="\(format(crossY))" stroke="#111111" stroke-opacity="0.6" stroke-width="0.6"/>
+        <line x1="\(format(crossX))" y1="\(format(crossY - 3.0))" x2="\(format(crossX))" y2="\(format(crossY + 3.0))" stroke="#111111" stroke-opacity="0.6" stroke-width="0.6"/>
+        """
+
+        if overlay.showRailsSamples || overlay.showRailsNormals || overlay.showRailsIndices {
+            print("debugRails: source=\(overlay.railsSamplesSource) preFilter L=\(totalL) R=\(totalR) tPre=[\(preMinText)..\(preMaxText)] gtPre=[\(preMinGlobalText)..\(preMaxGlobalText)] postWindow L=\(windowedL) R=\(windowedR) tWin=[\(postMinText)..\(postMaxText)] gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)] decim=\(afterDecimation) drawn=\(drawn) step=\(overlay.railsSampleOptions.step) reqStart=\(left.requestedStart) reqCount=\(left.requestedCount) clampL=\(left.clampedStart)+\(left.clampedCount) clampR=\(right.clampedStart)+\(right.clampedCount) availL=\(left.available) availR=\(right.available)")
+            if left.available > 0 && (left.requestedStart != left.clampedStart || left.requestedCount != left.clampedCount) {
+                print("debugRails: clamp L requestedStart=\(left.requestedStart) requestedCount=\(left.requestedCount) -> clampedStart=\(left.clampedStart) clampedCount=\(left.clampedCount) available=\(left.available)")
+            }
+            if right.available > 0 && (right.requestedStart != right.clampedStart || right.requestedCount != right.clampedCount) {
+                print("debugRails: clamp R requestedStart=\(right.requestedStart) requestedCount=\(right.requestedCount) -> clampedStart=\(right.clampedStart) clampedCount=\(right.clampedCount) available=\(right.available)")
+            }
+            print("overlaySummary: availL=\(windowedL) availR=\(windowedR) drawnL=\(drawnLabelsLeft) drawnR=\(drawnLabelsRight) gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)]")
+            if overlay.assertRailsWindow && windowActive {
+                if windowedL == 0 && drawnLabelsLeft > 0 {
+                    preconditionFailure("railsWindow invariant failed: L avail=0 drawn=\(drawnLabelsLeft) gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)]")
+                }
+                if windowedR == 0 && drawnLabelsRight > 0 {
+                    preconditionFailure("railsWindow invariant failed: R avail=0 drawn=\(drawnLabelsRight) gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)]")
+                }
+                if windowedL > 0 && drawnLabelsLeft == 0 {
+                    preconditionFailure("railsWindow invariant failed: L avail=\(windowedL) drawn=0 gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)]")
+                }
+                if windowedR > 0 && drawnLabelsRight == 0 {
+                    preconditionFailure("railsWindow invariant failed: R avail=\(windowedR) drawn=0 gtWin=[\(postMinGlobalText)..\(postMaxGlobalText)]")
+                }
+            }
+        }
+
+        return """
+        <g id=\"debug-rails-samples\">
+          \(label)
+          \(crosshair)
+          \(leftPoints)
+          \(rightPoints)
+          \(leftNormals)
+          \(rightNormals)
+          \(leftLabels)
+          \(rightLabels)
+        </g>
+        """
+    }
+
+    private func railsSupportGroup(_ overlay: SVGDebugOverlay) -> String {
+        guard overlay.showRailsSupport else { return "" }
+        let ringPoints = overlay.railsRings.first.map { ring in
+            (ring.count > 1 && ring.first == ring.last) ? Array(ring.dropLast()) : ring
+        }
+        let ringGT = ringPoints.flatMap { arcLengthParam(points: $0) }
+        let resolvedRingWindow = resolveRingWindowGT(overlay: overlay, ringPoints: ringPoints, ringGT: ringGT)
+        let left = filteredRailSamples(overlay.leftRailSamples, options: overlay.railsSampleOptions, overlay: overlay, ringPoints: ringPoints, ringGT: ringGT, ringWindowGT0: resolvedRingWindow.gt0, ringWindowGT1: resolvedRingWindow.gt1)
+        let right = filteredRailSamples(overlay.rightRailSamples, options: overlay.railsSampleOptions, overlay: overlay, ringPoints: ringPoints, ringGT: ringGT, ringWindowGT0: resolvedRingWindow.gt0, ringWindowGT1: resolvedRingWindow.gt1)
+        let leftColor = "#ff2bd6"
+        let rightColor = "#00c8ff"
+        let windowActive = overlay.railsWindowT0 != nil || overlay.railsWindowT1 != nil || overlay.railsWindowGT0 != nil || overlay.railsWindowGT1 != nil || overlay.railsWindowRect != nil || overlay.railsWindowSkeleton != nil
+        let labelStride = windowActive ? 1 : max(1, overlay.railsSampleOptions.step * 5)
+
+        func supportLabel(_ value: String?) -> String? {
+            guard let value else { return nil }
+            switch value {
+            case "topRight": return "TR"
+            case "bottomRight": return "BR"
+            case "topLeft": return "TL"
+            case "bottomLeft": return "BL"
+            case "rightMid": return "RM"
+            case "leftMid": return "LM"
+            case "topMid": return "TM"
+            case "bottomMid": return "BM"
+            case "L": return "L"
+            case "R": return "R"
+            default: return value
+            }
+        }
+
+        var leftElements: [String] = []
+        leftElements.reserveCapacity(left.items.count)
+        var prevLeft: String? = nil
+        for (idx, item) in left.items.enumerated() {
+            guard let label = supportLabel(item.sample.supportCase) else { continue }
+            let shouldLabel = (label != prevLeft) || (idx % labelStride == 0)
+            if shouldLabel {
+                leftElements.append("<text x=\"\(format(item.sample.point.x + 3.0))\" y=\"\(format(item.sample.point.y - 3.0))\" font-size=\"6\" fill=\"\(leftColor)\">\(label)</text>")
+                prevLeft = label
+            }
+        }
+
+        var rightElements: [String] = []
+        rightElements.reserveCapacity(right.items.count)
+        var prevRight: String? = nil
+        for (idx, item) in right.items.enumerated() {
+            guard let label = supportLabel(item.sample.supportCase) else { continue }
+            let shouldLabel = (label != prevRight) || (idx % labelStride == 0)
+            if shouldLabel {
+                rightElements.append("<text x=\"\(format(item.sample.point.x + 3.0))\" y=\"\(format(item.sample.point.y - 3.0))\" font-size=\"6\" fill=\"\(rightColor)\">\(label)</text>")
+                prevRight = label
+            }
+        }
+
+        let elements = (leftElements + rightElements).joined(separator: "\n    ")
+        return """
+        <g id=\"debug-rails-support\">
+          \(elements)
+        </g>
+        """
+    }
+
+    private func railsJumpsGroup(_ overlay: SVGDebugOverlay) -> String {
+        guard overlay.showRailsJumps else { return "" }
+        let leftSamples = overlay.leftRailJumpSamples.isEmpty ? overlay.leftRailSamples : overlay.leftRailJumpSamples
+        let rightSamples = overlay.rightRailJumpSamples.isEmpty ? overlay.rightRailSamples : overlay.rightRailJumpSamples
+        let threshold = max(0.0, overlay.railsJumpThreshold)
+        let tMin = overlay.railsSampleOptions.tMin
+        let tMax = overlay.railsSampleOptions.tMax
+
+        func shouldInclude(_ a: SVGDebugOverlay.RailDebugSample, _ b: SVGDebugOverlay.RailDebugSample) -> Bool {
+            guard let tMin, let tMax else { return true }
+            return (a.t >= tMin && a.t <= tMax) && (b.t >= tMin && b.t <= tMax)
+        }
+
+        func jumpElements(_ samples: [SVGDebugOverlay.RailDebugSample], label: String) -> [String] {
+            guard samples.count >= 2 else { return [] }
+            var elements: [String] = []
+            for i in 0..<(samples.count - 1) {
+                let a = samples[i]
+                let b = samples[i + 1]
+                if !shouldInclude(a, b) { continue }
+                let segLen = (b.point - a.point).length
+                if segLen <= threshold { continue }
+                let mid = Point(x: (a.point.x + b.point.x) * 0.5, y: (a.point.y + b.point.y) * 0.5)
+                elements.append("<path fill=\"none\" stroke=\"#ff0033\" stroke-opacity=\"0.85\" stroke-width=\"3.5\" d=\"M \(format(a.point.x)) \(format(a.point.y)) L \(format(b.point.x)) \(format(b.point.y))\"/>")
+                elements.append("<circle cx=\"\(format(mid.x))\" cy=\"\(format(mid.y))\" r=\"1.6\" fill=\"#ff0033\" fill-opacity=\"0.9\"/>")
+                elements.append("<text x=\"\(format(mid.x + 3.0))\" y=\"\(format(mid.y - 3.0))\" font-size=\"8\" fill=\"#ff0033\">\(label)\(i) \(format(segLen))</text>")
+            }
+            return elements
+        }
+
+        let elements = (jumpElements(leftSamples, label: "L") + jumpElements(rightSamples, label: "R")).joined(separator: "\n    ")
+        return """
+        <g id=\"debug-rails-jumps\">
+          \(elements)
+        </g>
+        """
+    }
+
+    private func railsRunsGroup(_ overlay: SVGDebugOverlay) -> String {
+        guard overlay.showRailsRuns else { return "" }
+        let leftRuns = overlay.leftRailRuns
+        let rightRuns = overlay.rightRailRuns
+        let dashPatterns = ["4 3", "2 3", "1 2", "6 2", "3 2 1 2"]
+        let leftColor = "#ff2bd6"
+        let rightColor = "#00c8ff"
+
+        func runElements(_ runs: [[Point]], color: String, prefix: String) -> [String] {
+            var elements: [String] = []
+            for (index, run) in runs.enumerated() {
+                guard run.count >= 2 else { continue }
+                let path = polylinePath(run)
+                let dash = dashPatterns[index % dashPatterns.count]
+                elements.append("<path fill=\"none\" stroke=\"\(color)\" stroke-opacity=\"0.7\" stroke-width=\"1.0\" stroke-dasharray=\"\(dash)\" d=\"\(path)\"/>")
+                let first = run[0]
+                elements.append("<text x=\"\(format(first.x + 3.0))\" y=\"\(format(first.y - 3.0))\" font-size=\"7\" fill=\"\(color)\">\(prefix)run\(index) n=\(run.count)</text>")
+                if index > 0 {
+                    let marker = [
+                        "<line x1=\"\(format(first.x - 2.5))\" y1=\"\(format(first.y - 2.5))\" x2=\"\(format(first.x + 2.5))\" y2=\"\(format(first.y + 2.5))\" stroke=\"\(color)\" stroke-width=\"0.9\"/>",
+                        "<line x1=\"\(format(first.x - 2.5))\" y1=\"\(format(first.y + 2.5))\" x2=\"\(format(first.x + 2.5))\" y2=\"\(format(first.y - 2.5))\" stroke=\"\(color)\" stroke-width=\"0.9\"/>"
+                    ].joined(separator: "\n    ")
+                    elements.append(marker)
+                }
+            }
+            return elements
+        }
+
+        let elements = (runElements(leftRuns, color: leftColor, prefix: "L") + runElements(rightRuns, color: rightColor, prefix: "R")).joined(separator: "\n    ")
+        return """
+        <g id=\"debug-rails-runs\">
+            \(elements)
+        </g>
+        """
+    }
+
+    private struct RingSliceStats {
+        let points: [Point]
+        let requestedStart: Int
+        let requestedCount: Int
+        let clampedStart: Int
+        let clampedCount: Int
+        let available: Int
+    }
+
+    private func sliceRing(_ points: [Point], options: SVGDebugOverlay.RingSampleOptions) -> RingSliceStats {
+        let available = points.count
+        let requestedStart = max(0, options.start)
+        let requestedCount = max(0, options.count)
+        let clampedStart = min(requestedStart, max(0, available - 1))
+        let clampedCount = min(requestedCount, max(0, available - clampedStart))
+        let sliced = (clampedCount == 0) ? [] : Array(points[clampedStart..<(clampedStart + clampedCount)])
+        return RingSliceStats(
+            points: sliced,
+            requestedStart: requestedStart,
+            requestedCount: requestedCount,
+            clampedStart: clampedStart,
+            clampedCount: clampedCount,
+            available: available
+        )
+    }
+
+    private func railsRingGroup(_ overlay: SVGDebugOverlay, viewBox: CGRect, name: String, useWindow: Bool) -> String {
+        let shouldShow = (name == "railsRing") ? overlay.showRailsRing : overlay.showRailsRingSelected
+        guard shouldShow else { return "" }
+        let ringColor = "#ff9f1a"
+        let arrowColor = "#ff6f00"
+        let labelColor = "#ffb300"
+        let arrowStep = 20
+        let arrowLength = 8.0
+        let arrowHead = 3.0
+        let connectorColor = "#00c853"
+        let ringLabelX = viewBox.minX + 20.0
+        let ringLabelY = viewBox.minY + 60.0
+        var elements: [String] = []
+        if overlay.railsRings.isEmpty {
+            let emptyLabel = "<text x=\"\(format(ringLabelX))\" y=\"\(format(ringLabelY))\" font-size=\"10\" fill=\"\(labelColor)\">\(name) empty</text>"
+            return "<g id=\"debug-\(name)\">\(emptyLabel)</g>"
+        }
+        for (ringIndex, ring) in overlay.railsRings.enumerated() {
+            let stats = useWindow ? sliceRing(ring, options: overlay.ringSampleOptions) : RingSliceStats(
+                points: ring,
+                requestedStart: 0,
+                requestedCount: ring.count,
+                clampedStart: 0,
+                clampedCount: ring.count,
+                available: ring.count
+            )
+            let ringIndexable = (ring.count > 1 && ring.first == ring.last) ? Array(ring.dropLast()) : ring
+            let ringGT = arcLengthParam(points: ringIndexable)
+            let ringWindowResolved = resolveRingWindowGT(overlay: overlay, ringPoints: ringIndexable, ringGT: ringGT)
+            let ringWindowActive = ringWindowResolved.gt0 != nil || ringWindowResolved.gt1 != nil
+            let ringWindowT0 = ringWindowResolved.gt0 ?? -Double.greatestFiniteMagnitude
+            let ringWindowT1 = ringWindowResolved.gt1 ?? Double.greatestFiniteMagnitude
+            var windowIndices: [Int] = []
+            if ringWindowActive, let ringGT {
+                for i in 0..<ringGT.count {
+                    let value = ringGT[i]
+                    let inWindow: Bool
+                    if ringWindowT0 <= ringWindowT1 {
+                        inWindow = value >= ringWindowT0 && value <= ringWindowT1
+                    } else {
+                        inWindow = value >= ringWindowT0 || value <= ringWindowT1
+                    }
+                    if inWindow { windowIndices.append(i) }
+                }
+            }
+            let points: [Point]
+            if ringWindowActive, !windowIndices.isEmpty {
+                points = windowIndices.map { ringIndexable[$0] }
+            } else {
+                points = stats.points
+            }
+            let windowStats = RingSliceStats(
+                points: points,
+                requestedStart: stats.requestedStart,
+                requestedCount: stats.requestedCount,
+                clampedStart: ringWindowActive ? (windowIndices.first ?? 0) : stats.clampedStart,
+                clampedCount: ringWindowActive ? windowIndices.count : stats.clampedCount,
+                available: ringWindowActive ? ringIndexable.count : stats.available
+            )
+            let labelStep = overlay.ringSampleOptions.labelStep ?? max(10, max(1, points.count / 20))
+            let pathPoints = ringWindowActive && !points.isEmpty ? points : ((name == "railsRing") ? ring : points)
+            let ringPath = polylinePath(pathPoints)
+            if !ringPath.isEmpty {
+                elements.append("<path fill=\"none\" stroke=\"\(ringColor)\" stroke-opacity=\"0.85\" stroke-width=\"0.9\" d=\"\(ringPath)\"/>")
+            }
+            if !points.isEmpty {
+                let dots = points.map { point in
+                    "<circle cx=\"\(format(point.x))\" cy=\"\(format(point.y))\" r=\"0.8\" fill=\"\(ringColor)\" fill-opacity=\"0.8\"/>"
+                }.joined(separator: "\n    ")
+                elements.append(dots)
+            }
+            if points.count >= 2 {
+                for i in stride(from: 0, to: points.count - 1, by: arrowStep) {
+                    let p = points[i]
+                    let q = points[i + 1]
+                    let dir = (q - p).normalized() ?? Point(x: 1.0, y: 0.0)
+                    let tip = p + dir * arrowLength
+                    let normal = Point(x: -dir.y, y: dir.x)
+                    let left = tip - dir * arrowHead + normal * (arrowHead * 0.6)
+                    let right = tip - dir * arrowHead - normal * (arrowHead * 0.6)
+                    elements.append("<line x1=\"\(format(p.x))\" y1=\"\(format(p.y))\" x2=\"\(format(tip.x))\" y2=\"\(format(tip.y))\" stroke=\"\(arrowColor)\" stroke-width=\"0.9\"/>")
+                    elements.append("<line x1=\"\(format(left.x))\" y1=\"\(format(left.y))\" x2=\"\(format(tip.x))\" y2=\"\(format(tip.y))\" stroke=\"\(arrowColor)\" stroke-width=\"0.9\"/>")
+                    elements.append("<line x1=\"\(format(right.x))\" y1=\"\(format(right.y))\" x2=\"\(format(tip.x))\" y2=\"\(format(tip.y))\" stroke=\"\(arrowColor)\" stroke-width=\"0.9\"/>")
+                }
+                if let labelCount = overlay.ringSampleOptions.labelCount, labelCount > 0, points.count > 1 {
+                    var cumulative: [Double] = [0.0]
+                    cumulative.reserveCapacity(points.count)
+                    for i in 1..<points.count {
+                        cumulative.append(cumulative[i - 1] + (points[i] - points[i - 1]).length)
+                    }
+                    let totalLength = cumulative.last ?? 0.0
+                    var usedIndices = Set<Int>()
+                    for i in 0..<labelCount {
+                        let target = totalLength * (Double(i) / Double(labelCount))
+                        var index = 0
+                        for j in 0..<cumulative.count {
+                            if cumulative[j] >= target {
+                                index = j
+                                break
+                            }
+                        }
+                        if usedIndices.insert(index).inserted {
+                            let p = points[index]
+                            let labelIndex = ringWindowActive && !windowIndices.isEmpty ? windowIndices[index] : (stats.clampedStart + index)
+                            let gtText = ringGT.map { format($0[labelIndex]) } ?? "nil"
+                            let label = ringWindowActive ? "k=\(labelIndex) gt=\(gtText)" : "k=\(labelIndex)"
+                            elements.append("<text x=\"\(format(p.x + 3.0))\" y=\"\(format(p.y - 3.0))\" font-size=\"9\" fill=\"\(labelColor)\">\(label)</text>")
+                        }
+                    }
+                } else {
+                    let strideValue = ringWindowActive ? 1 : labelStep
+                    for i in stride(from: 0, to: points.count, by: strideValue) {
+                        let p = points[i]
+                        let labelIndex = ringWindowActive && !windowIndices.isEmpty ? windowIndices[i] : (stats.clampedStart + i)
+                        let gtText = ringGT.map { format($0[labelIndex]) } ?? "nil"
+                        let label = ringWindowActive ? "k=\(labelIndex) gt=\(gtText)" : "k=\(labelIndex)"
+                        elements.append("<text x=\"\(format(p.x + 3.0))\" y=\"\(format(p.y - 3.0))\" font-size=\"9\" fill=\"\(labelColor)\">\(label)</text>")
+                    }
+                }
+            }
+            if points.count >= 4 {
+                let segments = segments(from: points, ensureClosed: false)
+                guard segments.count >= 3 else { continue }
+                for i in 0..<segments.count {
+                    let jStart = i + 2
+                    if jStart >= segments.count { continue }
+                    for j in jStart..<segments.count {
+                        if i == 0 && j == segments.count - 1 { continue }
+                        if j == i + 1 { continue }
+                        let hit = intersect(segments[i], segments[j], tol: 1.0e-8)
+                        let intersection: Point?
+                        switch hit {
+                        case .proper(let point), .endpoint(let point):
+                            intersection = point
+                        default:
+                            intersection = nil
+                        }
+                        guard let intersection else { continue }
+                        let xSize = 3.0
+                        let a = Point(x: intersection.x - xSize, y: intersection.y - xSize)
+                        let b = Point(x: intersection.x + xSize, y: intersection.y + xSize)
+                        let c = Point(x: intersection.x - xSize, y: intersection.y + xSize)
+                        let d = Point(x: intersection.x + xSize, y: intersection.y - xSize)
+                        elements.append("<line x1=\"\(format(a.x))\" y1=\"\(format(a.y))\" x2=\"\(format(b.x))\" y2=\"\(format(b.y))\" stroke=\"#ff0033\" stroke-width=\"1.2\"/>")
+                        elements.append("<line x1=\"\(format(c.x))\" y1=\"\(format(c.y))\" x2=\"\(format(d.x))\" y2=\"\(format(d.y))\" stroke=\"#ff0033\" stroke-width=\"1.2\"/>")
+                        elements.append("<text x=\"\(format(intersection.x + 4.0))\" y=\"\(format(intersection.y - 4.0))\" font-size=\"9\" fill=\"#ff0033\">\(i)/\(j)</text>")
+                    }
+                }
+            }
+            if overlay.showRailsRingConnectors, !overlay.railJoinSeams.isEmpty, !ringIndexable.isEmpty {
+                let windowStart = stats.clampedStart
+                let windowEnd = stats.clampedStart + max(0, stats.clampedCount - 1)
+                let ringGTWindow = ringGT
+                for seam in overlay.railJoinSeams where seam.ringIndex >= 0 && seam.ringIndex < ringIndexable.count {
+                    if useWindow && (seam.ringIndex < windowStart || seam.ringIndex > windowEnd) {
+                        continue
+                    }
+                    if ringWindowActive, let ringGTWindow {
+                        let value = ringGTWindow[seam.ringIndex]
+                        let inWindow: Bool
+                        if ringWindowT0 <= ringWindowT1 {
+                            inWindow = value >= ringWindowT0 && value <= ringWindowT1
+                        } else {
+                            inWindow = value >= ringWindowT0 || value <= ringWindowT1
+                        }
+                        if !inWindow { continue }
+                    }
+                    let p = ringIndexable[seam.ringIndex]
+                    let seamColor = seam.side == "L" ? "#00e5ff" : "#00c853"
+                    elements.append("<circle cx=\"\(format(p.x))\" cy=\"\(format(p.y))\" r=\"2.2\" fill=\"\(seamColor)\" fill-opacity=\"0.9\"/>")
+                    elements.append("<text x=\"\(format(p.x + 3.0))\" y=\"\(format(p.y + 3.0))\" font-size=\"9\" fill=\"\(seamColor)\">seam k=\(seam.ringIndex) \(seam.side)</text>")
+                }
+            }
+            let label = "<text x=\"\(format(ringLabelX))\" y=\"\(format(ringLabelY + Double(ringIndex) * 12.0))\" font-size=\"10\" fill=\"\(labelColor)\">\(name)[\(ringIndex)] avail=\(windowStats.available) start=\(windowStats.requestedStart) count=\(windowStats.requestedCount) clamp=\(windowStats.clampedStart)+\(windowStats.clampedCount)</text>"
+            elements.append(label)
+            print("ringOverlay name=\(name) total=\(windowStats.available) reqStart=\(windowStats.requestedStart) reqCount=\(windowStats.requestedCount) clampedStart=\(windowStats.clampedStart) clampedCount=\(windowStats.clampedCount)")
+            if let ringGT {
+                let minGT = ringGT.min().map { format($0) } ?? "nil"
+                let maxGT = ringGT.max().map { format($0) } ?? "nil"
+                print("ringGT name=\(name) gtPre=[\(minGT)..\(maxGT)] totalLen=\(format(ringGT.count > 1 ? (ringGT.last ?? 0.0) : 0.0))")
+            }
+            if let ringGT, overlay.ringWindowExtrema != nil {
+                let extrema = resolveRingWindowGT(overlay: overlay, ringPoints: ringIndexable, ringGT: ringGT)
+                if let index = extrema.extremaIndex, let gt = extrema.extremaGT {
+                    let extremaLabel = overlay.ringWindowExtrema ?? ""
+                    print("ringExtremaGT \(extremaLabel) idx=\(index) gt=\(format(gt))")
+                    if overlay.assertRingWindowHitsExtrema {
+                        let inWindow: Bool
+                        if ringWindowT0 <= ringWindowT1 {
+                            inWindow = gt >= ringWindowT0 && gt <= ringWindowT1
+                        } else {
+                            inWindow = gt >= ringWindowT0 || gt <= ringWindowT1
+                        }
+                        if !inWindow {
+                            let extremaLabel = overlay.ringWindowExtrema ?? ""
+                            preconditionFailure("ringWindow extrema not in window: extrema=\(extremaLabel) gt=\(format(gt)) window=[\(format(ringWindowT0))..\(format(ringWindowT1))]")
+                        }
+                    }
+                }
+            }
+            if overlay.assertRingWindow && ringWindowActive && windowStats.clampedCount == 0 {
+                print("ringGT ERROR: windowed=0")
+            }
+        }
+
+        if overlay.showRailsRingConnectors {
+            let leftCount = overlay.leftRailSamples.count
+            let rightCount = overlay.rightRailSamples.count
+            let maxCount = min(leftCount, rightCount)
+            if maxCount > 0 {
+                let requestedStart = max(0, overlay.ringSampleOptions.start)
+                let requestedCount = max(0, overlay.ringSampleOptions.count)
+                let clampedStart = min(requestedStart, max(0, maxCount - 1))
+                let clampedCount = min(requestedCount, max(0, maxCount - clampedStart))
+                if clampedCount > 0 {
+                    let end = clampedStart + clampedCount
+                    for i in stride(from: clampedStart, to: end, by: arrowStep) {
+                        let left = overlay.leftRailSamples[i].point
+                        let right = overlay.rightRailSamples[i].point
+                        elements.append("<line x1=\"\(format(left.x))\" y1=\"\(format(left.y))\" x2=\"\(format(right.x))\" y2=\"\(format(right.y))\" stroke=\"\(connectorColor)\" stroke-opacity=\"0.6\" stroke-width=\"0.7\"/>")
+                    }
+                }
+            }
+        }
+
+        return """
+        <g id=\"debug-\(name)\">
+            \(elements.joined(separator: "\n    "))
+        </g>
+        """
+    }
+
+    private func filteredRailSamples(
+        _ samples: [SVGDebugOverlay.RailDebugSample],
+        options: SVGDebugOverlay.RailsSampleOptions,
+        overlay: SVGDebugOverlay,
+        ringPoints: [Point]?,
+        ringGT: [Double]?,
+        ringWindowGT0: Double?,
+        ringWindowGT1: Double?
+    ) -> RailSampleStats {
+        guard !samples.isEmpty else {
+            return RailSampleStats(items: [], total: 0, afterWindow: 0, afterDecimation: 0, drawn: 0, requestedStart: options.start, requestedCount: options.count, clampedStart: 0, clampedCount: 0, available: 0, totalMinT: nil, totalMaxT: nil, windowMinT: nil, windowMaxT: nil, totalMinGlobalT: nil, totalMaxGlobalT: nil, windowMinGlobalT: nil, windowMaxGlobalT: nil)
+        }
+        let tMin = options.tMin ?? -Double.greatestFiniteMagnitude
+        let tMax = options.tMax ?? Double.greatestFiniteMagnitude
+        let winT0 = overlay.railsWindowT0 ?? -Double.greatestFiniteMagnitude
+        let winT1 = overlay.railsWindowT1 ?? Double.greatestFiniteMagnitude
+        let winGT0 = overlay.railsWindowGT0 ?? -Double.greatestFiniteMagnitude
+        let winGT1 = overlay.railsWindowGT1 ?? Double.greatestFiniteMagnitude
+        let skeletonFilter = overlay.railsWindowSkeleton
+        let rectFilter = overlay.railsWindowRect
+        let totalMinT = samples.map(\.t).min()
+        let totalMaxT = samples.map(\.t).max()
+        let railsWindowActive = overlay.railsWindowT0 != nil || overlay.railsWindowT1 != nil
+        let railsGTWindowActive = overlay.railsWindowGT0 != nil || overlay.railsWindowGT1 != nil
+        let ringWindowActive = ringWindowGT0 != nil || ringWindowGT1 != nil
+        let ringWindowT0 = ringWindowGT0 ?? -Double.greatestFiniteMagnitude
+        let ringWindowT1 = ringWindowGT1 ?? Double.greatestFiniteMagnitude
+        var cumulative: [Double] = []
+        cumulative.reserveCapacity(samples.count)
+        var totalLength = 0.0
+        cumulative.append(0.0)
+        if samples.count >= 2 {
+            for i in 1..<samples.count {
+                totalLength += (samples[i].point - samples[i - 1].point).length
+                cumulative.append(totalLength)
+            }
+        }
+        let localGlobalTByIndex: [Double?] = cumulative.map { totalLength > 0.0 ? ($0 / totalLength) : nil }
+        let totalMinLocalGlobalT = localGlobalTByIndex.compactMap { $0 }.min()
+        let totalMaxLocalGlobalT = localGlobalTByIndex.compactMap { $0 }.max()
+        let totalMinGlobalT = ringWindowActive ? ringGT?.min() : totalMinLocalGlobalT
+        let totalMaxGlobalT = ringWindowActive ? ringGT?.max() : totalMaxLocalGlobalT
+        var filtered: [(index: Int, sample: SVGDebugOverlay.RailDebugSample)] = []
+        filtered.reserveCapacity(samples.count)
+        for (index, sample) in samples.enumerated() where sample.t >= tMin && sample.t <= tMax {
+            if let skeletonFilter, let sampleId = sample.skeletonId, sampleId != skeletonFilter {
+                continue
+            }
+            if ringWindowActive {
+                guard let ringPoints, let ringGT, !ringPoints.isEmpty, ringPoints.count == ringGT.count else {
+                    continue
+                }
+                var nearestIndex = 0
+                var bestDist = Double.greatestFiniteMagnitude
+                for i in 0..<ringPoints.count {
+                    let dist = (ringPoints[i] - sample.point).length
+                    if dist < bestDist {
+                        bestDist = dist
+                        nearestIndex = i
+                    }
+                }
+                let globalT = ringGT[nearestIndex]
+                let inWindow: Bool
+                if ringWindowT0 <= ringWindowT1 {
+                    inWindow = globalT >= ringWindowT0 && globalT <= ringWindowT1
+                } else {
+                    inWindow = globalT >= ringWindowT0 || globalT <= ringWindowT1
+                }
+                if !inWindow { continue }
+            } else if railsGTWindowActive {
+                let globalT = localGlobalTByIndex[index]
+                let inWindow: Bool
+                if let globalT {
+                    if winGT0 <= winGT1 {
+                        inWindow = globalT >= winGT0 && globalT <= winGT1
+                    } else {
+                        inWindow = globalT >= winGT0 || globalT <= winGT1
+                    }
+                } else {
+                    inWindow = false
+                }
+                if !inWindow { continue }
+            } else if railsWindowActive {
+                let inWindow: Bool
+                if winT0 <= winT1 {
+                    inWindow = sample.t >= winT0 && sample.t <= winT1
+                } else {
+                    inWindow = sample.t >= winT0 || sample.t <= winT1
+                }
+                if !inWindow { continue }
+            }
+            if let rect = rectFilter, !rect.contains(CGPoint(x: sample.point.x, y: sample.point.y)) {
+                continue
+            }
+            filtered.append((index: index, sample: sample))
+        }
+
+        let step = max(1, options.step)
+        let requestedStart = max(0, options.start)
+        let requestedCount = max(0, options.count)
+        let available = filtered.count
+        let clampedStart: Int
+        if available == 0 {
+            clampedStart = 0
+        } else {
+            clampedStart = min(requestedStart, max(0, available - 1))
+        }
+        let clampedCount: Int
+        if available == 0 {
+            clampedCount = 0
+        } else if requestedCount <= 0 {
+            clampedCount = available - clampedStart
+        } else {
+            clampedCount = min(requestedCount, available - clampedStart)
+        }
+        let windowMinT = filtered.map { $0.sample.t }.min()
+        let windowMaxT = filtered.map { $0.sample.t }.max()
+        let windowMinGlobalT: Double?
+        let windowMaxGlobalT: Double?
+        if ringWindowActive, let ringGT, let ringPoints, ringPoints.count == ringGT.count {
+            var minValue = Double.greatestFiniteMagnitude
+            var maxValue = -Double.greatestFiniteMagnitude
+            for item in filtered {
+                var nearestIndex = 0
+                var bestDist = Double.greatestFiniteMagnitude
+                for i in 0..<ringPoints.count {
+                    let dist = (ringPoints[i] - item.sample.point).length
+                    if dist < bestDist {
+                        bestDist = dist
+                        nearestIndex = i
+                    }
+                }
+                let value = ringGT[nearestIndex]
+                minValue = min(minValue, value)
+                maxValue = max(maxValue, value)
+            }
+            windowMinGlobalT = minValue.isFinite ? minValue : nil
+            windowMaxGlobalT = maxValue.isFinite ? maxValue : nil
+        } else {
+            windowMinGlobalT = filtered.compactMap { localGlobalTByIndex[$0.index] }.min()
+            windowMaxGlobalT = filtered.compactMap { localGlobalTByIndex[$0.index] }.max()
+        }
+        if clampedCount == 0 {
+            return RailSampleStats(items: [], total: samples.count, afterWindow: filtered.count, afterDecimation: 0, drawn: 0, requestedStart: requestedStart, requestedCount: requestedCount, clampedStart: clampedStart, clampedCount: clampedCount, available: available, totalMinT: totalMinT, totalMaxT: totalMaxT, windowMinT: windowMinT, windowMaxT: windowMaxT, totalMinGlobalT: totalMinGlobalT, totalMaxGlobalT: totalMaxGlobalT, windowMinGlobalT: windowMinGlobalT, windowMaxGlobalT: windowMaxGlobalT)
+        }
+        var result: [(index: Int, sample: SVGDebugOverlay.RailDebugSample)] = []
+        result.reserveCapacity(min(clampedCount, filtered.count))
+        var filteredIndex = 0
+        for item in filtered {
+            if filteredIndex < clampedStart {
+                filteredIndex += 1
+                continue
+            }
+            if result.count >= clampedCount { break }
+            if ((filteredIndex - clampedStart) % step) == 0 {
+                result.append(item)
+            }
+            filteredIndex += 1
+        }
+        let decimCount = result.count
+        let withGlobal = result.map { item -> (index: Int, sample: SVGDebugOverlay.RailDebugSample, globalT: Double?) in
+            if ringWindowActive, let ringGT, let ringPoints, ringPoints.count == ringGT.count {
+                var nearestIndex = 0
+                var bestDist = Double.greatestFiniteMagnitude
+                for i in 0..<ringPoints.count {
+                    let dist = (ringPoints[i] - item.sample.point).length
+                    if dist < bestDist {
+                        bestDist = dist
+                        nearestIndex = i
+                    }
+                }
+                return (index: item.index, sample: item.sample, globalT: ringGT[nearestIndex])
+            }
+            return (index: item.index, sample: item.sample, globalT: localGlobalTByIndex[item.index])
+        }
+        return RailSampleStats(items: withGlobal, total: samples.count, afterWindow: filtered.count, afterDecimation: decimCount, drawn: decimCount, requestedStart: requestedStart, requestedCount: requestedCount, clampedStart: clampedStart, clampedCount: clampedCount, available: available, totalMinT: totalMinT, totalMaxT: totalMaxT, windowMinT: windowMinT, windowMaxT: windowMaxT, totalMinGlobalT: totalMinGlobalT, totalMaxGlobalT: totalMaxGlobalT, windowMinGlobalT: windowMinGlobalT, windowMaxGlobalT: windowMaxGlobalT)
+    }
+
+    private func arcLengthParam(points: [Point]) -> [Double]? {
+        guard points.count >= 2 else { return nil }
+        var cumulative: [Double] = Array(repeating: 0.0, count: points.count)
+        var total = 0.0
+        for i in 1..<points.count {
+            total += (points[i] - points[i - 1]).length
+            cumulative[i] = total
+        }
+        guard total > 0.0 else { return nil }
+        return cumulative.map { $0 / total }
+    }
+
+    private func resolveRingWindowGT(overlay: SVGDebugOverlay, ringPoints: [Point]?, ringGT: [Double]?) -> (gt0: Double?, gt1: Double?, extremaIndex: Int?, extremaGT: Double?) {
+        guard let ringPoints, let ringGT, ringPoints.count == ringGT.count, !ringPoints.isEmpty else {
+            return (overlay.ringWindowGT0 ?? overlay.ringWindowT0, overlay.ringWindowGT1 ?? overlay.ringWindowT1, nil, nil)
+        }
+        let extrema = overlay.ringWindowExtrema
+        let radius = overlay.ringWindowRadius ?? 0.0
+        if let extrema {
+            var minX = ringPoints[0].x
+            var maxX = ringPoints[0].x
+            var minY = ringPoints[0].y
+            var maxY = ringPoints[0].y
+            var minXIndex = 0
+            var maxXIndex = 0
+            var minYIndex = 0
+            var maxYIndex = 0
+            for (idx, point) in ringPoints.enumerated() {
+                if point.x < minX { minX = point.x; minXIndex = idx }
+                if point.x > maxX { maxX = point.x; maxXIndex = idx }
+                if point.y < minY { minY = point.y; minYIndex = idx }
+                if point.y > maxY { maxY = point.y; maxYIndex = idx }
+            }
+            let chosenIndex: Int
+            switch extrema {
+            case "minX": chosenIndex = minXIndex
+            case "maxX": chosenIndex = maxXIndex
+            case "minY": chosenIndex = minYIndex
+            case "maxY": chosenIndex = maxYIndex
+            default:
+                return (overlay.ringWindowGT0 ?? overlay.ringWindowT0, overlay.ringWindowGT1 ?? overlay.ringWindowT1, nil, nil)
+            }
+            let gt = ringGT[chosenIndex]
+            let clamped0 = max(0.0, gt - radius)
+            let clamped1 = min(1.0, gt + radius)
+            return (clamped0, clamped1, chosenIndex, gt)
+        }
+        return (overlay.ringWindowGT0 ?? overlay.ringWindowT0, overlay.ringWindowGT1 ?? overlay.ringWindowT1, nil, nil)
+    }
+
+    struct RailOverlayItem: Equatable {
+        let side: String
+        let index: Int
+        let point: Point
+        let localT: Double
+        let globalT: Double
+    }
+
+    struct RingOverlayItem: Equatable {
+        let index: Int
+        let point: Point
+        let ringGT: Double
+    }
+
+    func railOverlayItems(_ overlay: SVGDebugOverlay) -> [RailOverlayItem] {
+        let ringPoints = overlay.railsRings.first.map { ring in
+            (ring.count > 1 && ring.first == ring.last) ? Array(ring.dropLast()) : ring
+        }
+        let ringGT = ringPoints.flatMap { arcLengthParam(points: $0) }
+        let resolvedRingWindow = resolveRingWindowGT(overlay: overlay, ringPoints: ringPoints, ringGT: ringGT)
+        let left = filteredRailSamples(overlay.leftRailSamples, options: overlay.railsSampleOptions, overlay: overlay, ringPoints: ringPoints, ringGT: ringGT, ringWindowGT0: resolvedRingWindow.gt0, ringWindowGT1: resolvedRingWindow.gt1)
+        let right = filteredRailSamples(overlay.rightRailSamples, options: overlay.railsSampleOptions, overlay: overlay, ringPoints: ringPoints, ringGT: ringGT, ringWindowGT0: resolvedRingWindow.gt0, ringWindowGT1: resolvedRingWindow.gt1)
+        let leftItems = left.items.compactMap { item -> RailOverlayItem? in
+            guard let globalT = item.globalT else { return nil }
+            return RailOverlayItem(side: "L", index: item.index, point: item.sample.point, localT: item.sample.t, globalT: globalT)
+        }
+        let rightItems = right.items.compactMap { item -> RailOverlayItem? in
+            guard let globalT = item.globalT else { return nil }
+            return RailOverlayItem(side: "R", index: item.index, point: item.sample.point, localT: item.sample.t, globalT: globalT)
+        }
+        return leftItems + rightItems
+    }
+
+    func ringOverlayItems(_ overlay: SVGDebugOverlay, name: String) -> [RingOverlayItem] {
+        let shouldShow = (name == "railsRing") ? overlay.showRailsRing : overlay.showRailsRingSelected
+        guard shouldShow else { return [] }
+        guard let ring = overlay.railsRings.first else { return [] }
+        let ringIndexable = (ring.count > 1 && ring.first == ring.last) ? Array(ring.dropLast()) : ring
+        guard let ringGT = arcLengthParam(points: ringIndexable), ringGT.count == ringIndexable.count else { return [] }
+        let resolvedRingWindow = resolveRingWindowGT(overlay: overlay, ringPoints: ringIndexable, ringGT: ringGT)
+        let ringWindowActive = resolvedRingWindow.gt0 != nil || resolvedRingWindow.gt1 != nil
+        let ringWindowT0 = resolvedRingWindow.gt0 ?? -Double.greatestFiniteMagnitude
+        let ringWindowT1 = resolvedRingWindow.gt1 ?? Double.greatestFiniteMagnitude
+        var items: [RingOverlayItem] = []
+        items.reserveCapacity(ringIndexable.count)
+        for i in 0..<ringIndexable.count {
+            let gt = ringGT[i]
+            if ringWindowActive {
+                let inWindow: Bool
+                if ringWindowT0 <= ringWindowT1 {
+                    inWindow = gt >= ringWindowT0 && gt <= ringWindowT1
+                } else {
+                    inWindow = gt >= ringWindowT0 || gt <= ringWindowT1
+                }
+                if !inWindow { continue }
+            }
+            items.append(RingOverlayItem(index: i, point: ringIndexable[i], ringGT: gt))
+        }
+        return items
     }
 
     private func markerElement(_ marker: SVGPathBuilder.KeyframeMarker) -> String {
@@ -485,6 +1408,14 @@ struct SVGPathBuilder {
         case .invertedTriangle:
             let d = r * 1.9
             let path = "M \(format(x)) \(format(y + d)) L \(format(x + d)) \(format(y - d)) L \(format(x - d)) \(format(y - d)) Z"
+            return "<path d=\"\(path)\" \(fill) \(stroke)/>"
+        case .triangleLeft:
+            let d = r * 1.9
+            let path = "M \(format(x - d)) \(format(y)) L \(format(x + d)) \(format(y - d)) L \(format(x + d)) \(format(y + d)) Z"
+            return "<path d=\"\(path)\" \(fill) \(stroke)/>"
+        case .triangleRight:
+            let d = r * 1.9
+            let path = "M \(format(x + d)) \(format(y)) L \(format(x - d)) \(format(y - d)) L \(format(x - d)) \(format(y + d)) Z"
             return "<path d=\"\(path)\" \(fill) \(stroke)/>"
         }
     }
@@ -1438,6 +2369,45 @@ private func flattenPath(d: String, transform: CGAffineTransform, steps: Int) ->
 }
 
 struct SVGDebugOverlay {
+    struct RailDebugSample {
+        var t: Double
+        var point: Point
+        var normal: Point
+        var supportCase: String? = nil
+        var skeletonId: String? = nil
+        var runId: Int? = nil
+    }
+    struct RingSeam {
+        var ringIndex: Int
+        var side: String
+        var dotForward: Double
+        var dotReversed: Double
+        var chosen: String
+    }
+    struct RailConnector {
+        var side: String
+        var railIndexStart: Int
+        var points: [Point]
+        var length: Double
+        var tStart: Double
+        var tEnd: Double
+    }
+
+    struct RailsSampleOptions {
+        var step: Int = 25
+        var start: Int = 0
+        var count: Int = 200
+        var tMin: Double? = nil
+        var tMax: Double? = nil
+    }
+
+    struct RingSampleOptions {
+        var start: Int = 0
+        var count: Int = 2000
+        var labelStep: Int? = nil
+        var labelCount: Int? = nil
+    }
+
     var skeleton: [Point]
     var stamps: [Ring]
     var bridges: [Ring]
@@ -1451,6 +2421,44 @@ struct SVGDebugOverlay {
     var envelopeRight: [Point]
     var envelopeOutline: Ring
     var capPoints: [Point]
+    var leftRailSamples: [RailDebugSample] = []
+    var rightRailSamples: [RailDebugSample] = []
+    var leftRailRuns: [[Point]] = []
+    var rightRailRuns: [[Point]] = []
+    var railsRings: [[Point]] = []
+    var railJoinSeams: [RingSeam] = []
+    var railConnectors: [RailConnector] = []
+    var leftRailJumpSamples: [RailDebugSample] = []
+    var rightRailJumpSamples: [RailDebugSample] = []
+    var showRailsSamples: Bool = false
+    var showRailsNormals: Bool = false
+    var showRailsIndices: Bool = false
+    var showRailsJumps: Bool = false
+    var showRailsSupport: Bool = false
+    var showRailsRuns: Bool = false
+    var showRailsRing: Bool = false
+    var showRailsRingSelected: Bool = false
+    var showRailsRingConnectors: Bool = false
+    var showRailsConnectorsOnly: Bool = false
+    var railsSampleOptions: RailsSampleOptions = RailsSampleOptions()
+    var ringSampleOptions: RingSampleOptions = RingSampleOptions()
+    var railsJumpThreshold: Double = 20.0
+    var railsSamplesSource: String = "selected"
+    var railsWindowSkeleton: String? = nil
+    var railsWindowT0: Double? = nil
+    var railsWindowT1: Double? = nil
+    var railsWindowGT0: Double? = nil
+    var railsWindowGT1: Double? = nil
+    var ringWindowT0: Double? = nil
+    var ringWindowT1: Double? = nil
+    var ringWindowGT0: Double? = nil
+    var ringWindowGT1: Double? = nil
+    var railsWindowRect: CGRect? = nil
+    var assertRailsWindow: Bool = false
+    var assertRingWindow: Bool = false
+    var ringWindowExtrema: String? = nil
+    var ringWindowRadius: Double? = nil
+    var assertRingWindowHitsExtrema: Bool = false
     var junctionPatches: [Ring]
     var junctionCorridors: [Ring]
     var junctionControlPoints: [Point]

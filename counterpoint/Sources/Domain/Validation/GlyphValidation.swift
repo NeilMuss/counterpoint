@@ -140,6 +140,12 @@ public struct GlyphDocumentValidator {
                 }
             }
             validateCurve(stroke.params.width, path: "inputs.geometry.strokes[\(index)].params.width", errors: &errors)
+            if let widthLeft = stroke.params.widthLeft {
+                validateCurve(widthLeft, path: "inputs.geometry.strokes[\(index)].params.widthLeft", errors: &errors)
+            }
+            if let widthRight = stroke.params.widthRight {
+                validateCurve(widthRight, path: "inputs.geometry.strokes[\(index)].params.widthRight", errors: &errors)
+            }
             validateCurve(stroke.params.height, path: "inputs.geometry.strokes[\(index)].params.height", errors: &errors)
             validateCurve(stroke.params.theta, path: "inputs.geometry.strokes[\(index)].params.theta", errors: &errors)
             if let offset = stroke.params.offset {

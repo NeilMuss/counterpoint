@@ -5,6 +5,15 @@ public struct GenerateStrokeOutlineUseCase {
     public static var logSampleEvaluation = false
     private static var didLogSampleEvaluation = false
     public static var logLaneOffsetSamples = false
+    public static var logStamping = false
+    public static var logAdaptiveSampling = false
+    public static var logRailsDebug = false
+    public static var logRailsDebugStart: Int? = nil
+    public static var lastRailsDebugSamples: (left: [DirectSilhouetteTracer.RailSample], right: [DirectSilhouetteTracer.RailSample])? = nil
+    public static var lastRailsDebugSamplesPreRefine: (left: [DirectSilhouetteTracer.RailSample], right: [DirectSilhouetteTracer.RailSample])? = nil
+    public static var lastRailsDebugRuns: (left: [[Point]], right: [[Point]])? = nil
+    public static var lastRailsDebugRing: Ring? = nil
+    private static var didLogStamping = false
 
     private let sampler: PathSampling
     private let evaluator: ParamEvaluating
@@ -17,6 +26,10 @@ public struct GenerateStrokeOutlineUseCase {
         let tangentAngle: Double
         let progressHint: Double
         let segmentIndex: Int?
+        let segmentU: Double?
+        let segmentKind: String?
+        let skeletonIndex: Int?
+        let skeletonId: String?
     }
 
     public struct ConcatenatedSamples {
@@ -31,7 +44,21 @@ public struct GenerateStrokeOutlineUseCase {
     }
 
     public func generateOutline(for spec: StrokeSpec, includeBridges: Bool = true) throws -> PolygonSet {
+        GenerateStrokeOutlineUseCase.lastRailsDebugSamples = nil
+        GenerateStrokeOutlineUseCase.lastRailsDebugSamplesPreRefine = nil
+        GenerateStrokeOutlineUseCase.lastRailsDebugRuns = nil
+        GenerateStrokeOutlineUseCase.lastRailsDebugRing = nil
         let samples = generateSamples(for: spec)
+        if GenerateStrokeOutlineUseCase.logStamping, !GenerateStrokeOutlineUseCase.didLogStamping, !samples.isEmpty {
+            GenerateStrokeOutlineUseCase.didLogStamping = true
+            logStampSample(samples.first!, label: "first", spec: spec)
+            if samples.count > 1 {
+                logStampSample(samples[samples.count - 1], label: "last", spec: spec)
+            }
+        }
+        if (spec.output?.outlineMethod ?? .union) == .rails, spec.counterpointShape == .rectangle {
+            return railOutline(samples: samples, spec: spec)
+        }
         let stamping = CounterpointStamping()
         let rings = samples.map { stamping.ring(for: $0, shape: spec.counterpointShape) }
         let capRings = capRings(for: samples, capStyle: spec.capStyle)
@@ -44,6 +71,75 @@ public struct GenerateStrokeOutlineUseCase {
             allRings = rings + capRings + joinRings
         }
         return try unioner.union(subjectRings: allRings)
+    }
+
+    private func railOutline(samples: [Sample], spec: StrokeSpec) -> PolygonSet {
+        let policy = samplingPolicy(for: spec)
+        let polyline = sampler.makePolyline(path: spec.path, tolerance: policy.flattenTolerance)
+        let translation = outputTranslation(for: spec, polyline: polyline)
+        let flat = flattenPathWithU(path: spec.path, tolerance: policy.flattenTolerance)
+        let cumulative = cumulativeLengths(for: flat)
+        let totalLength = cumulative.last ?? 0.0
+        let segmentCount = max(1, spec.path.segments.count)
+        let sampleProvider: DirectSilhouetteTracer.DirectSilhouetteSampleProvider = { progress in
+            guard !spec.path.segments.isEmpty, !flat.isEmpty else { return nil }
+            let clamped = ScalarMath.clamp01(progress)
+            let uData = mapProgressToU(progress: clamped, flat: flat, cumulative: cumulative, totalLength: totalLength)
+            let segment = spec.path.segments[uData.segmentIndex]
+            let basePoint = segment.point(at: uData.u)
+            let tangentAngle = segment.safeTangentAngle(at: uData.u)
+            let uGeom = (Double(uData.segmentIndex) + uData.u) / Double(segmentCount)
+            return makeSampleFromBase(
+                uGeom: uGeom,
+                uGrid: uData.u,
+                progress: clamped,
+                basePoint: basePoint,
+                tangentAngle: tangentAngle,
+                spec: spec,
+                translation: translation
+            )
+        }
+        let direct = DirectSilhouetteTracer.trace(
+            samples: samples,
+            capStyle: spec.capStyle,
+            railTolerance: policy.railTolerance,
+            railChordTolerance: policy.railChordTolerance,
+            railMaxSegmentLength: policy.railMaxSegmentLength,
+            railMaxTurnAngleDegrees: policy.railMaxTurnAngleDegrees,
+            railSplitThreshold: 20.0,
+            railJumpsSource: .selected,
+            options: DirectSilhouetteOptions(railRefineMaxDepth: policy.maxRecursionDepth, railRefineMinStep: policy.minParamStep),
+            sampleProvider: sampleProvider,
+            verbose: GenerateStrokeOutlineUseCase.logStamping,
+            railsDebug: GenerateStrokeOutlineUseCase.logRailsDebug,
+            railsDebugStart: GenerateStrokeOutlineUseCase.logRailsDebugStart
+        )
+        GenerateStrokeOutlineUseCase.lastRailsDebugSamples = (direct.leftRailSamples, direct.rightRailSamples)
+        GenerateStrokeOutlineUseCase.lastRailsDebugSamplesPreRefine = (direct.leftRailSamplesPreRefine, direct.rightRailSamplesPreRefine)
+        GenerateStrokeOutlineUseCase.lastRailsDebugRuns = (direct.leftRailRuns, direct.rightRailRuns)
+        GenerateStrokeOutlineUseCase.lastRailsDebugRing = direct.outline
+        if direct.outlineSelfIntersects {
+            if GenerateStrokeOutlineUseCase.logStamping {
+                FileHandle.standardError.write(Data("rails-fallback reason=self-intersection\n".utf8))
+            }
+            let stamping = CounterpointStamping()
+            let rings = samples.map { stamping.ring(for: $0, shape: spec.counterpointShape) }
+            let capRings = capRings(for: samples, capStyle: spec.capStyle)
+            let joinRings = joinRings(for: samples, joinStyle: spec.joinStyle)
+            let bridges = (try? bridgeRings(between: rings)) ?? []
+            let allRings = rings + bridges + capRings + joinRings
+            if let fallback = try? unioner.union(subjectRings: allRings) {
+                return fallback
+            }
+        }
+        var polygons: PolygonSet = []
+        if !direct.outline.isEmpty {
+            polygons.append(Polygon(outer: direct.outline))
+        }
+        for patch in direct.junctionPatches {
+            polygons.append(Polygon(outer: patch))
+        }
+        return polygons
     }
 
     public func generateSamples(for spec: StrokeSpec) -> [Sample] {
@@ -65,7 +161,11 @@ public struct GenerateStrokeOutlineUseCase {
         return generateConcatenatedSamplesWithJunctions(for: spec, paths: paths).samples
     }
 
-    public func generateConcatenatedSamplesWithJunctions(for spec: StrokeSpec, paths: [BezierPath]) -> ConcatenatedSamples {
+    public func generateConcatenatedSamplesWithJunctions(
+        for spec: StrokeSpec,
+        paths: [BezierPath],
+        debugSkeletonIds: [String]? = nil
+    ) -> ConcatenatedSamples {
         guard !paths.isEmpty else { return ConcatenatedSamples(samples: [], junctionPairs: []) }
         let policy = samplingPolicy(for: spec)
         let maxSpacing = spec.sampling.maxSpacing ?? spec.sampling.baseSpacing
@@ -78,13 +178,20 @@ public struct GenerateStrokeOutlineUseCase {
             let basePoint: Point
             let tangentAngle: Double
             let centerPoint: Point
+            let debugSkeletonIndex: Int?
+            let debugSkeletonId: String?
+            let debugSegmentIndex: Int?
+            let debugSegmentU: Double?
+            let debugSegmentKind: String?
         }
 
+        let includeDebug = GenerateStrokeOutlineUseCase.logRailsDebug
         var seeds: [ConcatSeed] = []
         var junctionPairs: [(Int, Int)] = []
         var previousSegmentLastIndex: Int?
         for (index, path) in paths.enumerated() {
             let polyline = sampler.makePolyline(path: path, tolerance: policy.flattenTolerance)
+            let pathDomain = includeDebug ? PathDomain(path: path, samplesPerSegment: 24) : nil
             let localSamples = generateSamples(
                 for: spec,
                 polyline: polyline,
@@ -96,15 +203,29 @@ public struct GenerateStrokeOutlineUseCase {
             if adjustedSamples.isEmpty { continue }
             let trimmedSamples = (index == paths.count - 1) ? adjustedSamples : Array(adjustedSamples.dropLast())
             let firstIndexInSegment = seeds.count
+            let skeletonId = includeDebug ? (debugSkeletonIds?.indices.contains(index) == true ? debugSkeletonIds?[index] : nil) : nil
             for sample in trimmedSamples {
                 let basePoint = polyline.point(at: sample.uGeom)
                 let tangentAngle = polyline.tangentAngle(at: sample.uGeom, fallbackAngle: sample.tangentAngle)
+                let debugSegment: PathDomain.Sample?
+                if let pathDomain {
+                    debugSegment = pathDomain.evalAtS(sample.uGeom, path: path)
+                } else {
+                    debugSegment = nil
+                }
+                let debugSegmentIndex = debugSegment?.segmentIndex
+                let debugSegmentU = debugSegment?.t
                 seeds.append(ConcatSeed(
                     uGeom: sample.uGeom,
                     uGrid: sample.uGrid,
                     basePoint: basePoint,
                     tangentAngle: tangentAngle,
-                    centerPoint: sample.point
+                    centerPoint: sample.point,
+                    debugSkeletonIndex: includeDebug ? index : nil,
+                    debugSkeletonId: skeletonId,
+                    debugSegmentIndex: debugSegmentIndex,
+                    debugSegmentU: debugSegmentU,
+                    debugSegmentKind: debugSegmentIndex == nil ? nil : "cubic"
                 ))
             }
             if !trimmedSamples.isEmpty {
@@ -127,7 +248,12 @@ public struct GenerateStrokeOutlineUseCase {
                     basePoint: seed.basePoint,
                     tangentAngle: seed.tangentAngle,
                     spec: spec,
-                    translation: translation
+                    translation: translation,
+                    debugSkeletonIndex: seed.debugSkeletonIndex,
+                    debugSkeletonId: seed.debugSkeletonId,
+                    debugSegmentIndex: seed.debugSegmentIndex,
+                    debugSegmentKind: seed.debugSegmentKind,
+                    debugSegmentU: seed.debugSegmentU
                 )
             ], spec: spec)
             return ConcatenatedSamples(samples: samples, junctionPairs: [])
@@ -153,7 +279,12 @@ public struct GenerateStrokeOutlineUseCase {
                 basePoint: seed.basePoint,
                 tangentAngle: seed.tangentAngle,
                 spec: spec,
-                translation: translation
+                translation: translation,
+                debugSkeletonIndex: seed.debugSkeletonIndex,
+                debugSkeletonId: seed.debugSkeletonId,
+                debugSegmentIndex: seed.debugSegmentIndex,
+                debugSegmentKind: seed.debugSegmentKind,
+                debugSegmentU: seed.debugSegmentU
             )
             samples.append(sample)
         }
@@ -184,7 +315,11 @@ public struct GenerateStrokeOutlineUseCase {
                     basePoint: basePoint,
                     tangentAngle: tangentAngle,
                     progressHint: sample.t,
-                    segmentIndex: nil
+                    segmentIndex: nil,
+                    segmentU: nil,
+                    segmentKind: nil,
+                    skeletonIndex: nil,
+                    skeletonId: nil
                 )
             }
             let spacedSeeds = enforceMaxSpacing(seeds: seeds, maxSpacing: maxSpacing)
@@ -200,21 +335,65 @@ public struct GenerateStrokeOutlineUseCase {
             FileHandle.standardError.write(Data("GenerateStrokeOutlineUseCase.makeSample invoked\n".utf8))
         }
         let basePoint = polyline.point(at: u)
-        let tangentAngle = polyline.tangentAngle(at: u, fallbackAngle: fallbackTangent ?? 0.0)
+        let tangentAngle: Double
+        if u <= 0.0, let first = spec.path.segments.first {
+            tangentAngle = first.safeTangentAngle(at: 0.0)
+        } else if u >= 1.0, let last = spec.path.segments.last {
+            tangentAngle = last.safeTangentAngle(at: 1.0)
+        } else {
+            tangentAngle = polyline.tangentAngle(at: u, fallbackAngle: fallbackTangent ?? 0.0)
+        }
         return makeSampleFromBase(uGeom: u, uGrid: u, progress: progress, basePoint: basePoint, tangentAngle: tangentAngle, spec: spec, translation: translation)
     }
 
-    private func makeSampleFromBase(uGeom: Double, uGrid: Double, progress: Double, basePoint: Point, tangentAngle: Double, spec: StrokeSpec, translation: Point) -> Sample {
+    private func logStampSample(_ sample: Sample, label: String, spec: StrokeSpec) {
+        let phaseDeg = spec.tangentPhaseDegrees.map { String(format: "%.6f", $0) } ?? "nil"
+        let phaseRad = (spec.tangentPhaseDegrees ?? 0.0) * .pi / 180.0
+        let line = String(
+            format: "stamp-%@ t=%.6f uGeom=%.6f uLocal=%.6f P=(%.3f,%.3f) tangent=%.6f theta=%.6f thetaUsed=%.6f phaseDeg=%@ phaseRad=%.6f angleMode=%@",
+            label,
+            sample.t,
+            sample.uGeom,
+            sample.uGrid,
+            sample.point.x,
+            sample.point.y,
+            sample.tangentAngle,
+            sample.theta,
+            sample.effectiveRotation,
+            phaseDeg,
+            phaseRad,
+            String(describing: spec.angleMode)
+        )
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    private func makeSampleFromBase(
+        uGeom: Double,
+        uGrid: Double,
+        progress: Double,
+        basePoint: Point,
+        tangentAngle: Double,
+        spec: StrokeSpec,
+        translation: Point,
+        debugSkeletonIndex: Int? = nil,
+        debugSkeletonId: String? = nil,
+        debugSegmentIndex: Int? = nil,
+        debugSegmentKind: String? = nil,
+        debugSegmentU: Double? = nil
+    ) -> Sample {
         let alpha = spec.alpha.map { evaluator.evaluate($0, at: progress) } ?? 0.0
         let width = evaluator.evaluate(spec.width, at: progress)
+        let widthLeft = spec.widthLeft.map { evaluator.evaluate($0, at: progress) } ?? (width * 0.5)
+        let widthRight = spec.widthRight.map { evaluator.evaluate($0, at: progress) } ?? (width * 0.5)
         let height = evaluator.evaluate(spec.height, at: progress)
         let theta = AngleMath.wrapPi(evaluator.evaluateAngle(spec.theta, at: progress))
+        let tangentPhase = (spec.tangentPhaseDegrees ?? 0.0) * .pi / 180.0
         let effectiveRotation: Double
         switch spec.angleMode {
         case .absolute:
             effectiveRotation = theta
         case .tangentRelative:
-            effectiveRotation = AngleMath.wrapPi(theta + tangentAngle)
+            effectiveRotation = AngleMath.wrapPi(theta + tangentAngle + tangentPhase)
         }
         let offsetValue = spec.offset.map { evaluator.evaluate($0, at: progress) } ?? 0.0
         let tangent = Point(x: cos(tangentAngle), y: sin(tangentAngle))
@@ -227,10 +406,17 @@ public struct GenerateStrokeOutlineUseCase {
             point: center,
             tangentAngle: tangentAngle,
             width: width,
+            widthLeft: widthLeft,
+            widthRight: widthRight,
             height: height,
             theta: theta,
             effectiveRotation: effectiveRotation,
-            alpha: alpha
+            alpha: alpha,
+            debugSkeletonIndex: debugSkeletonIndex,
+            debugSkeletonId: debugSkeletonId,
+            debugSegmentIndex: debugSegmentIndex,
+            debugSegmentKind: debugSegmentKind,
+            debugSegmentU: debugSegmentU
         )
     }
 
@@ -271,16 +457,50 @@ public struct GenerateStrokeOutlineUseCase {
         var samples: [Sample] = []
         samples.reserveCapacity(policy.maxSamples)
         let builder = BridgeBuilder()
+        let logEnabled = GenerateStrokeOutlineUseCase.logAdaptiveSampling
+        var refinementCount = 0
+        let logLimit = 200
+        var sawTailInterval = false
+        var totalIntervalsVisited = 0
+        var splitsByRateLimit = 0
+        var splitsByMidpointFail = 0
+        var splitsByProbeFail: [Double: Int] = [0.25: 0, 0.5: 0, 0.75: 0]
+        var accepts = 0
+        var topThetaOffenders: [(t0: Double, t1: Double, depth: Int, delta: Double, wLeft: Double, wRight: Double)] = []
+        var topWidthOffenders: [(t0: Double, t1: Double, depth: Int, delta: Double, wLeft: Double, wRight: Double)] = []
+
+        func recordOffenders(t0: Double, t1: Double, depth: Int, deltaTheta: Double, deltaWLeft: Double, deltaWRight: Double) {
+            let thetaDeg = abs(deltaTheta) * 180.0 / .pi
+            let widthDelta = max(abs(deltaWLeft), abs(deltaWRight))
+            topThetaOffenders.append((t0, t1, depth, thetaDeg, deltaWLeft, deltaWRight))
+            topThetaOffenders.sort { $0.delta > $1.delta }
+            if topThetaOffenders.count > 10 { topThetaOffenders.removeLast(topThetaOffenders.count - 10) }
+            topWidthOffenders.append((t0, t1, depth, widthDelta, deltaWLeft, deltaWRight))
+            topWidthOffenders.sort { $0.delta > $1.delta }
+            if topWidthOffenders.count > 10 { topWidthOffenders.removeLast(topWidthOffenders.count - 10) }
+        }
+
+        func shouldLogInterval(t0: Double, t1: Double) -> Bool {
+            guard logEnabled else { return false }
+            if t0 >= 0.7 || t1 >= 0.7 { return true }
+            return refinementCount < logLimit
+        }
+
+        func logInterval(_ message: String) {
+            guard logEnabled else { return }
+            FileHandle.standardError.write(Data((message + "\n").utf8))
+        }
 
         func recurse(t0: Double, t1: Double, s0: Sample, s1: Sample, depth: Int) {
+            totalIntervalsVisited += 1
+            if logEnabled, (t0 >= 0.7 || t1 >= 0.7) {
+                sawTailInterval = true
+            }
             if samples.count >= policy.maxSamples - 1 {
                 samples.append(s0)
                 return
             }
-            if depth >= policy.maxRecursionDepth || (t1 - t0) < policy.minParamStep {
-                samples.append(s0)
-                return
-            }
+            let atLimit = depth >= policy.maxRecursionDepth || (t1 - t0) < policy.minParamStep
 
             let midT = (t0 + t1) * 0.5
             guard let sm = makeSampleAtU(midT, progress: midT, spec: spec, polyline: polyline, translation: translation, fallbackTangent: s0.tangentAngle) else {
@@ -288,30 +508,154 @@ public struct GenerateStrokeOutlineUseCase {
                 return
             }
 
+            let deltaThetaUsed = abs(AngleMath.angularDifference(s1.effectiveRotation, s0.effectiveRotation))
+            let deltaWLeft = abs(s1.widthLeft - s0.widthLeft)
+            let deltaWRight = abs(s1.widthRight - s0.widthRight)
+            let widthDelta = max(deltaWLeft, deltaWRight)
+            let maxWidth = max(s0.widthLeft, s0.widthRight, s1.widthLeft, s1.widthRight)
+            let widthThreshold = max(policy.widthChangeMin, policy.widthChangeFactor * maxWidth)
+            let turnDelta = abs(AngleMath.angularDifference(s1.tangentAngle, s0.tangentAngle))
+            let turnDeg = turnDelta * 180.0 / .pi
+            let allowRateLimit = turnDeg >= policy.turnThresholdDegrees
+            let challenging = allowRateLimit && (deltaThetaUsed > policy.rotationThresholdRadians || widthDelta > widthThreshold)
+            recordOffenders(t0: t0, t1: t1, depth: depth, deltaTheta: deltaThetaUsed, deltaWLeft: deltaWLeft, deltaWRight: deltaWRight)
+
             let stamping = CounterpointStamping()
             let ringA = stamping.ring(for: s0, shape: spec.counterpointShape)
             let ringB = stamping.ring(for: s1, shape: spec.counterpointShape)
-            let ringM = stamping.ring(for: sm, shape: spec.counterpointShape)
             let bridges = (try? builder.bridgeRings(from: ringA, to: ringB)) ?? []
 
-            let deltaRotation = abs(AngleMath.angularDifference(s1.effectiveRotation, s0.effectiveRotation))
-            if deltaRotation > spec.sampling.rotationThresholdRadians {
-                recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
-                recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
+            let probeUs: [Double] = challenging ? [0.25, 0.5, 0.75] : [0.5]
+            let envelope = [ringA, ringB] + bridges
+            for u in probeUs {
+                let probeT = t0 + (t1 - t0) * u
+                let probeSample: Sample
+                if u == 0.5 {
+                    probeSample = sm
+                } else if let candidate = makeSampleAtU(probeT, progress: probeT, spec: spec, polyline: polyline, translation: translation, fallbackTangent: s0.tangentAngle) {
+                    probeSample = candidate
+                } else {
+                    recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
+                    recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
+                    return
+                }
+                let ringP = stamping.ring(for: probeSample, shape: spec.counterpointShape)
+                let ok = ringWithinEnvelope(ringP, envelopes: envelope, tolerance: policy.envelopeTolerance)
+                if !ok {
+                    splitsByProbeFail[u, default: 0] += 1
+                    if u == 0.5 {
+                        splitsByMidpointFail += 1
+                    }
+                    refinementCount += 1
+                    if shouldLogInterval(t0: t0, t1: t1) {
+                        let thetaDeg = deltaThetaUsed * 180.0 / .pi
+                        logInterval(String(
+                            format: "adaptive-probe u=%.2f t=%.4f P=(%.3f,%.3f) tan=%.5f thetaUsed=%.5f wL=%.3f wR=%.3f h=%.3f",
+                            u,
+                            probeSample.t,
+                            probeSample.point.x,
+                            probeSample.point.y,
+                            probeSample.tangentAngle,
+                            probeSample.effectiveRotation,
+                            probeSample.widthLeft,
+                            probeSample.widthRight,
+                            probeSample.height
+                        ))
+                        logInterval(String(
+                            format: "adaptive-split reason=probeFail u=%.2f t=[%.4f..%.4f] depth=%d dThetaDeg=%.3f dWLeft=%.3f dWRight=%.3f challenging=%d",
+                            u,
+                            t0,
+                            t1,
+                            depth,
+                            thetaDeg,
+                            deltaWLeft,
+                            deltaWRight,
+                            challenging ? 1 : 0
+                        ))
+                    }
+                    if atLimit {
+                        samples.append(s0)
+                        samples.append(sm)
+                        return
+                    }
+                    recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
+                    recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
+                    return
+                }
+            }
+
+            if challenging {
+                splitsByRateLimit += 1
+                refinementCount += 1
+                if shouldLogInterval(t0: t0, t1: t1) {
+                    let thetaDeg = deltaThetaUsed * 180.0 / .pi
+                    logInterval(String(
+                        format: "adaptive-split reason=rateLimit t=[%.4f..%.4f] depth=%d dThetaDeg=%.3f dWLeft=%.3f dWRight=%.3f",
+                        t0,
+                        t1,
+                        depth,
+                        thetaDeg,
+                        deltaWLeft,
+                        deltaWRight
+                    ))
+                }
+                if !atLimit {
+                    recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
+                    recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
+                } else {
+                    samples.append(s0)
+                }
                 return
             }
 
-            let ok = ringWithinEnvelope(ringM, envelopes: [ringA, ringB] + bridges, tolerance: policy.envelopeTolerance)
-            if ok {
-                samples.append(s0)
-            } else {
-                recurse(t0: t0, t1: midT, s0: s0, s1: sm, depth: depth + 1)
-                recurse(t0: midT, t1: t1, s0: sm, s1: s1, depth: depth + 1)
-            }
+            accepts += 1
+            samples.append(s0)
         }
 
         recurse(t0: 0.0, t1: 1.0, s0: start, s1: end, depth: 0)
         samples.append(end)
+        if logEnabled && (refinementCount < logLimit || sawTailInterval) {
+            let probe025 = splitsByProbeFail[0.25, default: 0]
+            let probe050 = splitsByProbeFail[0.5, default: 0]
+            let probe075 = splitsByProbeFail[0.75, default: 0]
+            let summary = String(
+                format: "adaptive-summary intervals=%d accepts=%d rateLimit=%d midpointFail=%d probeFail[0.25]=%d probeFail[0.5]=%d probeFail[0.75]=%d",
+                totalIntervalsVisited,
+                accepts,
+                splitsByRateLimit,
+                splitsByMidpointFail,
+                probe025,
+                probe050,
+                probe075
+            )
+            FileHandle.standardError.write(Data((summary + "\n").utf8))
+            for (index, offender) in topThetaOffenders.enumerated() {
+                let line = String(
+                    format: "adaptive-top-theta[%d] t=[%.4f..%.4f] depth=%d dThetaDeg=%.3f dWLeft=%.3f dWRight=%.3f",
+                    index,
+                    offender.t0,
+                    offender.t1,
+                    offender.depth,
+                    offender.delta,
+                    offender.wLeft,
+                    offender.wRight
+                )
+                FileHandle.standardError.write(Data((line + "\n").utf8))
+            }
+            for (index, offender) in topWidthOffenders.enumerated() {
+                let line = String(
+                    format: "adaptive-top-width[%d] t=[%.4f..%.4f] depth=%d dWidth=%.3f dWLeft=%.3f dWRight=%.3f",
+                    index,
+                    offender.t0,
+                    offender.t1,
+                    offender.depth,
+                    offender.delta,
+                    offender.wLeft,
+                    offender.wRight
+                )
+                FileHandle.standardError.write(Data((line + "\n").utf8))
+            }
+        }
         return samples
     }
 
@@ -331,7 +675,12 @@ public struct GenerateStrokeOutlineUseCase {
                     basePoint: seed.basePoint,
                     tangentAngle: seed.tangentAngle,
                     spec: spec,
-                    translation: translation
+                    translation: translation,
+                    debugSkeletonIndex: seed.skeletonIndex,
+                    debugSkeletonId: seed.skeletonId,
+                    debugSegmentIndex: seed.segmentIndex,
+                    debugSegmentKind: seed.segmentKind,
+                    debugSegmentU: seed.segmentU
                 )
             }
         }
@@ -365,7 +714,12 @@ public struct GenerateStrokeOutlineUseCase {
                 basePoint: basePoint,
                 tangentAngle: tangentAngle,
                 spec: spec,
-                translation: translation
+                translation: translation,
+                debugSkeletonIndex: seed.skeletonIndex,
+                debugSkeletonId: seed.skeletonId,
+                debugSegmentIndex: seed.segmentIndex,
+                debugSegmentKind: seed.segmentKind,
+                debugSegmentU: seed.segmentU
             )
         }
     }
@@ -390,13 +744,21 @@ public struct GenerateStrokeOutlineUseCase {
                         let basePoint = lerpPoint(a.basePoint, b.basePoint, t)
                         let progressHint = ScalarMath.lerp(a.progressHint, b.progressHint, t)
                         let segmentIndex = a.segmentIndex == b.segmentIndex ? a.segmentIndex : nil
+                        let segmentU = a.segmentU == b.segmentU ? a.segmentU : nil
+                        let segmentKind = a.segmentKind == b.segmentKind ? a.segmentKind : nil
+                        let skeletonIndex = a.skeletonIndex == b.skeletonIndex ? a.skeletonIndex : nil
+                        let skeletonId = a.skeletonId == b.skeletonId ? a.skeletonId : nil
                         result.append(SampleSeed(
                             uGlobal: uGlobal,
                             uLocal: uLocal,
                             basePoint: basePoint,
                             tangentAngle: angle,
                             progressHint: progressHint,
-                            segmentIndex: segmentIndex
+                            segmentIndex: segmentIndex,
+                            segmentU: segmentU,
+                            segmentKind: segmentKind,
+                            skeletonIndex: skeletonIndex,
+                            skeletonId: skeletonId
                         ))
                     }
                 }
@@ -479,8 +841,7 @@ public struct GenerateStrokeOutlineUseCase {
             let uData = mapProgressToU(progress: progress, flat: flat, cumulative: cumulative, totalLength: total)
             let segment = spec.path.segments[uData.segmentIndex]
             let basePoint = segment.point(at: uData.u)
-            let tangent = segment.derivative(at: uData.u)
-            let tangentAngle = tangent.normalized().map { atan2($0.y, $0.x) } ?? 0.0
+            let tangentAngle = segment.safeTangentAngle(at: uData.u)
             let uGlobal = (Double(uData.segmentIndex) + uData.u) / Double(segmentCount)
             return SampleSeed(
                 uGlobal: uGlobal,
@@ -488,7 +849,11 @@ public struct GenerateStrokeOutlineUseCase {
                 basePoint: basePoint,
                 tangentAngle: tangentAngle,
                 progressHint: progress,
-                segmentIndex: uData.segmentIndex
+                segmentIndex: uData.segmentIndex,
+                segmentU: uData.u,
+                segmentKind: "cubic",
+                skeletonIndex: nil,
+                skeletonId: nil
             )
         }
 
@@ -499,8 +864,7 @@ public struct GenerateStrokeOutlineUseCase {
             let uData = mapProgressToU(progress: progress, flat: flat, cumulative: cumulative, totalLength: total)
             let segment = spec.path.segments[uData.segmentIndex]
             let point = segment.point(at: uData.u)
-            let tangent = segment.derivative(at: uData.u)
-            let angle = tangent.normalized().map { atan2($0.y, $0.x) } ?? 0.0
+            let angle = segment.safeTangentAngle(at: uData.u)
             let uGeom = (Double(uData.segmentIndex) + uData.u) / Double(segmentCount)
             return (uGeom, point, angle)
         }
@@ -509,7 +873,7 @@ public struct GenerateStrokeOutlineUseCase {
 
     private func collectKeyframeTimes(spec: StrokeSpec) -> [Double] {
         var times: Set<Double> = [0.0, 1.0]
-        let tracks: [ParamTrack?] = [spec.width, spec.height, spec.theta, spec.offset, spec.alpha]
+        let tracks: [ParamTrack?] = [spec.width, spec.widthLeft, spec.widthRight, spec.height, spec.theta, spec.offset, spec.alpha]
         for track in tracks.compactMap({ $0 }) {
             for key in track.keyframes {
                 times.insert(ScalarMath.clamp01(key.t))
@@ -601,8 +965,7 @@ public struct GenerateStrokeOutlineUseCase {
                 let uData = mapProgressToU(progress: midProgress, flat: flat, cumulative: cumulative, totalLength: totalLength)
                 let segment = spec.path.segments[uData.segmentIndex]
                 let point = segment.point(at: uData.u)
-                let tangent = segment.derivative(at: uData.u)
-                let angle = tangent.normalized().map { atan2($0.y, $0.x) } ?? a.tangentAngle
+                let angle = segment.safeTangentAngle(at: uData.u)
                 let segmentCount = max(1, spec.path.segments.count)
                 let uGlobal = (Double(uData.segmentIndex) + uData.u) / Double(segmentCount)
                 refined.append(SampleSeed(
@@ -611,7 +974,11 @@ public struct GenerateStrokeOutlineUseCase {
                     basePoint: point,
                     tangentAngle: angle,
                     progressHint: midProgress,
-                    segmentIndex: uData.segmentIndex
+                    segmentIndex: uData.segmentIndex,
+                    segmentU: uData.u,
+                    segmentKind: "cubic",
+                    skeletonIndex: nil,
+                    skeletonId: nil
                 ))
             }
         }
@@ -654,6 +1021,14 @@ public struct GenerateStrokeOutlineUseCase {
         let eps = 1.0e-6
         let widthDelta = abs(evaluator.evaluate(spec.width, at: t1) - evaluator.evaluate(spec.width, at: t0))
         if widthDelta > eps { return true }
+        if let widthLeft = spec.widthLeft {
+            let delta = abs(evaluator.evaluate(widthLeft, at: t1) - evaluator.evaluate(widthLeft, at: t0))
+            if delta > eps { return true }
+        }
+        if let widthRight = spec.widthRight {
+            let delta = abs(evaluator.evaluate(widthRight, at: t1) - evaluator.evaluate(widthRight, at: t0))
+            if delta > eps { return true }
+        }
         let heightDelta = abs(evaluator.evaluate(spec.height, at: t1) - evaluator.evaluate(spec.height, at: t0))
         if heightDelta > eps { return true }
         let thetaDelta = abs(AngleMath.angularDifference(
@@ -710,9 +1085,8 @@ public struct GenerateStrokeOutlineUseCase {
         return true
     }
 
-    private func capRings(for samples: [Sample], capStyle: CapStyle) -> [Ring] {
+    private func capRings(for samples: [Sample], capStyle: CapStylePair) -> [Ring] {
         guard samples.count >= 2 else { return [] }
-        guard capStyle != .butt else { return [] }
         let builder = JoinCapBuilder()
 
         let start = samples[0]
@@ -723,13 +1097,26 @@ public struct GenerateStrokeOutlineUseCase {
         let dirStart = (start.point - next.point).normalized() ?? Point(x: 0, y: 0)
         let dirEnd = (end.point - prev.point).normalized() ?? Point(x: 0, y: 0)
 
-        let startRadius = max(start.width, start.height) * 0.5
-        let endRadius = max(end.width, end.height) * 0.5
+        let startRadius = capRadius(for: start, style: capStyle.start)
+        let endRadius = capRadius(for: end, style: capStyle.end)
 
         var rings: [Ring] = []
-        rings.append(contentsOf: builder.capRings(point: start.point, direction: dirStart, radius: startRadius, style: capStyle))
-        rings.append(contentsOf: builder.capRings(point: end.point, direction: dirEnd, radius: endRadius, style: capStyle))
+        if capStyle.start != .butt {
+            rings.append(contentsOf: builder.capRings(point: start.point, direction: dirStart, radius: startRadius, style: capStyle.start))
+        }
+        if capStyle.end != .butt {
+            rings.append(contentsOf: builder.capRings(point: end.point, direction: dirEnd, radius: endRadius, style: capStyle.end))
+        }
         return rings
+    }
+
+    private func capRadius(for sample: Sample, style: CapStyle) -> Double {
+        switch style {
+        case .circle:
+            return max(0.0, (sample.widthLeft + sample.widthRight) * 0.5)
+        case .butt, .square, .round:
+            return max(sample.width, sample.height) * 0.5
+        }
     }
 
     private func joinRings(for samples: [Sample], joinStyle: JoinStyle) -> [Ring] {

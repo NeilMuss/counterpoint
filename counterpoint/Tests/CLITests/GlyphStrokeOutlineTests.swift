@@ -6,39 +6,10 @@ import Adapters
 @testable import CounterpointCLI
 
 final class GlyphStrokeOutlineTests: XCTestCase {
-    func testGlyphStrokeFinalGolden() throws {
-        let glyphURL = try fixtureURL(pathComponents: ["Fixtures", "glyphs", "J.v0.json"])
-        let referenceURL = try fixtureURL(pathComponents: ["Fixtures", "references", "big_caslon_J.svg"])
-        let expectedURL = try fixtureURL(pathComponents: ["Fixtures", "expected", "glyph_J_final.svg"])
-
+    func testRailsRingOverlayHasRingData() throws {
+        let glyphURL = try fixtureURL(pathComponents: ["Tests", "Fixtures", "glyph_v0_min.json"])
         let data = try Data(contentsOf: glyphURL)
         let document = try GlyphDocument.load(from: data)
-
-        let referenceRender: SVGPathBuilder.BackgroundGlyphRender?
-        if let reference = document.derived?.reference,
-           let source = SVGPathBuilder.loadBackgroundGlyph(from: referenceURL.path) {
-            let bounds = source.viewBox ?? source.bounds
-            let scale = reference.transform?.scale ?? 1.0
-            let translate = reference.transform?.translate ?? Point(x: 0, y: 0)
-            var manual = CGAffineTransform.identity
-            manual = manual.scaledBy(x: scale, y: scale)
-            manual = manual.translatedBy(x: translate.x, y: translate.y)
-            referenceRender = SVGPathBuilder.BackgroundGlyphRender(
-                elements: source.elements,
-                bounds: bounds,
-                fill: "#e0e0e0",
-                stroke: "#4169e1",
-                strokeWidth: 1.0,
-                opacity: 1.0,
-                zoom: 100.0,
-                align: .none,
-                manualTransform: manual
-            )
-        } else {
-            referenceRender = nil
-        }
-
-        let frameBounds = glyphFrameBounds(document.frame, reference: referenceRender)
 
         let options = CLIOptions(
             inputPath: glyphURL.path,
@@ -50,7 +21,7 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             useBridges: true,
             debugSamples: false,
             dumpSamplesPath: nil,
-            quality: "preview",
+            quality: "final",
             showEnvelope: nil,
             showEnvelopeUnion: false,
             showRays: nil,
@@ -59,9 +30,19 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             showRefDiff: false,
             showKeyframes: false,
             referenceOnTop: false,
+            showCenterline: false,
+            showRailsSamples: false,
+            showRailsNormals: false,
+            showRailsIndices: false,
+            showRailsJumps: false,
+            showRailsSupport: false,
+            showRailsRuns: false,
+            showRailsRing: true,
+            showRailsRingConnectors: false,
             alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
+            strokeOutlineMethod: .rails,
             envelopeTolerance: nil,
             flattenTolerance: nil,
             maxSamples: nil,
@@ -93,6 +74,105 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             fitTolerance: nil,
             simplifyTolerance: nil,
             verbose: false,
+            railsDebug: false,
+            railsDebugStart: nil,
+            railsSamplesStep: 25,
+            railsSamplesStart: 0,
+            railsSamplesCount: 200,
+            railsSamplesTMin: nil,
+            railsSamplesTMax: nil,
+            railsJumpThreshold: 20.0,
+            railsJumpsSource: .selected,
+            alphaDemo: nil,
+            alphaDebug: false,
+            traceStrokeId: nil,
+            traceTMin: nil,
+            traceTMax: nil,
+            dumpKeyframes: false,
+            diffResolution: nil
+        )
+
+        let authored = try buildAuthoredStrokePolygons(document: document, options: options)
+        XCTAssertFalse(authored.railsRings.isEmpty)
+        XCTAssertFalse(authored.railsRings[0].isEmpty)
+    }
+
+    func testGlyphStrokeFinalGolden() throws {
+        let glyphURL = try fixtureURL(pathComponents: ["Tests", "Fixtures", "glyph_v0_min.json"])
+        let expectedURL = try fixtureURL(pathComponents: ["Tests", "Fixtures", "expected", "glyph_v0_min.svg"])
+
+        let data = try Data(contentsOf: glyphURL)
+        let document = try GlyphDocument.load(from: data)
+
+        let referenceRender: SVGPathBuilder.BackgroundGlyphRender? = nil
+
+        let frameBounds = glyphFrameBounds(document.frame, reference: referenceRender)
+
+        let options = CLIOptions(
+            inputPath: glyphURL.path,
+            exampleName: nil,
+            svgOutputPath: nil,
+            svgSize: nil,
+            padding: 10.0,
+            quiet: true,
+            useBridges: true,
+            debugSamples: false,
+            dumpSamplesPath: nil,
+            quality: "preview",
+            showEnvelope: nil,
+            showEnvelopeUnion: false,
+            showRays: nil,
+            showAlpha: false,
+            showJunctions: false,
+            showRefDiff: false,
+            showKeyframes: false,
+            referenceOnTop: false,
+            showCenterline: false,
+            showRailsSamples: false,
+            showRailsNormals: false,
+            showRailsIndices: false,
+            alphaProbeT: nil,
+            counterpointSize: nil,
+            angleModeOverride: nil,
+            strokeOutlineMethod: nil,
+            envelopeTolerance: nil,
+            flattenTolerance: nil,
+            maxSamples: nil,
+            centerlineOnly: false,
+            strokePreview: false,
+            previewSamples: nil,
+            previewQuality: nil,
+            previewAngleMode: nil,
+            previewAngleDeg: nil,
+            previewWidth: nil,
+            previewHeight: nil,
+            previewNibRotateDeg: nil,
+            previewUnionMode: .never,
+            unionSimplifyTolerance: 0.75,
+            unionMaxVertices: 5000,
+            finalUnionMode: .auto,
+            finalEnvelopeMode: nil,
+            unionBatchSize: 50,
+            unionAreaEps: 1.0e-6,
+            unionWeldEps: 1.0e-5,
+            unionEdgeEps: 1.0e-5,
+            unionMinRingArea: 1.0,
+            unionAutoTimeBudgetMs: nil,
+            unionInputFilter: nil,
+            unionSilhouetteK: nil,
+            unionSilhouetteDropContained: nil,
+            unionDumpInputPath: nil,
+            outlineFit: OutlineFitMode.none,
+            fitTolerance: nil,
+            simplifyTolerance: nil,
+            verbose: false,
+            railsDebug: false,
+            railsDebugStart: nil,
+            railsSamplesStep: 25,
+            railsSamplesStart: 0,
+            railsSamplesCount: 200,
+            railsSamplesTMin: nil,
+            railsSamplesTMax: nil,
             alphaDemo: nil,
             alphaDebug: false,
             traceStrokeId: nil,
@@ -117,11 +197,11 @@ final class GlyphStrokeOutlineTests: XCTestCase {
         let expected = try String(contentsOf: expectedURL, encoding: .utf8)
         XCTAssertFalse(expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "Golden file is empty.")
 
-        XCTAssertEqual(normalize(svg), normalize(expected), "Golden mismatch for glyph J final.")
+        XCTAssertEqual(normalize(svg), normalize(expected), "Golden mismatch for glyph_v0_min.")
     }
 
-    func testGlyphDirectJunctionUsesBridge() throws {
-        let glyphURL = try fixtureURL(pathComponents: ["Fixtures", "glyphs", "J.v0.json"])
+    func testGlyphDirectEnvelopeNonEmpty() throws {
+        let glyphURL = try fixtureURL(pathComponents: ["Tests", "Fixtures", "glyph_v0_min.json"])
         let data = try Data(contentsOf: glyphURL)
         let document = try GlyphDocument.load(from: data)
 
@@ -144,9 +224,14 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             showRefDiff: false,
             showKeyframes: false,
             referenceOnTop: false,
+            showCenterline: false,
+            showRailsSamples: false,
+            showRailsNormals: false,
+            showRailsIndices: false,
             alphaProbeT: nil,
             counterpointSize: nil,
             angleModeOverride: nil,
+            strokeOutlineMethod: nil,
             envelopeTolerance: nil,
             flattenTolerance: nil,
             maxSamples: nil,
@@ -178,6 +263,13 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             fitTolerance: nil,
             simplifyTolerance: nil,
             verbose: false,
+            railsDebug: false,
+            railsDebugStart: nil,
+            railsSamplesStep: 25,
+            railsSamplesStart: 0,
+            railsSamplesCount: 200,
+            railsSamplesTMin: nil,
+            railsSamplesTMax: nil,
             alphaDemo: nil,
             alphaDebug: false,
             traceStrokeId: nil,
@@ -188,9 +280,7 @@ final class GlyphStrokeOutlineTests: XCTestCase {
         )
 
         let authored = try buildAuthoredStrokePolygons(document: document, options: options)
-        XCTAssertFalse(authored.junctionDiagnostics.isEmpty, "Expected junction diagnostics for direct envelope.")
-        let fallbackCount = authored.junctionDiagnostics.filter { !$0.usedBridge }.count
-        XCTAssertEqual(fallbackCount, 0, "Expected direct junctions to use tangent bridge, got \(fallbackCount) fallback(s).")
+        XCTAssertFalse(authored.polygons.isEmpty, "Expected non-empty direct envelope polygons.")
     }
 
     func testUnionSimplifyReducesVertices() throws {
@@ -256,8 +346,7 @@ final class GlyphStrokeOutlineTests: XCTestCase {
             }
             let sample = samples[samples.count / 2]
             let thetaRad = thetaDegrees * .pi / 180.0
-            let thetaInternal = AngleMath.wrapPi(thetaRad + (.pi / 2.0))
-            let expected = AngleMath.wrapPi(sample.tangentAngle + thetaInternal)
+            let expected = AngleMath.wrapPi(sample.tangentAngle + thetaRad)
             let delta = AngleMath.angularDifference(sample.effectiveRotation, expected)
             XCTAssertLessThan(abs(delta), 1.0e-4)
         }

@@ -8,6 +8,7 @@ import Adapters
 final class GoldenSVGTests: XCTestCase {
     func testGoldenSVGs() throws {
         try SlowTestGate.requireSlowTests()
+        // Goldens cover stable geometry invariants; intentionally exclude WIP glyphs like J.
         let cases = [
             "straight-absolute",
             "straight-tangent-relative",
@@ -15,7 +16,9 @@ final class GoldenSVGTests: XCTestCase {
             "l-shape",
             "alpha-terminal",
             "teardrop-demo",
-            "global-angle-scurve"
+            "global-angle-scurve",
+            "line_asym_width",
+            "line_circle_endcap"
         ]
 
         for name in cases {

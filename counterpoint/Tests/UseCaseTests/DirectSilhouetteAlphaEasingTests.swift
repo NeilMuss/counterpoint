@@ -75,10 +75,12 @@ final class DirectSilhouetteAlphaEasingTests: XCTestCase {
         let sample1 = makeSample(t: t1, widthTrack: widthTrack, evaluator: evaluator)
         let provider: DirectSilhouetteTracer.DirectSilhouetteParamProvider = { t, _ in
             let width = evaluator.evaluate(widthTrack, at: t)
+            let widthLeft = width * 0.5
+            let widthRight = width * 0.5
             let height = 6.0
             let theta = 0.0
             let effectiveRotation = theta
-            return (width, height, theta, effectiveRotation, 0.0)
+            return (width, widthLeft, widthRight, height, theta, effectiveRotation, 0.0)
         }
 
         let deviation = DirectSilhouetteTracer.railDeviationForTest(a: sample0, b: sample1, paramsProvider: provider, epsilon: 1.0e-9)
@@ -100,10 +102,12 @@ final class DirectSilhouetteAlphaEasingTests: XCTestCase {
         let sample1 = makeSample(t: t1, widthTrack: widthTrack, evaluator: evaluator)
         let provider: DirectSilhouetteTracer.DirectSilhouetteParamProvider = { t, _ in
             let width = evaluator.evaluate(widthTrack, at: t)
+            let widthLeft = width * 0.5
+            let widthRight = width * 0.5
             let height = 6.0
             let theta = 0.0
             let effectiveRotation = theta
-            return (width, height, theta, effectiveRotation, 0.0)
+            return (width, widthLeft, widthRight, height, theta, effectiveRotation, 0.0)
         }
 
         let deviation = DirectSilhouetteTracer.railDeviationForTest(a: sample0, b: sample1, paramsProvider: provider, epsilon: 1.0e-9)
@@ -122,6 +126,8 @@ final class DirectSilhouetteAlphaEasingTests: XCTestCase {
             point: point,
             tangentAngle: tangentAngle,
             width: width,
+            widthLeft: width * 0.5,
+            widthRight: width * 0.5,
             height: height,
             theta: 0.0,
             effectiveRotation: 0.0,

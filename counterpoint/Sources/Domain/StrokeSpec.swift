@@ -9,6 +9,52 @@ public enum CapStyle: String, Codable {
     case butt
     case square
     case round
+    case circle
+}
+
+public struct CapStylePair: Codable, Equatable {
+    public var start: CapStyle
+    public var end: CapStyle
+
+    public init(start: CapStyle, end: CapStyle) {
+        self.start = start
+        self.end = end
+    }
+
+    public init(_ style: CapStyle) {
+        self.start = style
+        self.end = style
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case start
+        case end
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            let start = try container.decodeIfPresent(CapStyle.self, forKey: .start) ?? .butt
+            let end = try container.decodeIfPresent(CapStyle.self, forKey: .end) ?? start
+            self.start = start
+            self.end = end
+            return
+        }
+        let single = try decoder.singleValueContainer()
+        let style = (try? single.decode(CapStyle.self)) ?? .butt
+        self.start = style
+        self.end = style
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        if start == end {
+            var container = encoder.singleValueContainer()
+            try container.encode(start)
+        } else {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(start, forKey: .start)
+            try container.encode(end, forKey: .end)
+        }
+    }
 }
 
 public enum JoinStyle: Codable, Equatable {
@@ -185,11 +231,14 @@ public struct StrokeSpec: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case path
         case width
+        case widthLeft
+        case widthRight
         case height
         case theta
         case offset
         case alpha
         case angleMode
+        case tangentPhaseDegrees
         case capStyle
         case joinStyle
         case counterpointShape
@@ -201,12 +250,15 @@ public struct StrokeSpec: Codable, Equatable {
     }
     public var path: BezierPath
     public var width: ParamTrack
+    public var widthLeft: ParamTrack?
+    public var widthRight: ParamTrack?
     public var height: ParamTrack
     public var theta: ParamTrack
     public var offset: ParamTrack?
     public var alpha: ParamTrack?
     public var angleMode: AngleMode
-    public var capStyle: CapStyle
+    public var tangentPhaseDegrees: Double?
+    public var capStyle: CapStylePair
     public var joinStyle: JoinStyle
     public var counterpointShape: CounterpointShape
     public var sampling: SamplingSpec
@@ -218,12 +270,15 @@ public struct StrokeSpec: Codable, Equatable {
     public init(
         path: BezierPath,
         width: ParamTrack,
+        widthLeft: ParamTrack? = nil,
+        widthRight: ParamTrack? = nil,
         height: ParamTrack,
         theta: ParamTrack,
         offset: ParamTrack? = nil,
         alpha: ParamTrack? = nil,
         angleMode: AngleMode,
-        capStyle: CapStyle = .butt,
+        tangentPhaseDegrees: Double? = nil,
+        capStyle: CapStylePair = CapStylePair(.butt),
         joinStyle: JoinStyle = .round,
         counterpointShape: CounterpointShape = .rectangle,
         sampling: SamplingSpec,
@@ -234,11 +289,14 @@ public struct StrokeSpec: Codable, Equatable {
     ) {
         self.path = path
         self.width = width
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
         self.height = height
         self.theta = theta
         self.offset = offset
         self.alpha = alpha
         self.angleMode = angleMode
+        self.tangentPhaseDegrees = tangentPhaseDegrees
         self.capStyle = capStyle
         self.joinStyle = joinStyle
         self.counterpointShape = counterpointShape
@@ -253,12 +311,15 @@ public struct StrokeSpec: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         path = try container.decode(BezierPath.self, forKey: .path)
         width = try container.decode(ParamTrack.self, forKey: .width)
+        widthLeft = try container.decodeIfPresent(ParamTrack.self, forKey: .widthLeft)
+        widthRight = try container.decodeIfPresent(ParamTrack.self, forKey: .widthRight)
         height = try container.decode(ParamTrack.self, forKey: .height)
         theta = try container.decode(ParamTrack.self, forKey: .theta)
         offset = try container.decodeIfPresent(ParamTrack.self, forKey: .offset)
         alpha = try container.decodeIfPresent(ParamTrack.self, forKey: .alpha)
         angleMode = try container.decode(AngleMode.self, forKey: .angleMode)
-        capStyle = try container.decodeIfPresent(CapStyle.self, forKey: .capStyle) ?? .butt
+        tangentPhaseDegrees = try container.decodeIfPresent(Double.self, forKey: .tangentPhaseDegrees)
+        capStyle = try container.decodeIfPresent(CapStylePair.self, forKey: .capStyle) ?? CapStylePair(.butt)
         joinStyle = try container.decodeIfPresent(JoinStyle.self, forKey: .joinStyle) ?? .round
         counterpointShape = try container.decodeIfPresent(CounterpointShape.self, forKey: .counterpointShape) ?? .rectangle
         sampling = try container.decode(SamplingSpec.self, forKey: .sampling)
@@ -272,6 +333,12 @@ public struct StrokeSpec: Codable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(path, forKey: .path)
         try container.encode(width, forKey: .width)
+        if let widthLeft {
+            try container.encode(widthLeft, forKey: .widthLeft)
+        }
+        if let widthRight {
+            try container.encode(widthRight, forKey: .widthRight)
+        }
         try container.encode(height, forKey: .height)
         try container.encode(theta, forKey: .theta)
         if let offset {
@@ -281,6 +348,9 @@ public struct StrokeSpec: Codable, Equatable {
             try container.encode(alpha, forKey: .alpha)
         }
         try container.encode(angleMode, forKey: .angleMode)
+        if let tangentPhaseDegrees {
+            try container.encode(tangentPhaseDegrees, forKey: .tangentPhaseDegrees)
+        }
         try container.encode(capStyle, forKey: .capStyle)
         try container.encode(joinStyle, forKey: .joinStyle)
         try container.encode(counterpointShape, forKey: .counterpointShape)
@@ -307,10 +377,17 @@ public struct Sample: Codable, Equatable {
     public var point: Point
     public var tangentAngle: Double
     public var width: Double
+    public var widthLeft: Double
+    public var widthRight: Double
     public var height: Double
     public var theta: Double
     public var effectiveRotation: Double
     public var alpha: Double
+    public var debugSkeletonIndex: Int?
+    public var debugSkeletonId: String?
+    public var debugSegmentIndex: Int?
+    public var debugSegmentKind: String?
+    public var debugSegmentU: Double?
 
     public init(
         uGeom: Double,
@@ -319,10 +396,17 @@ public struct Sample: Codable, Equatable {
         point: Point,
         tangentAngle: Double,
         width: Double,
+        widthLeft: Double,
+        widthRight: Double,
         height: Double,
         theta: Double,
         effectiveRotation: Double,
-        alpha: Double
+        alpha: Double,
+        debugSkeletonIndex: Int? = nil,
+        debugSkeletonId: String? = nil,
+        debugSegmentIndex: Int? = nil,
+        debugSegmentKind: String? = nil,
+        debugSegmentU: Double? = nil
     ) {
         self.uGeom = uGeom
         self.uGrid = uGrid
@@ -330,10 +414,17 @@ public struct Sample: Codable, Equatable {
         self.point = point
         self.tangentAngle = tangentAngle
         self.width = width
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
         self.height = height
         self.theta = theta
         self.effectiveRotation = effectiveRotation
         self.alpha = alpha
+        self.debugSkeletonIndex = debugSkeletonIndex
+        self.debugSkeletonId = debugSkeletonId
+        self.debugSegmentIndex = debugSegmentIndex
+        self.debugSegmentKind = debugSegmentKind
+        self.debugSegmentU = debugSegmentU
     }
 }
 

@@ -13,13 +13,12 @@ public struct CounterpointStamping {
     }
 
     private func rectangleRing(for sample: Sample) -> Ring {
-        let halfWidth = sample.width * 0.5
         let halfHeight = sample.height * 0.5
         let local: [Point] = [
-            Point(x: -halfWidth, y: -halfHeight),
-            Point(x: halfWidth, y: -halfHeight),
-            Point(x: halfWidth, y: halfHeight),
-            Point(x: -halfWidth, y: halfHeight)
+            Point(x: -sample.widthLeft, y: -halfHeight),
+            Point(x: sample.widthRight, y: -halfHeight),
+            Point(x: sample.widthRight, y: halfHeight),
+            Point(x: -sample.widthLeft, y: halfHeight)
         ]
         return transform(local: local, sample: sample)
     }
