@@ -8,6 +8,8 @@ public struct PathDomain {
         public let unitTangent: Point
         public let cumulativeLength: Double
         public let s: Double
+
+        public var gt: Double { s }
     }
 
     private struct TableEntry {

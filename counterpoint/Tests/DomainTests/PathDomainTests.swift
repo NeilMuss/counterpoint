@@ -66,6 +66,21 @@ final class PathDomainTests: XCTestCase {
         XCTAssertEqual(lastA?.point.y ?? -1, lastB?.point.y ?? -2, accuracy: 1.0e-9)
     }
 
+    func testPathSamplesCarryGlobalParameter() {
+        let path = multiSegmentPath()
+        let domain = PathDomain(path: path, samplesPerSegment: 24)
+        XCTAssertFalse(domain.samples.isEmpty)
+
+        for i in 0..<domain.samples.count {
+            let sample = domain.samples[i]
+            XCTAssertGreaterThanOrEqual(sample.gt, 0.0)
+            XCTAssertLessThanOrEqual(sample.gt, 1.0)
+            if i > 0 {
+                XCTAssertGreaterThanOrEqual(sample.gt, domain.samples[i - 1].gt)
+            }
+        }
+    }
+
     private func multiSegmentPath() -> BezierPath {
         BezierPath(segments: [
             CubicBezier(
