@@ -131,6 +131,23 @@ struct SVGPathBuilder {
         return "<path fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(format(strokeWidth))\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"\(d)\"/>"
     }
 
+    func bumpMarkerElement(at point: Point, label: String, id: String) -> String {
+        let size = 6.0
+        let x = format(point.x)
+        let y = format(point.y)
+        let color = "#e6502d"
+        let lineWidth = format(1.2)
+        let textX = format(point.x + size * 0.8)
+        let textY = format(point.y - size * 0.8)
+        return """
+        <g id=\"\(id)\">
+          <line x1=\"\(format(point.x - size))\" y1=\"\(y)\" x2=\"\(format(point.x + size))\" y2=\"\(y)\" stroke=\"\(color)\" stroke-width=\"\(lineWidth)\"/>
+          <line x1=\"\(x)\" y1=\"\(format(point.y - size))\" x2=\"\(x)\" y2=\"\(format(point.y + size))\" stroke=\"\(color)\" stroke-width=\"\(lineWidth)\"/>
+          <text x=\"\(textX)\" y=\"\(textY)\" fill=\"\(color)\" font-size=\"10\">\(label)</text>
+        </g>
+        """
+    }
+
     func pathData(for polygon: Polygon) -> String {
         let outer = ringPath(polygon.outer)
         let holes = polygon.holes.map { ringPath($0) }.joined(separator: " ")

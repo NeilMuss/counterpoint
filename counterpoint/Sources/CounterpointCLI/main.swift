@@ -718,11 +718,21 @@ struct CLIOptions {
     var fitTolerance: Double?
     var simplifyTolerance: Double?
     var verbose: Bool
+    var labelBump: Bool = false
+    var labelBumpGT0: Double = 0.60
+    var labelBumpGT1: Double = 0.90
+    var labelBumpSide: BumpLabelSide = .left
 }
 
 enum UnionInputFilter: String {
     case none
     case silhouette
+}
+
+enum BumpLabelSide: String {
+    case left
+    case right
+    case both
 }
 
 private struct UnionDumpOptions {
@@ -860,6 +870,30 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.quiet = true
         case "--verbose":
             options.verbose = true
+        case "--label-bump":
+            options.labelBump = true
+        case "--label-bump-gt0":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--label-bump-gt0 requires a number")
+            }
+            options.labelBumpGT0 = value
+            index += 1
+        case "--label-bump-gt1":
+            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
+                throw CLIError.invalidArguments("--label-bump-gt1 requires a number")
+            }
+            options.labelBumpGT1 = value
+            index += 1
+        case "--label-bump-side":
+            guard index + 1 < args.count else {
+                throw CLIError.invalidArguments("--label-bump-side requires left|right|both")
+            }
+            let raw = args[index + 1].lowercased()
+            guard let side = BumpLabelSide(rawValue: raw) else {
+                throw CLIError.invalidArguments("--label-bump-side must be left|right|both")
+            }
+            options.labelBumpSide = side
+            index += 1
         case "--bridges":
             options.useBridges = true
         case "--no-bridges":
@@ -2798,6 +2832,11 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
     }
 
+    let svg = try buildGlyphSVG(document: document, options: options, inputPath: inputPath)
+    try svg.write(to: outputURL, atomically: true, encoding: .utf8)
+}
+
+func buildGlyphSVG(document: GlyphDocument, options: CLIOptions, inputPath: String?) throws -> String {
     let referenceRender: SVGPathBuilder.BackgroundGlyphRender?
     if let reference = document.derived?.reference {
         let resolvedPath = resolveReferencePath(reference.source, inputPath: inputPath)
@@ -2867,16 +2906,91 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
         authoredPolygons = authored.polygons
         authoredFittedPaths = authored.fittedPaths
     }
-    let svg = builder.svgDocumentForGlyphReference(
+
+    var debugElements = centerlines
+    if options.labelBump {
+        let markers = buildBumpMarkers(document: document, options: options)
+        debugElements.append(contentsOf: markers.map { marker in
+            builder.bumpMarkerElement(at: marker.position, label: marker.label, id: marker.id)
+        })
+    }
+
+    return builder.svgDocumentForGlyphReference(
         frameBounds: frameBounds,
         size: options.svgSize,
         padding: options.padding,
         reference: referenceRender,
-        centerlinePaths: centerlines,
+        centerlinePaths: debugElements,
         polygons: strokePreviewPolygons + authoredPolygons,
         fittedPaths: authoredFittedPaths
     )
-    try svg.write(to: outputURL, atomically: true, encoding: .utf8)
+}
+
+private struct BumpMarker {
+    let position: Point
+    let label: String
+    let id: String
+}
+
+private func buildBumpMarkers(document: GlyphDocument, options: CLIOptions) -> [BumpMarker] {
+    let samplesPerSegment = max(8, options.previewSamples ?? 60)
+    let samples = collectStrokeSamples(document: document, samplesPerSegment: samplesPerSegment)
+    guard !samples.isEmpty else { return [] }
+    let gt0 = options.labelBumpGT0
+    let gt1 = options.labelBumpGT1
+
+    let sides: [BumpLabelSide] = options.labelBumpSide == .both ? [.left, .right] : [options.labelBumpSide]
+    var markers: [BumpMarker] = []
+    for side in sides {
+        let railSide: RailSide = (side == .right) ? .right : .left
+        let runs = adaptRailsToRailRuns2(side: railSide, samples: samples)
+        let chain = buildRailChain2(side: railSide, runs: runs)
+        let window = windowRailChain2(chain, gt0: gt0, gt1: gt1)
+        if let bump = detectRailChainBump(window, side: railSide) {
+            let sideLabel = (side == .right) ? "R" : "L"
+            markers.append(
+                BumpMarker(
+                    position: bump.position,
+                    label: "BUMP \(sideLabel) gt=\(String(format: "%.3f", bump.chainGT))",
+                    id: "debug-bump-\(sideLabel.lowercased())"
+                )
+            )
+        }
+    }
+    return markers
+}
+
+private func collectStrokeSamples(document: GlyphDocument, samplesPerSegment: Int) -> [PathDomain.Sample] {
+    let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
+    var samples: [PathDomain.Sample] = []
+    samples.reserveCapacity(document.inputs.geometry.paths.count * samplesPerSegment)
+
+    if !document.inputs.geometry.strokes.isEmpty {
+        for stroke in document.inputs.geometry.strokes {
+            for skeletonId in stroke.skeletons {
+                guard let path = pathById[skeletonId],
+                      let bezierPath = bezierPath(from: path) else { continue }
+                let domain = PathDomain(path: bezierPath, samplesPerSegment: samplesPerSegment)
+                samples.append(contentsOf: domain.samples)
+            }
+        }
+    } else {
+        for path in document.inputs.geometry.paths {
+            guard let bezierPath = bezierPath(from: path) else { continue }
+            let domain = PathDomain(path: bezierPath, samplesPerSegment: samplesPerSegment)
+            samples.append(contentsOf: domain.samples)
+        }
+    }
+    return samples
+}
+
+private func bezierPath(from path: PathGeometry) -> BezierPath? {
+    let cubics: [CubicBezier] = path.segments.compactMap { segment in
+        guard case .cubic(let cubic) = segment else { return nil }
+        return cubic
+    }
+    guard !cubics.isEmpty else { return nil }
+    return BezierPath(segments: cubics)
 }
 
 private func resolveReferencePath(_ source: String, inputPath: String?) -> String {
@@ -4084,7 +4198,7 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N] [--label-bump] [--label-bump-gt0 N] [--label-bump-gt1 N] [--label-bump-side left|right|both]\n".utf8))
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
