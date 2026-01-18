@@ -79,5 +79,25 @@ public func buildRailChain2(side: RailSide, runs: [RailRun2]) -> RailChain2 {
         }
     }
 
+    if updatedRuns.count > 1 {
+        for i in 0..<(updatedRuns.count - 1) {
+            guard let a = updatedRuns[i].samples.last?.p,
+                  let b = updatedRuns[i + 1].samples.first?.p else {
+                continue
+            }
+            edges.append(
+                ChainEdge2(
+                    kind: .connector,
+                    a: a,
+                    b: b,
+                    fromRun: updatedRuns[i].id,
+                    toRun: updatedRuns[i + 1].id,
+                    length: (b - a).length,
+                    contributesToMetric: false
+                )
+            )
+        }
+    }
+
     return RailChain2(side: side, runs: updatedRuns, edges: edges, metricLength: metricLength)
 }
