@@ -69,12 +69,6 @@ Example encoding for a simple stroke spec and path:
 }
 ```
 
-`capStyle` accepts `"butt" | "square" | "round" | "circle"` or `{ "start": "...", "end": "..." }` for per-end caps (defaults to butt).
-
-Optional asymmetric nib widths:
-- `widthLeft` and `widthRight` can be provided alongside `width`.
-- When omitted, both default to `width / 2`.
-
 ## Glyph JSON v0 (Fixed Frame / One-Way Evaluation)
 - Glyph placement and metrics live only in `frame`; geometry is never translated to encode metrics.
 - `derived` is an optional cache. It never feeds back into inputs or validation.

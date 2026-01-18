@@ -51,10 +51,6 @@ public struct PathPolyline: Equatable {
         if let angle = nonZeroAngle(fromIndex: index) {
             return angle
         }
-        let chord = points[points.count - 1] - points[0]
-        if hypot(chord.x, chord.y) > 0 {
-            return atan2(chord.y, chord.x)
-        }
         return fallbackAngle
     }
 

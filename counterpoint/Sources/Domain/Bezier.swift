@@ -38,33 +38,6 @@ public struct CubicBezier: Codable, Equatable {
         )
     }
 
-    public func safeTangentAngle(at u: Double, epsilon: Double = 1.0e-8, delta: Double = 1.0e-3) -> Double {
-        let t = max(0.0, min(1.0, u))
-        func angleForDerivative(_ t: Double) -> Double? {
-            let d = derivative(at: t)
-            if hypot(d.x, d.y) > epsilon {
-                return atan2(d.y, d.x)
-            }
-            return nil
-        }
-        if let angle = angleForDerivative(t) {
-            return angle
-        }
-        let tForward = max(0.0, min(1.0, t + delta))
-        if let angle = angleForDerivative(tForward) {
-            return angle
-        }
-        let tBackward = max(0.0, min(1.0, t - delta))
-        if let angle = angleForDerivative(tBackward) {
-            return angle
-        }
-        let chord = point(at: 1.0) - point(at: 0.0)
-        if hypot(chord.x, chord.y) > epsilon {
-            return atan2(chord.y, chord.x)
-        }
-        return 0.0
-    }
-
     public func subdivided() -> (left: CubicBezier, right: CubicBezier) {
         let q0 = midpoint(p0, p1)
         let q1 = midpoint(p1, p2)

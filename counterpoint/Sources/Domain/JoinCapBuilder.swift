@@ -8,29 +8,22 @@ public struct JoinCapBuilder {
     }
 
     public func capRings(point: Point, direction: Point, radius: Double, style: CapStyle) -> [Ring] {
-        guard radius > 0 else { return [] }
+        guard let dir = direction.normalized(), radius > 0 else { return [] }
+        let normal = dir.leftNormal()
+
         switch style {
         case .butt:
             return []
-        case .circle:
-            return [fullDisk(point: point, radius: radius, segments: 48)]
-        case .square, .round:
-            guard let dir = direction.normalized() else { return [] }
-            let normal = dir.leftNormal()
-            switch style {
-            case .square:
-                let center = point + dir * radius
-                let half = radius
-                let p0 = center + dir * half + normal * half
-                let p1 = center + dir * half - normal * half
-                let p2 = center - dir * half - normal * half
-                let p3 = center - dir * half + normal * half
-                return [closeRingIfNeeded([p0, p1, p2, p3])]
-            case .round:
-                return [halfDisk(point: point, direction: dir, radius: radius)]
-            case .butt, .circle:
-                return []
-            }
+        case .square:
+            let center = point + dir * radius
+            let half = radius
+            let p0 = center + dir * half + normal * half
+            let p1 = center + dir * half - normal * half
+            let p2 = center - dir * half - normal * half
+            let p3 = center - dir * half + normal * half
+            return [closeRingIfNeeded([p0, p1, p2, p3])]
+        case .round:
+            return [halfDisk(point: point, direction: dir, radius: radius)]
         }
     }
 
@@ -101,19 +94,6 @@ public struct JoinCapBuilder {
         for i in 0...steps {
             let t = Double(i) / Double(steps)
             let a = start + (end - start) * t
-            let p = Point(x: point.x + cos(a) * radius, y: point.y + sin(a) * radius)
-            points.append(p)
-        }
-        return closeRingIfNeeded(points)
-    }
-
-    private func fullDisk(point: Point, radius: Double, segments: Int) -> Ring {
-        let steps = max(12, segments)
-        var points: [Point] = []
-        points.reserveCapacity(steps + 1)
-        for i in 0...steps {
-            let t = Double(i) / Double(steps)
-            let a = t * (.pi * 2.0)
             let p = Point(x: point.x + cos(a) * radius, y: point.y + sin(a) * radius)
             points.append(p)
         }

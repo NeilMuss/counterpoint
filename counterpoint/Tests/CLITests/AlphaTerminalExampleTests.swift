@@ -28,10 +28,10 @@ final class AlphaTerminalExampleTests: XCTestCase {
         let spec = try JSONDecoder().decode(StrokeSpec.self, from: specData)
         let evaluator = DefaultParamEvaluator()
 
+        let width95 = evaluator.evaluate(spec.width, at: 0.95)
         let width98 = evaluator.evaluate(spec.width, at: 0.98)
-        let width995 = evaluator.evaluate(spec.width, at: 0.995)
 
-        XCTAssertLessThan(width995, width98 * 0.5)
+        XCTAssertLessThan(width98, width95 * 0.5)
     }
 
     func testAlphaTerminalRunsWithPreviewAndFinal() throws {

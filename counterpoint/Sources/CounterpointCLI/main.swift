@@ -51,23 +51,9 @@ struct CLI {
             throw CLIError.runtime("Input data is empty.")
         }
 
-        DefaultParamEvaluator.enableAlphaMonotonicityCheck = options.verbose || options.alphaDebug
-        DefaultParamEvaluator.alphaMonotonicityVerbose = options.verbose || options.alphaDebug
-        GenerateStrokeOutlineUseCase.logLaneOffsetSamples = options.verbose
-        GenerateStrokeOutlineUseCase.logStamping = options.verbose
-        GenerateStrokeOutlineUseCase.logAdaptiveSampling = options.verbose
-        GenerateStrokeOutlineUseCase.logRailsDebug = options.railsDebug
-        GenerateStrokeOutlineUseCase.logRailsDebugStart = options.railsDebugStart
-
         let decoder = JSONDecoder()
         if let glyphDoc = try? decoder.decode(GlyphDocument.self, from: inputData),
            glyphDoc.schema == GlyphDocument.schemaId {
-            if options.verbose || options.dumpKeyframes {
-                if options.verbose {
-                    dumpDecodedStrokeParams(document: glyphDoc, options: options)
-                }
-                dumpDecodedKeyframes(document: glyphDoc, options: options)
-            }
             try GlyphDocumentValidator().validate(glyphDoc)
             try renderGlyphDocument(glyphDoc, options: options, inputPath: options.inputPath)
             return
@@ -87,24 +73,14 @@ struct CLI {
         if let override = options.angleModeOverride {
             spec.angleMode = override
         }
-        if let outlineMethod = options.strokeOutlineMethod {
-            var output = spec.output ?? OutputSpec()
-            output.outlineMethod = outlineMethod
-            spec.output = output
-        }
         if options.envelopeTolerance != nil || options.flattenTolerance != nil || options.maxSamples != nil {
             let base = spec.samplingPolicy ?? SamplingPolicy.fromSamplingSpec(spec.sampling)
             let overridden = SamplingPolicy(
                 flattenTolerance: options.flattenTolerance ?? base.flattenTolerance,
                 envelopeTolerance: options.envelopeTolerance ?? base.envelopeTolerance,
-                railTolerance: base.railTolerance,
                 maxSamples: options.maxSamples ?? base.maxSamples,
                 maxRecursionDepth: base.maxRecursionDepth,
-                minParamStep: base.minParamStep,
-                rotationThresholdDegrees: base.rotationThresholdDegrees,
-                turnThresholdDegrees: base.turnThresholdDegrees,
-                widthChangeMin: base.widthChangeMin,
-                widthChangeFactor: base.widthChangeFactor
+                minParamStep: base.minParamStep
             )
             spec.samplingPolicy = overridden
         }
@@ -147,7 +123,7 @@ struct CLI {
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
             }
             let builder = SVGPathBuilder()
-            let debugOverlay = (options.debugSamples || options.showAlpha) ? makeDebugOverlay(spec: spec, options: options) : nil
+            let debugOverlay = options.debugSamples ? makeDebugOverlay(spec: spec, options: options) : nil
             let backgroundGlyph: SVGPathBuilder.BackgroundGlyphRender?
             if let glyph = spec.backgroundGlyph {
                 guard let source = SVGPathBuilder.loadBackgroundGlyph(from: glyph.svgPath) else {
@@ -382,27 +358,20 @@ struct CLI {
             }
         }
 
-    let needsEnvelope = config.view.contains(.envelope)
-    let preferRailsForJoin = config.envelopeMode == .union && config.joinStyle != .round
-    let fallbackToSamples = needsEnvelope && config.envelopeMode == .union && geometry.unionPolygons.isEmpty
-    let polygons: PolygonSet
-    if needsEnvelope {
-        if config.envelopeMode == .union && !preferRailsForJoin {
-            polygons = geometry.unionPolygons.isEmpty
-                ? geometry.stampRings.map { Polygon(outer: $0) }
-                : geometry.unionPolygons
-        } else if config.envelopeMode == .direct {
-            var combined: PolygonSet = []
-            if !geometry.envelopeOutline.isEmpty {
-                combined.append(Polygon(outer: geometry.envelopeOutline))
+        let needsEnvelope = config.view.contains(.envelope)
+        let preferRailsForJoin = config.envelopeMode == .union && config.joinStyle != .round
+        let fallbackToSamples = needsEnvelope && config.envelopeMode == .union && geometry.unionPolygons.isEmpty
+        let polygons: PolygonSet
+        if needsEnvelope {
+            if config.envelopeMode == .union && !preferRailsForJoin {
+                polygons = geometry.unionPolygons.isEmpty
+                    ? geometry.stampRings.map { Polygon(outer: $0) }
+                    : geometry.unionPolygons
+            } else {
+                polygons = geometry.envelopeOutline.isEmpty ? [] : [Polygon(outer: geometry.envelopeOutline)]
             }
-            combined.append(contentsOf: geometry.unionPolygons)
-            polygons = combined
         } else {
-            polygons = geometry.envelopeOutline.isEmpty ? [] : [Polygon(outer: geometry.envelopeOutline)]
-        }
-    } else {
-        polygons = []
+            polygons = []
         }
 
         let fitTolerance = config.fitTolerance ?? defaultFitTolerance(polygons: polygons)
@@ -445,13 +414,7 @@ struct CLI {
             renderPolygons = []
         }
 
-        if config.envelopeMode == .direct, !geometry.envelopeOutline.isEmpty {
-            if let directPath = catmullRomFittedPath(from: geometry.envelopeOutline) {
-                fittedPaths = [directPath]
-            }
-        }
-
-        if config.outlineFit == .bezier, config.envelopeMode != .direct, let fitted = fittedPaths {
+        if config.outlineFit == .bezier, let fitted = fittedPaths {
             if outlineHasSelfIntersection(fitted) {
                 if config.verbose {
                     print("warning: fitted outline self-intersects, falling back to raw envelope")
@@ -459,19 +422,6 @@ struct CLI {
                 fittedPaths = nil
                 renderPolygons = polygons
             }
-        }
-
-        let alphaChart: SVGPathBuilder.AlphaDebugChart?
-        if config.view.contains(.alpha) {
-            let width0 = config.widthStart ?? config.sizeStart
-            let width1 = config.widthEnd ?? config.sizeEnd
-            let widthTrack = ParamTrack(keyframes: [
-                Keyframe(t: 0.0, value: width0, interpolationToNext: Interpolation(alpha: 0.0)),
-                Keyframe(t: 1.0, value: width1)
-            ])
-            alphaChart = makeAlphaChart(track: widthTrack, tProbe: 0.5, trackLabel: "width", alphaOverride: nil)
-        } else {
-            alphaChart = nil
         }
 
         let overlay = SVGDebugOverlay(
@@ -482,23 +432,11 @@ struct CLI {
             tangentRays: geometry.tangentRays,
             angleRays: geometry.angleRays,
             offsetRays: geometry.offsetRays,
-            offsetCenterline: geometry.offsetCenterline,
             envelopeLeft: config.view.contains(.rails) ? geometry.envelopeLeft : [],
             envelopeRight: config.view.contains(.rails) ? geometry.envelopeRight : [],
             envelopeOutline: config.view.contains(.envelope) ? geometry.envelopeOutline : [],
-            capPoints: geometry.capPoints,
-            leftRailSamples: [],
-            rightRailSamples: [],
-            showRailsSamples: false,
-            showRailsNormals: false,
-            showRailsIndices: false,
-            railsSampleOptions: SVGDebugOverlay.RailsSampleOptions(),
-            junctionPatches: config.view.contains(.junctions) ? geometry.junctionPatches : [],
-            junctionCorridors: config.view.contains(.junctions) ? geometry.junctionCorridors : [],
-            junctionControlPoints: config.view.contains(.junctions) ? geometry.junctionControlPoints : [],
             showUnionOutline: config.view.contains(.union),
-            unionPolygons: geometry.unionPolygons,
-            alphaChart: alphaChart
+            unionPolygons: geometry.unionPolygons
         )
 
         let builder = SVGPathBuilder()
@@ -748,26 +686,8 @@ struct CLIOptions {
     var showEnvelope: Bool?
     var showEnvelopeUnion: Bool
     var showRays: Bool?
-    var showAlpha: Bool
-    var showJunctions: Bool
-    var showRefDiff: Bool
-    var showKeyframes: Bool
-    var referenceOnTop: Bool
-    var showCenterline: Bool
-    var showRailsSamples: Bool
-    var showRailsNormals: Bool
-    var showRailsIndices: Bool
-    var showRailsJumps: Bool = false
-    var showRailsSupport: Bool = false
-    var showRailsRuns: Bool = false
-    var showRailsRing: Bool = false
-    var showRailsRingSelected: Bool = false
-    var showRailsRingConnectors: Bool = false
-    var showRailsConnectorsOnly: Bool = false
-    var alphaProbeT: Double?
     var counterpointSize: Double?
     var angleModeOverride: AngleMode?
-    var strokeOutlineMethod: StrokeOutlineMethod?
     var envelopeTolerance: Double?
     var flattenTolerance: Double?
     var maxSamples: Int?
@@ -784,7 +704,6 @@ struct CLIOptions {
     var unionSimplifyTolerance: Double?
     var unionMaxVertices: Int?
     var finalUnionMode: FinalUnionMode?
-    var finalEnvelopeMode: FinalEnvelopeMode?
     var unionBatchSize: Int?
     var unionAreaEps: Double?
     var unionWeldEps: Double?
@@ -799,41 +718,6 @@ struct CLIOptions {
     var fitTolerance: Double?
     var simplifyTolerance: Double?
     var verbose: Bool
-    var railsDebug: Bool = false
-    var railsDebugStart: Int? = nil
-    var railsSamplesStep: Int
-    var railsSamplesStart: Int
-    var railsSamplesCount: Int
-    var railsSamplesTMin: Double?
-    var railsSamplesTMax: Double?
-    var railsWindowSkeleton: String? = nil
-    var railsWindowT0: Double? = nil
-    var railsWindowT1: Double? = nil
-    var railsWindowGT0: Double? = nil
-    var railsWindowGT1: Double? = nil
-    var railsWindowRect: CGRect? = nil
-    var ringWindowT0: Double? = nil
-    var ringWindowT1: Double? = nil
-    var ringWindowGT0: Double? = nil
-    var ringWindowGT1: Double? = nil
-    var assertRailsWindow: Bool = false
-    var assertRingWindow: Bool = false
-    var ringWindowExtrema: String? = nil
-    var ringWindowRadius: Double? = nil
-    var assertRingWindowHitsExtrema: Bool = false
-    var ringSamplesStart: Int = 0
-    var ringSamplesCount: Int = 2000
-    var ringLabelStep: Int? = nil
-    var ringLabelCount: Int? = nil
-    var railsJumpThreshold: Double = 20.0
-    var railsJumpsSource: RailsJumpsSource = .selected
-    var alphaDemo: Double?
-    var alphaDebug: Bool
-    var traceStrokeId: String?
-    var traceTMin: Double?
-    var traceTMax: Double?
-    var dumpKeyframes: Bool
-    var diffResolution: Int?
 }
 
 enum UnionInputFilter: String {
@@ -901,34 +785,14 @@ enum ScurveView: String {
     case samples
     case rays
     case rails
-    case railsSamples
-    case railsNormals
-    case railsIndices
-    case railsJumps
-    case railsSupport
-    case railsRuns
-    case railsRing
-    case railsRingSelected
-    case railsRingConnectors
-    case railsConnectorsOnly
-    case caps
-    case junctions
     case union
     case centerline
     case offset
-    case alpha
-    case refDiff
-}
-
-enum RailsJumpsSource: String {
-    case raw
-    case selected
 }
 
 enum EnvelopeMode: String {
     case rails
     case union
-    case direct
 }
 
 enum PreviewUnionMode: String {
@@ -941,28 +805,18 @@ enum FinalUnionMode: String {
     case auto
     case never
     case always
-    case trace
-}
-
-enum FinalEnvelopeMode: String {
-    case direct
 }
 
 struct ScurveGeometry {
     var envelopeLeft: [Point]
     var envelopeRight: [Point]
     var envelopeOutline: Ring
-    var capPoints: [Point]
-    var junctionPatches: [Ring]
-    var junctionCorridors: [Ring]
-    var junctionControlPoints: [Point]
     var unionPolygons: PolygonSet
     var stampRings: [Ring]
     var samplePoints: [Point]
     var tangentRays: [(Point, Point)]
     var angleRays: [(Point, Point)]
     var offsetRays: [(Point, Point)]
-    var offsetCenterline: [Point]
     var centerline: [Point]
     var sValues: [Double]
     var maxOverlapRatio: Double
@@ -975,7 +829,7 @@ struct ShowcaseOptions {
 }
 
 private func parseOptions(_ args: [String]) throws -> CLIOptions {
-    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, showAlpha: false, showJunctions: false, showRefDiff: false, showKeyframes: false, referenceOnTop: false, showCenterline: false, showRailsSamples: false, showRailsNormals: false, showRailsIndices: false, showRailsJumps: false, showRailsSupport: false, showRailsRuns: false, showRailsRing: false, showRailsRingConnectors: false, showRailsConnectorsOnly: false, alphaProbeT: nil, counterpointSize: nil, angleModeOverride: nil, strokeOutlineMethod: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, finalEnvelopeMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, unionSilhouetteK: nil, unionSilhouetteDropContained: nil, unionDumpInputPath: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false, railsDebug: false, railsDebugStart: nil, railsSamplesStep: 25, railsSamplesStart: 0, railsSamplesCount: 200, railsSamplesTMin: nil, railsSamplesTMax: nil, railsWindowSkeleton: nil, railsWindowT0: nil, railsWindowT1: nil, railsWindowGT0: nil, railsWindowGT1: nil, railsWindowRect: nil, ringWindowT0: nil, ringWindowT1: nil, ringWindowGT0: nil, ringWindowGT1: nil, assertRailsWindow: false, assertRingWindow: false, ringWindowExtrema: nil, ringWindowRadius: nil, assertRingWindowHitsExtrema: false, ringSamplesStart: 0, ringSamplesCount: 2000, railsJumpThreshold: 20.0, railsJumpsSource: .selected, alphaDemo: nil, alphaDebug: false, traceStrokeId: nil, traceTMin: nil, traceTMax: nil, dumpKeyframes: false, diffResolution: nil)
+    var options = CLIOptions(inputPath: nil, exampleName: nil, svgOutputPath: nil, svgSize: nil, padding: 10.0, quiet: false, useBridges: true, debugSamples: false, dumpSamplesPath: nil, quality: nil, showEnvelope: nil, showEnvelopeUnion: false, showRays: nil, counterpointSize: nil, angleModeOverride: nil, envelopeTolerance: nil, flattenTolerance: nil, maxSamples: nil, centerlineOnly: false, strokePreview: false, previewSamples: nil, previewQuality: nil, previewAngleMode: nil, previewAngleDeg: nil, previewWidth: nil, previewHeight: nil, previewNibRotateDeg: nil, previewUnionMode: nil, unionSimplifyTolerance: nil, unionMaxVertices: nil, finalUnionMode: nil, unionBatchSize: nil, unionAreaEps: nil, unionWeldEps: nil, unionEdgeEps: nil, unionMinRingArea: nil, unionAutoTimeBudgetMs: nil, unionInputFilter: nil, unionSilhouetteK: nil, unionSilhouetteDropContained: nil, unionDumpInputPath: nil, outlineFit: nil, fitTolerance: nil, simplifyTolerance: nil, verbose: false)
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -1006,172 +860,6 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.quiet = true
         case "--verbose":
             options.verbose = true
-        case "--rails-debug":
-            options.railsDebug = true
-        case "--rails-debug-start":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-debug-start requires an integer")
-            }
-            options.railsDebugStart = value
-            index += 1
-        case "--rails-samples-step":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-samples-step requires an integer")
-            }
-            options.railsSamplesStep = max(1, value)
-            index += 1
-        case "--rails-samples-start":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-samples-start requires an integer")
-            }
-            options.railsSamplesStart = max(0, value)
-            index += 1
-        case "--rails-samples-count":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-samples-count requires an integer")
-            }
-            options.railsSamplesCount = max(0, value)
-            index += 1
-        case "--rails-samples-tmin":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-samples-tmin requires a number")
-            }
-            options.railsSamplesTMin = value
-            index += 1
-        case "--rails-samples-tmax":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-samples-tmax requires a number")
-            }
-            options.railsSamplesTMax = value
-            index += 1
-        case "--rails-window-skeleton":
-            guard index + 1 < args.count else {
-                throw CLIError.invalidArguments("--rails-window-skeleton requires an id")
-            }
-            options.railsWindowSkeleton = args[index + 1]
-            index += 1
-        case "--rails-window-t0":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-window-t0 requires a number")
-            }
-            options.railsWindowT0 = value
-            index += 1
-        case "--rails-window-t1":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-window-t1 requires a number")
-            }
-            options.railsWindowT1 = value
-            index += 1
-        case "--rails-window-gt0":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-window-gt0 requires a number")
-            }
-            options.railsWindowGT0 = value
-            index += 1
-        case "--rails-window-gt1":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--rails-window-gt1 requires a number")
-            }
-            options.railsWindowGT1 = value
-            index += 1
-        case "--rails-window-rect":
-            guard index + 4 < args.count else {
-                throw CLIError.invalidArguments("--rails-window-rect requires 4 numbers")
-            }
-            guard let x0 = Double(args[index + 1]),
-                  let y0 = Double(args[index + 2]),
-                  let x1 = Double(args[index + 3]),
-                  let y1 = Double(args[index + 4]) else {
-                throw CLIError.invalidArguments("--rails-window-rect requires 4 numbers")
-            }
-            let minX = min(x0, x1)
-            let maxX = max(x0, x1)
-            let minY = min(y0, y1)
-            let maxY = max(y0, y1)
-            options.railsWindowRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-            index += 4
-        case "--ring-samples-start":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-samples-start requires an integer")
-            }
-            options.ringSamplesStart = max(0, value)
-            index += 1
-        case "--ring-window-t0":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-window-t0 requires a number")
-            }
-            options.ringWindowT0 = value
-            index += 1
-        case "--ring-window-t1":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-window-t1 requires a number")
-            }
-            options.ringWindowT1 = value
-            index += 1
-        case "--ring-window-gt0":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-window-gt0 requires a number")
-            }
-            options.ringWindowGT0 = value
-            index += 1
-        case "--ring-window-gt1":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-window-gt1 requires a number")
-            }
-            options.ringWindowGT1 = value
-            index += 1
-        case "--ring-window-extrema":
-            guard index + 1 < args.count else {
-                throw CLIError.invalidArguments("--ring-window-extrema requires minX|maxX|minY|maxY")
-            }
-            options.ringWindowExtrema = args[index + 1]
-            index += 1
-        case "--ring-window-radius":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-window-radius requires a number")
-            }
-            options.ringWindowRadius = value
-            index += 1
-        case "--assert-rails-window":
-            options.assertRailsWindow = true
-        case "--assert-ring-window":
-            options.assertRingWindow = true
-        case "--assert-ring-window-hits-extrema":
-            options.assertRingWindowHitsExtrema = true
-        case "--ring-samples-count":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-samples-count requires an integer")
-            }
-            options.ringSamplesCount = max(0, value)
-            index += 1
-        case "--ring-label-step":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-label-step requires an integer")
-            }
-            options.ringLabelStep = max(1, value)
-            index += 1
-        case "--ring-label-count":
-            guard index + 1 < args.count, let value = Int(args[index + 1]) else {
-                throw CLIError.invalidArguments("--ring-label-count requires an integer")
-            }
-            options.ringLabelCount = max(1, value)
-            index += 1
-        case "--rails-jump-threshold":
-            guard index + 1 < args.count, let value = Double(args[index + 1]), value >= 0.0 else {
-                throw CLIError.invalidArguments("--rails-jump-threshold requires a non-negative number")
-            }
-            options.railsJumpThreshold = value
-            index += 1
-        case "--rails-jumps-source":
-            guard index + 1 < args.count else {
-                throw CLIError.invalidArguments("--rails-jumps-source requires raw|selected")
-            }
-            let value = args[index + 1].lowercased()
-            guard let source = RailsJumpsSource(rawValue: value) else {
-                throw CLIError.invalidArguments("--rails-jumps-source must be raw|selected")
-            }
-            options.railsJumpsSource = source
-            index += 1
         case "--bridges":
             options.useBridges = true
         case "--no-bridges":
@@ -1180,20 +868,6 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.debugSamples = true
         case "--debug-overlay":
             options.debugSamples = true
-        case "--reference-on-top":
-            options.referenceOnTop = true
-        case "--show-keyframes":
-            options.showKeyframes = true
-        case "--show-centerline":
-            options.showCenterline = true
-        case "--stroke-outline-method":
-            guard index + 1 < args.count else { throw CLIError.invalidArguments("--stroke-outline-method requires union|rails") }
-            let value = args[index + 1].lowercased()
-            guard let method = StrokeOutlineMethod(rawValue: value) else {
-                throw CLIError.invalidArguments("--stroke-outline-method must be union|rails")
-            }
-            options.strokeOutlineMethod = method
-            index += 1
         case "--centerline-only":
             options.centerlineOnly = true
         case "--stroke-preview":
@@ -1245,20 +919,12 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.previewUnionMode = parsed
             index += 1
         case "--final-union":
-            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always|trace") }
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always") }
             let mode = args[index + 1].lowercased()
             guard let parsed = FinalUnionMode(rawValue: mode) else {
-                throw CLIError.invalidArguments("--final-union must be auto|never|always|trace")
+                throw CLIError.invalidArguments("--final-union must be auto|never|always")
             }
             options.finalUnionMode = parsed
-            index += 1
-        case "--final-envelope":
-            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-envelope requires direct") }
-            let mode = args[index + 1].lowercased()
-            guard let parsed = FinalEnvelopeMode(rawValue: mode) else {
-                throw CLIError.invalidArguments("--final-envelope must be direct")
-            }
-            options.finalEnvelopeMode = parsed
             index += 1
         case "--union-simplify-tol":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
@@ -1393,89 +1059,13 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
                 options.showEnvelope = false
                 options.showRays = false
                 options.showEnvelopeUnion = false
-                options.showAlpha = false
-                options.showJunctions = false
-                options.showRailsSamples = false
-                options.showRailsNormals = false
-                options.showRailsIndices = false
-                options.showRailsJumps = false
-                options.showRailsSupport = false
-                options.showRailsRuns = false
-                options.showRailsRing = false
-                options.showRailsRingSelected = false
-                options.showRailsRingConnectors = false
-                options.showRailsConnectorsOnly = false
             } else {
                 if viewModes.contains(.samples) { options.debugSamples = true }
                 if viewModes.contains(.rays) { options.showRays = true }
                 if viewModes.contains(.envelope) { options.showEnvelope = true }
                 if viewModes.contains(.union) { options.showEnvelopeUnion = true }
-                if viewModes.contains(.alpha) { options.showAlpha = true }
-                if viewModes.contains(.junctions) { options.showJunctions = true }
-                if viewModes.contains(.refDiff) { options.showRefDiff = true }
-                if viewModes.contains(.railsSamples) { options.showRailsSamples = true }
-                if viewModes.contains(.railsNormals) { options.showRailsNormals = true }
-                if viewModes.contains(.railsIndices) { options.showRailsIndices = true }
-                if viewModes.contains(.railsJumps) { options.showRailsJumps = true }
-                if viewModes.contains(.railsSupport) { options.showRailsSupport = true }
-                if viewModes.contains(.railsRuns) { options.showRailsRuns = true }
-                if viewModes.contains(.railsRing) { options.showRailsRing = true }
-                if viewModes.contains(.railsRingSelected) { options.showRailsRingSelected = true }
-                if viewModes.contains(.railsRingConnectors) { options.showRailsRingConnectors = true }
-                if viewModes.contains(.railsConnectorsOnly) { options.showRailsConnectorsOnly = true }
             }
             index += 1
-        case "--alpha-probe-t":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--alpha-probe-t requires a number")
-            }
-            options.alphaProbeT = value
-            options.showAlpha = true
-            index += 1
-        case "--diff-resolution":
-            guard index + 1 < args.count, let value = Int(args[index + 1]), value > 0 else {
-                throw CLIError.invalidArguments("--diff-resolution requires a positive integer")
-            }
-            options.diffResolution = value
-            index += 1
-        case "--alpha-demo":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--alpha-demo requires a number")
-            }
-            options.alphaDemo = value
-            options.showAlpha = true
-            index += 1
-        case "--alpha-debug":
-            options.alphaDebug = true
-        case "--trace-alpha-window":
-            guard index + 2 < args.count,
-                  let tMin = Double(args[index + 1]),
-                  let tMax = Double(args[index + 2]) else {
-                throw CLIError.invalidArguments("--trace-alpha-window requires tmin tmax")
-            }
-            options.traceTMin = tMin
-            options.traceTMax = tMax
-            index += 2
-        case "--trace-stroke":
-            guard index + 1 < args.count else {
-                throw CLIError.invalidArguments("--trace-stroke requires a stroke id")
-            }
-            options.traceStrokeId = args[index + 1]
-            index += 1
-        case "--trace-tmin":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--trace-tmin requires a number")
-            }
-            options.traceTMin = value
-            index += 1
-        case "--trace-tmax":
-            guard index + 1 < args.count, let value = Double(args[index + 1]) else {
-                throw CLIError.invalidArguments("--trace-tmax requires a number")
-            }
-            options.traceTMax = value
-            index += 1
-        case "--dump-keyframes":
-            options.dumpKeyframes = true
         case "--envelope-tol":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
                 throw CLIError.invalidArguments("--envelope-tol requires a number")
@@ -2258,10 +1848,10 @@ func parseScurveOptions(_ args: [String]) throws -> ScurvePlaygroundConfig {
             view = try parseViewModes(args[index + 1])
             index += 1
         case "--envelope-mode":
-            guard index + 1 < args.count else { throw CLIError.invalidArguments("--envelope-mode requires rails|union|direct") }
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--envelope-mode requires rails|union") }
             let mode = args[index + 1].lowercased()
             guard let parsed = EnvelopeMode(rawValue: mode) else {
-                throw CLIError.invalidArguments("--envelope-mode must be rails|union|direct")
+                throw CLIError.invalidArguments("--envelope-mode must be rails|union")
             }
             envelopeMode = parsed
             index += 1
@@ -2434,42 +2024,15 @@ func parseShowcaseOptions(_ args: [String]) throws -> ShowcaseOptions {
 private func parseViewModes(_ text: String) throws -> Set<ScurveView> {
     let raw = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
     if raw.contains("all") {
-        return Set([.envelope, .samples, .rays, .rails, .railsSamples, .railsNormals, .railsIndices, .railsJumps, .railsSupport, .railsRuns, .railsRing, .railsRingSelected, .railsRingConnectors, .railsConnectorsOnly, .caps, .junctions, .union, .centerline, .offset, .alpha, .refDiff])
+        return Set([.envelope, .samples, .rays, .rails, .union, .centerline, .offset])
     }
     if raw.contains("none") {
         return []
     }
     var result: Set<ScurveView> = []
     for item in raw where !item.isEmpty {
-        let resolved: String
-        switch item {
-        case "diff", "ref-diff":
-            resolved = "refDiff"
-        case "railssamples", "rails-samples":
-            resolved = "railsSamples"
-        case "railsnormals", "rails-normals":
-            resolved = "railsNormals"
-        case "railsindices", "rails-indices":
-            resolved = "railsIndices"
-        case "railsjumps", "rails-jumps":
-            resolved = "railsJumps"
-        case "railssupport", "rails-support":
-            resolved = "railsSupport"
-        case "railsruns", "rails-runs":
-            resolved = "railsRuns"
-        case "railsring", "rails-ring":
-            resolved = "railsRing"
-        case "railsringselected", "rails-ring-selected":
-            resolved = "railsRingSelected"
-        case "railsringconnectors", "rails-ring-connectors":
-            resolved = "railsRingConnectors"
-        case "railsconnectorsonly", "rails-connectors-only":
-            resolved = "railsConnectorsOnly"
-        default:
-            resolved = item
-        }
-        guard let mode = ScurveView(rawValue: resolved) else {
-            throw CLIError.invalidArguments("--view must be envelope|samples|rays|rails|railsSamples|railsNormals|railsIndices|railsJumps|railsSupport|railsRuns|railsRing|railsRingSelected|railsRingConnectors|railsConnectorsOnly|caps|junctions|union|centerline|offset|alpha|ref-diff|all|none")
+        guard let mode = ScurveView(rawValue: item) else {
+            throw CLIError.invalidArguments("--view must be envelope|samples|rays|rails|union|centerline|offset|all|none")
         }
         result.insert(mode)
     }
@@ -2612,7 +2175,6 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
     var tangentRays: [(Point, Point)] = []
     var angleRays: [(Point, Point)] = []
     var offsetRays: [(Point, Point)] = []
-    var offsetCenterline: [Point] = []
     var stampRings: [Ring] = []
 
     let bounds = domain.samples.reduce(CGRect.null) { rect, sample in
@@ -2635,7 +2197,6 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
     let showEnvelope = config.view.contains(.envelope)
     let showOffsets = config.view.contains(.offset)
     let envelopeUsesUnion = config.envelopeMode == .union
-    let envelopeUsesDirect = config.envelopeMode == .direct
     let needsStamps = showSamples || config.view.contains(.union) || (showEnvelope && envelopeUsesUnion)
     let supportShape: CounterpointShape = .ellipse(segments: config.envelopeSegments)
 
@@ -2659,10 +2220,8 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         let height1 = heightField.evaluate(biased1)
         let offset0 = offsetField.evaluate(biased0)
         let offset1 = offsetField.evaluate(biased1)
-        let lane0 = Point(x: sample0.unitTangent.y, y: -sample0.unitTangent.x)
-        let lane1 = Point(x: sample1.unitTangent.y, y: -sample1.unitTangent.x)
-        let center0 = sample0.point + lane0 * offset0
-        let center1 = sample1.point + lane1 * offset1
+        let center0 = sample0.point + n0 * offset0
+        let center1 = sample1.point + n1 * offset1
         let r0 = supportRadius(direction: n0, axis: axis0, normal: n0, width: width0, height: height0, shape: supportShape)
         let r1 = supportRadius(direction: n1, axis: axis1, normal: n1, width: width1, height: height1, shape: supportShape)
         let d = (center1 - center0).length
@@ -2688,46 +2247,16 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
             let angleDeg = angleField.evaluate(biasedS)
             let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angleDeg, mode: config.angleMode)
             let dirUnit = dir.normalized() ?? Point(x: 1, y: 0)
-            let axisNormal = dirUnit.leftNormal()
-            let laneNormal = Point(x: sample.unitTangent.y, y: -sample.unitTangent.x)
+            let normal = dirUnit.leftNormal()
             let width = widthField.evaluate(biasedS)
             let height = heightField.evaluate(biasedS)
             let halfWidth = width * 0.5
             let halfHeight = height * 0.5
             let offset = offsetField.evaluate(biasedS)
-            let center = sample.point + laneNormal * offset
-            if envelopeUsesDirect {
-                let tangentAngle = atan2(sample.unitTangent.y, sample.unitTangent.x)
-                let angleRadians = angleDeg * .pi / 180.0
-                let widthLeft = width * 0.5
-                let widthRight = width * 0.5
-                let effectiveRotation: Double
-                switch config.angleMode {
-                case .absolute:
-                    effectiveRotation = angleRadians
-                case .tangentRelative:
-                    effectiveRotation = tangentAngle + angleRadians
-                }
-                let leftOffset = DirectSilhouetteTracer.supportOffset(
-                    direction: sample.unitTangent.leftNormal(),
-                    widthLeft: widthLeft,
-                    widthRight: widthRight,
-                    height: height,
-                    thetaWorld: effectiveRotation
-                )
-                let rightOffset = DirectSilhouetteTracer.supportOffset(
-                    direction: sample.unitTangent.leftNormal() * -1.0,
-                    widthLeft: widthLeft,
-                    widthRight: widthRight,
-                    height: height,
-                    thetaWorld: effectiveRotation
-                )
-                return (center + leftOffset, center + rightOffset)
-            } else {
-                let leftOffset = orientedEllipseSupportPoint(direction: axisNormal, axis: dirUnit, normal: axisNormal, a: halfWidth, b: halfHeight)
-                let rightOffset = orientedEllipseSupportPoint(direction: axisNormal * -1.0, axis: dirUnit, normal: axisNormal, a: halfWidth, b: halfHeight)
-                return (center + leftOffset, center + rightOffset)
-            }
+            let center = sample.point + normal * offset
+            let leftOffset = orientedEllipseSupportPoint(direction: normal, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            let rightOffset = orientedEllipseSupportPoint(direction: normal * -1.0, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            return (center + leftOffset, center + rightOffset)
         },
         shouldSplit: overlapSplit
     )
@@ -2737,13 +2266,7 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
     }
 
     var maxOverlapRatio = 0.0
-    var prevLaneNormal: Point? = nil
-    var offsetTickCandidates: [(Double, Point, Point)] = []
-    var sampleCSVLines: [String]? = config.dumpSamplesPath == nil ? nil : ["index,u_grid,u_geom,t_progress,t_eval_used_for_tracks,x,y,width_eval,height_eval,theta_eval,theta_internal,theta_raw,tangent_angle,effective_theta,offset_eval,alpha_eval"]
-    var directSamples: [Sample] = []
-    if envelopeUsesDirect {
-        directSamples.reserveCapacity(sampleList.count)
-    }
+    var sampleCSVLines: [String]? = config.dumpSamplesPath == nil ? nil : ["index,u_grid,u_geom,t_progress,t_eval_used_for_tracks,x,y,width_eval,height_eval,theta_eval,theta_internal,offset_eval,alpha_eval"]
     for (index, s) in sampleList.enumerated() {
         let sample = domain.evalAtS(s, path: path)
         let alpha = ScalarMath.lerp(config.alphaStart, config.alphaEnd, ScalarMath.clamp01(sample.s))
@@ -2751,107 +2274,39 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         let angleDeg = angleField.evaluate(biasedS)
         let dir = AngleMath.directionVector(unitTangent: sample.unitTangent, angleDegrees: angleDeg, mode: config.angleMode)
         let dirUnit = dir.normalized() ?? Point(x: 1, y: 0)
-        let axisNormal = dirUnit.leftNormal()
-        var laneNormal = Point(x: sample.unitTangent.y, y: -sample.unitTangent.x)
-        if let prev = prevLaneNormal, laneNormal.dot(prev) < 0.0 {
-            laneNormal = laneNormal * -1.0
-        }
+        let normal = dirUnit.leftNormal()
 
         let width = widthField.evaluate(biasedS)
         let height = heightField.evaluate(biasedS)
         let halfWidth = width * 0.5
         let halfHeight = height * 0.5
         let offset = offsetField.evaluate(biasedS)
-        let center = sample.point + laneNormal * offset
+        let center = sample.point + normal * offset
         if sampleCSVLines != nil {
             let thetaRadians = angleDeg * .pi / 180.0
-            let tangentAngle = atan2(sample.unitTangent.y, sample.unitTangent.x)
             let effectiveRotation: Double
             switch config.angleMode {
             case .absolute:
                 effectiveRotation = thetaRadians
             case .tangentRelative:
-                effectiveRotation = tangentAngle + thetaRadians
+                effectiveRotation = atan2(sample.unitTangent.y, sample.unitTangent.x) + thetaRadians
             }
-            let line = "\(index),\(formatCSVNumber(sample.s)),\(formatCSVNumber(sample.s)),\(formatCSVNumber(sample.s)),\(formatCSVNumber(biasedS)),\(formatCSVNumber(center.x)),\(formatCSVNumber(center.y)),\(formatCSVNumber(width)),\(formatCSVNumber(height)),\(formatCSVNumber(thetaRadians)),\(formatCSVNumber(thetaRadians)),\(formatCSVNumber(thetaRadians)),\(formatCSVNumber(tangentAngle)),\(formatCSVNumber(effectiveRotation)),\(formatCSVNumber(offset)),\(formatCSVNumber(alpha))"
+            let line = "\(index),\(formatCSVNumber(sample.s)),\(formatCSVNumber(sample.s)),\(formatCSVNumber(sample.s)),\(formatCSVNumber(biasedS)),\(formatCSVNumber(center.x)),\(formatCSVNumber(center.y)),\(formatCSVNumber(width)),\(formatCSVNumber(height)),\(formatCSVNumber(thetaRadians)),\(formatCSVNumber(effectiveRotation)),\(formatCSVNumber(offset)),\(formatCSVNumber(alpha))"
             sampleCSVLines?.append(line)
         }
-        prevLaneNormal = laneNormal
 
         if showEnvelope || showRails {
-            if envelopeUsesDirect {
-                let tangentAngle = atan2(sample.unitTangent.y, sample.unitTangent.x)
-                let angleRadians = angleDeg * .pi / 180.0
-                let widthLeft = width * 0.5
-                let widthRight = width * 0.5
-                let effectiveRotation: Double
-                switch config.angleMode {
-                case .absolute:
-                    effectiveRotation = angleRadians
-                case .tangentRelative:
-                    effectiveRotation = tangentAngle + angleRadians
-                }
-                directSamples.append(
-                    Sample(
-                        uGeom: sample.s,
-                        uGrid: sample.s,
-                        t: sample.s,
-                        point: center,
-                        tangentAngle: tangentAngle,
-                        width: width,
-                        widthLeft: widthLeft,
-                        widthRight: widthRight,
-                        height: height,
-                        theta: angleRadians,
-                        effectiveRotation: effectiveRotation,
-                        alpha: alpha
-                    )
-                )
-            } else {
-                let leftOffset = orientedEllipseSupportPoint(direction: axisNormal, axis: dirUnit, normal: axisNormal, a: halfWidth, b: halfHeight)
-                let rightOffset = orientedEllipseSupportPoint(direction: axisNormal * -1.0, axis: dirUnit, normal: axisNormal, a: halfWidth, b: halfHeight)
-                envelopeLeft.append(center + leftOffset)
-                envelopeRight.append(center + rightOffset)
-                railCenters.append(center)
-                railSegmentIndices.append(sample.segmentIndex)
-            }
-        }
-
-        if envelopeUsesDirect, !showEnvelope, !showRails {
-            let tangentAngle = atan2(sample.unitTangent.y, sample.unitTangent.x)
-            let angleRadians = angleDeg * .pi / 180.0
-            let widthLeft = width * 0.5
-            let widthRight = width * 0.5
-            let effectiveRotation: Double
-            switch config.angleMode {
-            case .absolute:
-                effectiveRotation = angleRadians
-            case .tangentRelative:
-                effectiveRotation = tangentAngle + angleRadians
-            }
-            directSamples.append(
-                Sample(
-                    uGeom: sample.s,
-                    uGrid: sample.s,
-                    t: sample.s,
-                    point: center,
-                    tangentAngle: tangentAngle,
-                    width: width,
-                    widthLeft: widthLeft,
-                    widthRight: widthRight,
-                    height: height,
-                    theta: angleRadians,
-                    effectiveRotation: effectiveRotation,
-                    alpha: alpha
-                )
-            )
+            let leftOffset = orientedEllipseSupportPoint(direction: normal, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            let rightOffset = orientedEllipseSupportPoint(direction: normal * -1.0, axis: dirUnit, normal: normal, a: halfWidth, b: halfHeight)
+            envelopeLeft.append(center + leftOffset)
+            envelopeRight.append(center + rightOffset)
+            railCenters.append(center)
+            railSegmentIndices.append(sample.segmentIndex)
         }
 
         if needsStamps {
             let tangentAngle = atan2(sample.unitTangent.y, sample.unitTangent.x)
             let angleRadians = angleDeg * .pi / 180.0
-            let widthLeft = width * 0.5
-            let widthRight = width * 0.5
             let effectiveRotation: Double
             switch config.angleMode {
             case .absolute:
@@ -2868,8 +2323,6 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
                     point: center,
                     tangentAngle: tangentAngle,
                     width: width,
-                    widthLeft: widthLeft,
-                    widthRight: widthRight,
                     height: height,
                     theta: angleRadians,
                     effectiveRotation: effectiveRotation,
@@ -2884,8 +2337,7 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
             samplePoints.append(center)
         }
         if showOffsets {
-            offsetCenterline.append(center)
-            offsetTickCandidates.append((sample.s, sample.point, center))
+            offsetRays.append((sample.point, center))
         }
         if showRays {
             let angleEnd = center + dirUnit * rayLength
@@ -2896,15 +2348,6 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
     }
     if let dumpPath = config.dumpSamplesPath, let lines = sampleCSVLines {
         try writeCSV(lines: lines, to: dumpPath)
-    }
-    if showOffsets, !offsetTickCandidates.isEmpty {
-        let targets: [Double] = [0.0, 0.5, 1.0]
-        for target in targets {
-            let match = offsetTickCandidates.min { abs($0.0 - target) < abs($1.0 - target) }
-            if let match {
-                offsetRays.append((match.1, match.2))
-            }
-        }
     }
     if envelopeUsesUnion, sampleList.count > 1 {
         for i in 0..<(sampleList.count - 1) {
@@ -2928,10 +2371,8 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
             let height1 = heightField.evaluate(biased1)
             let offset0 = offsetField.evaluate(biased0)
             let offset1 = offsetField.evaluate(biased1)
-            let lane0 = Point(x: sample0.unitTangent.y, y: -sample0.unitTangent.x)
-            let lane1 = Point(x: sample1.unitTangent.y, y: -sample1.unitTangent.x)
-            let center0 = sample0.point + lane0 * offset0
-            let center1 = sample1.point + lane1 * offset1
+            let center0 = sample0.point + n0 * offset0
+            let center1 = sample1.point + n1 * offset1
             let r0 = supportRadius(direction: n0, axis: axis0, normal: n0, width: width0, height: height0, shape: supportShape)
             let r1 = supportRadius(direction: n1, axis: axis1, normal: n1, width: width1, height: height1, shape: supportShape)
             let d = (center1 - center0).length
@@ -2943,71 +2384,28 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         }
     }
 
-    var envelopeOutline: Ring = []
-    var capPoints: [Point] = []
-    var unionPolygons: PolygonSet = []
-    var junctionPatches: [Ring] = []
-    var junctionCorridors: [Ring] = []
-    var junctionControlPoints: [Point] = []
-    if envelopeUsesDirect {
-        let railTolerance = config.tolerance > 0 ? config.tolerance : 0.5
-        let paramsProvider: DirectSilhouetteTracer.DirectSilhouetteParamProvider = { t, tangentAngle in
-            let clampedT = ScalarMath.clamp01(t)
-            let biasedT = applyBias(s: clampedT, alphaStart: config.alphaStart, alphaEnd: config.alphaEnd)
-            let angleDeg = angleField.evaluate(biasedT)
-            let theta = angleDeg * .pi / 180.0
-            let width = widthField.evaluate(biasedT)
-            let widthLeft = width * 0.5
-            let widthRight = width * 0.5
-            let height = heightField.evaluate(biasedT)
-            let alpha = ScalarMath.lerp(config.alphaStart, config.alphaEnd, clampedT)
-            let effectiveRotation: Double
-            switch config.angleMode {
-            case .absolute:
-                effectiveRotation = theta
-            case .tangentRelative:
-                effectiveRotation = tangentAngle + theta
-            }
-            return (width, widthLeft, widthRight, height, theta, effectiveRotation, alpha)
-        }
-        let direct = DirectSilhouetteTracer.trace(
-            samples: directSamples,
-            capStyle: CapStylePair(.round),
-            railTolerance: railTolerance,
-            paramsProvider: paramsProvider,
-            verbose: config.verbose,
-            railsDebugStart: nil
+    if !envelopeLeft.isEmpty,
+       envelopeLeft.count == envelopeRight.count,
+       envelopeLeft.count == railCenters.count {
+        let joined = applyRailJoins(
+            left: envelopeLeft,
+            right: envelopeRight,
+            centers: railCenters,
+            segmentIndices: railSegmentIndices,
+            joinStyle: config.joinStyle,
+            cornerThresholdDegrees: 35.0,
+            roundSegments: config.joinStyle == .round ? 10 : 6
         )
-        envelopeLeft = direct.leftRail
-        envelopeRight = direct.rightRail
-        envelopeOutline = showEnvelope ? direct.outline : []
-        capPoints = config.view.contains(.caps) ? direct.capPoints : []
-        junctionPatches = config.view.contains(.junctions) ? direct.junctionPatches : []
-        junctionCorridors = config.view.contains(.junctions) ? direct.junctionCorridors : []
-        junctionControlPoints = config.view.contains(.junctions) ? direct.junctionControlPoints : []
-        unionPolygons = direct.junctionPatches.map { Polygon(outer: $0) }
-    } else {
-        if !envelopeLeft.isEmpty,
-           envelopeLeft.count == envelopeRight.count,
-           envelopeLeft.count == railCenters.count {
-            let joined = applyRailJoins(
-                left: envelopeLeft,
-                right: envelopeRight,
-                centers: railCenters,
-                segmentIndices: railSegmentIndices,
-                joinStyle: config.joinStyle,
-                cornerThresholdDegrees: 35.0,
-                roundSegments: config.joinStyle == .round ? 10 : 6
-            )
-            envelopeLeft = joined.left
-            envelopeRight = joined.right
-        }
-
-        if showEnvelope, !envelopeLeft.isEmpty, envelopeLeft.count == envelopeRight.count {
-            envelopeOutline = closeRingIfNeeded(envelopeLeft + envelopeRight.reversed())
-        }
+        envelopeLeft = joined.left
+        envelopeRight = joined.right
     }
 
+    var envelopeOutline: Ring = []
+    if showEnvelope, !envelopeLeft.isEmpty, envelopeLeft.count == envelopeRight.count {
+        envelopeOutline = closeRingIfNeeded(envelopeLeft + envelopeRight.reversed())
+    }
+
+    var unionPolygons: PolygonSet = []
     if (showEnvelope && envelopeUsesUnion) || config.view.contains(.union) {
         let builder = BridgeBuilder()
         var rings = stampRings
@@ -3021,22 +2419,17 @@ func buildPlaygroundGeometry(path: BezierPath, config: ScurvePlaygroundConfig) t
         unionPolygons = try IOverlayPolygonUnionAdapter().union(subjectRings: rings)
     }
 
-    let centerline = (config.view.contains(.centerline) || showOffsets) ? domain.samples.map { $0.point } : []
+    let centerline = config.view.contains(.centerline) ? domain.samples.map { $0.point } : []
     return ScurveGeometry(
         envelopeLeft: envelopeLeft,
         envelopeRight: envelopeRight,
         envelopeOutline: envelopeOutline,
-        capPoints: capPoints,
-        junctionPatches: junctionPatches,
-        junctionCorridors: junctionCorridors,
-        junctionControlPoints: junctionControlPoints,
         unionPolygons: unionPolygons,
         stampRings: stampRings,
         samplePoints: samplePoints,
         tangentRays: tangentRays,
         angleRays: angleRays,
         offsetRays: offsetRays,
-        offsetCenterline: offsetCenterline,
         centerline: centerline,
         sValues: sampleList,
         maxOverlapRatio: maxOverlapRatio,
@@ -3170,13 +2563,13 @@ private func parseSize(_ text: String) throws -> CGSize {
 }
 
 private func dumpSamplesCSV(samples: [Sample], spec: StrokeSpec, to path: String) throws {
-    var lines: [String] = ["index,u_grid,u_geom,t_progress,t_eval_used_for_tracks,x,y,width_eval,height_eval,theta_eval,theta_internal,theta_raw,tangent_angle,effective_theta,offset_eval,alpha_eval"]
+    var lines: [String] = ["index,u_grid,u_geom,t_progress,t_eval_used_for_tracks,x,y,width_eval,height_eval,theta_eval,theta_internal,offset_eval,alpha_eval"]
     lines.reserveCapacity(samples.count + 1)
     let evaluator = DefaultParamEvaluator()
     for (index, sample) in samples.enumerated() {
         let offsetValue = spec.offset.map { evaluator.evaluate($0, at: sample.t) } ?? 0.0
         let alphaValue = sample.alpha
-        let line = "\(index),\(formatCSVNumber(sample.uGrid)),\(formatCSVNumber(sample.uGeom)),\(formatCSVNumber(sample.t)),\(formatCSVNumber(sample.t)),\(formatCSVNumber(sample.point.x)),\(formatCSVNumber(sample.point.y)),\(formatCSVNumber(sample.width)),\(formatCSVNumber(sample.height)),\(formatCSVNumber(sample.theta)),\(formatCSVNumber(sample.theta)),\(formatCSVNumber(sample.theta)),\(formatCSVNumber(sample.tangentAngle)),\(formatCSVNumber(sample.effectiveRotation)),\(formatCSVNumber(offsetValue)),\(formatCSVNumber(alphaValue))"
+        let line = "\(index),\(formatCSVNumber(sample.uGrid)),\(formatCSVNumber(sample.uGeom)),\(formatCSVNumber(sample.t)),\(formatCSVNumber(sample.t)),\(formatCSVNumber(sample.point.x)),\(formatCSVNumber(sample.point.y)),\(formatCSVNumber(sample.width)),\(formatCSVNumber(sample.height)),\(formatCSVNumber(sample.theta)),\(formatCSVNumber(sample.effectiveRotation)),\(formatCSVNumber(offsetValue)),\(formatCSVNumber(alphaValue))"
         lines.append(line)
     }
     try writeCSV(lines: lines, to: path)
@@ -3202,88 +2595,6 @@ private func outputTranslation(for spec: StrokeSpec, polyline: PathPolyline) -> 
     return Point(x: -origin.x, y: -origin.y)
 }
 
-private func makeAlphaChart(track: ParamTrack, tProbe: Double, trackLabel: String, alphaOverride: Double?) -> SVGPathBuilder.AlphaDebugChart? {
-    let keyframes = track.keyframes
-    guard keyframes.count >= 2 else { return nil }
-    let clampedProbe = ScalarMath.clamp01(tProbe)
-
-    var a = keyframes[0]
-    var b = keyframes[1]
-    for index in 0..<(keyframes.count - 1) {
-        let current = keyframes[index]
-        let next = keyframes[index + 1]
-        if clampedProbe <= next.t {
-            a = current
-            b = next
-            break
-        }
-    }
-
-    let alphaRaw = alphaOverride ?? (a.interpolationToNext?.alpha ?? 0.0)
-    let alphaUsed: Double
-    let dMid: Double
-    if let alphaOverride {
-        let sign = alphaOverride >= 0 ? 1.0 : -1.0
-        var magnitude = max(0.0, min(4.0, abs(alphaOverride)))
-        var computed = DefaultParamEvaluator.biasCurveValue(0.5, bias: sign * magnitude)
-        var deviation = abs(computed - 0.5)
-        let minDeviation = 0.20
-        let maxMagnitude = 4.0
-        while deviation < minDeviation && magnitude < maxMagnitude {
-            magnitude = min(maxMagnitude, magnitude + 0.05)
-            computed = DefaultParamEvaluator.biasCurveValue(0.5, bias: sign * magnitude)
-            deviation = abs(computed - 0.5)
-        }
-        if deviation < minDeviation {
-            fatalError("alpha-demo failed: alpha=\(alphaOverride) f(0.5)=\(computed) dMid=\(deviation)")
-        }
-        alphaUsed = sign * magnitude
-        dMid = deviation
-    } else {
-        alphaUsed = alphaRaw
-        dMid = abs(DefaultParamEvaluator.biasCurveValue(0.5, bias: alphaUsed) - 0.5)
-    }
-
-    let sampleCount = 64
-    var biasSamples: [Point] = []
-    var valueSamples: [Point] = []
-    biasSamples.reserveCapacity(sampleCount)
-    valueSamples.reserveCapacity(sampleCount)
-
-    let valueMin = min(a.value, b.value)
-    let valueMax = max(a.value, b.value)
-    let valueSpan = valueMax - valueMin
-
-    for i in 0..<sampleCount {
-        let u = Double(i) / Double(sampleCount - 1)
-        let uBiased = DefaultParamEvaluator.biasCurveValue(u, bias: alphaUsed)
-        biasSamples.append(Point(x: u, y: uBiased))
-        if valueSpan > 1.0e-12 {
-            let value = a.value + (b.value - a.value) * uBiased
-            let normalized = ScalarMath.clamp01((value - valueMin) / valueSpan)
-            valueSamples.append(Point(x: u, y: normalized))
-        }
-    }
-
-    let t0 = alphaOverride == nil ? a.t : 0.0
-    let t1 = alphaOverride == nil ? b.t : 1.0
-
-    return SVGPathBuilder.AlphaDebugChart(
-        alphaRaw: alphaRaw,
-        alphaUsed: alphaUsed,
-        t0: t0,
-        t1: t1,
-        trackLabel: trackLabel,
-        biasSamples: biasSamples,
-        valueSamples: valueSamples,
-        valueMin: valueMin,
-        valueMax: valueMax,
-        startValue: a.value,
-        endValue: b.value,
-        dMid: dMid
-    )
-}
-
 private enum CLIError: LocalizedError {
     case invalidArguments(String)
     case runtime(String)
@@ -3305,10 +2616,9 @@ func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay 
     let applyTranslation: (Point) -> Point = { point in
         Point(x: point.x + translation.x, y: point.y + translation.y)
     }
-    let evaluator = DefaultParamEvaluator()
     let samples = GenerateStrokeOutlineUseCase(
         sampler: DefaultPathSampler(),
-        evaluator: evaluator,
+        evaluator: DefaultParamEvaluator(),
         unioner: PassthroughPolygonUnioner()
     ).generateSamples(for: spec)
 
@@ -3326,8 +2636,6 @@ func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay 
     }
 
     var samplePoints = samples.map { $0.point }
-    var offsetCenterline: [Point] = []
-    var offsetRays: [(Point, Point)] = []
     var tangentRays: [(Point, Point)] = []
     var angleRays: [(Point, Point)] = []
     var envelopeLeft: [Point] = []
@@ -3398,33 +2706,6 @@ func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay 
         }
     }
 
-    let alphaChart = options.showAlpha ? makeAlphaChart(track: spec.width, tProbe: options.alphaProbeT ?? 0.5, trackLabel: "width", alphaOverride: options.alphaDemo) : nil
-
-    if options.debugSamples, let offset = spec.offset, samples.count > 1 {
-        offsetCenterline = samples.map { $0.point }
-        var normals: [Point] = []
-        normals.reserveCapacity(samples.count)
-        var prevNormal: Point? = nil
-        for sample in samples {
-            let tangent = Point(x: cos(sample.tangentAngle), y: sin(sample.tangentAngle))
-            var normal = Point(x: tangent.y, y: -tangent.x)
-            if let prev = prevNormal, normal.dot(prev) < 0.0 {
-                normal = normal * -1.0
-            }
-            normals.append(normal)
-            prevNormal = normal
-        }
-        let targets: [Double] = [0.0, 0.5, 1.0]
-        for target in targets {
-            let index = samples.enumerated().min { abs($0.element.t - target) < abs($1.element.t - target) }?.offset ?? 0
-            let sample = samples[index]
-            let normal = normals[index]
-            let d = evaluator.evaluate(offset, at: sample.t)
-            let basePoint = sample.point - normal * d
-            offsetRays.append((basePoint, sample.point))
-        }
-    }
-
     return SVGDebugOverlay(
         skeleton: polyline.points.map { applyTranslation($0) },
         stamps: stampRings,
@@ -3432,24 +2713,12 @@ func makeDebugOverlay(spec: StrokeSpec, options: CLIOptions) -> SVGDebugOverlay 
         samplePoints: samplePoints,
         tangentRays: tangentRays,
         angleRays: angleRays,
-        offsetRays: offsetRays,
-        offsetCenterline: offsetCenterline,
+        offsetRays: [],
         envelopeLeft: envelopeLeft,
         envelopeRight: envelopeRight,
         envelopeOutline: envelopeOutline,
-        capPoints: [],
-        leftRailSamples: [],
-        rightRailSamples: [],
-        showRailsSamples: false,
-        showRailsNormals: false,
-        showRailsIndices: false,
-        railsSampleOptions: SVGDebugOverlay.RailsSampleOptions(),
-        junctionPatches: [],
-        junctionCorridors: [],
-        junctionControlPoints: [],
         showUnionOutline: showUnionOutline,
-        unionPolygons: nil,
-        alphaChart: alphaChart
+        unionPolygons: nil
     )
 }
 
@@ -3510,10 +2779,6 @@ func defaultFitTolerance(polygons: PolygonSet) -> Double {
     return max(0.5, diag * 0.001)
 }
 
-private func traceEpsilon(unionSimplifyTolerance: Double) -> Double {
-    max(0.01, unionSimplifyTolerance * 0.01)
-}
-
 func outlineCornerThresholdDegrees(for joinStyle: JoinStyle) -> Double {
     switch joinStyle {
     case .round:
@@ -3531,50 +2796,6 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
     let outputDir = outputURL.deletingLastPathComponent()
     if !outputDir.path.isEmpty, outputDir.path != "." {
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-    }
-
-    if let dumpPath = options.dumpSamplesPath {
-        let quality = options.quality ?? "preview"
-        let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
-        let useCase = GenerateStrokeOutlineUseCase(
-            sampler: DefaultPathSampler(),
-            evaluator: DefaultParamEvaluator(),
-            unioner: IOverlayPolygonUnionAdapter()
-        )
-        let targetId = options.traceStrokeId
-        let specs: [(id: String, spec: StrokeSpec)] = document.inputs.geometry.strokes.compactMap { stroke in
-            if let targetId, stroke.id != targetId { return nil }
-            guard let spec = strokeSpec(from: stroke, paths: pathById, quality: quality, outlineMethod: options.strokeOutlineMethod) else { return nil }
-            return (stroke.id, spec)
-        }
-        if !specs.isEmpty {
-            let baseURL = URL(fileURLWithPath: dumpPath)
-            let hasExtension = !baseURL.pathExtension.isEmpty
-            for (index, entry) in specs.enumerated() {
-                let outputURL: URL
-                if specs.count == 1 {
-                    outputURL = baseURL
-                } else if hasExtension {
-                    let baseName = baseURL.deletingPathExtension().lastPathComponent
-                    let dir = baseURL.deletingLastPathComponent()
-                    let safeId = sanitizedStrokeIdForFilename(entry.id)
-                    outputURL = dir.appendingPathComponent("\(baseName)-\(safeId)").appendingPathExtension(baseURL.pathExtension)
-                } else {
-                    let safeId = sanitizedStrokeIdForFilename(entry.id)
-                    outputURL = baseURL.appendingPathComponent("\(safeId).csv")
-                }
-                let outputDir = outputURL.deletingLastPathComponent()
-                if !outputDir.path.isEmpty, outputDir.path != "." {
-                    try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-                }
-                let samples = useCase.generateSamples(for: entry.spec)
-                try dumpSamplesCSV(samples: samples, spec: entry.spec, to: outputURL.path)
-                if options.verbose {
-                    let label = specs.count == 1 ? outputURL.lastPathComponent : "\(index + 1)/\(specs.count) \(outputURL.lastPathComponent)"
-                    print("dump-samples wrote \(label)")
-                }
-            }
-        }
     }
 
     let referenceRender: SVGPathBuilder.BackgroundGlyphRender?
@@ -3605,492 +2826,57 @@ private func renderGlyphDocument(_ document: GlyphDocument, options: CLIOptions,
     }
 
     let frameBounds = glyphFrameBounds(document.frame, reference: referenceRender)
-    let keyframeMarkers = options.showKeyframes ? buildKeyframeMarkers(document: document, options: options) : []
     let builder = SVGPathBuilder()
-    let renderedCenterlines = (options.centerlineOnly || options.showCenterline) ? renderCenterlines(document: document, builder: builder) : []
     let centerlines: [String]
     let strokePreviewPolygons: PolygonSet
     let authoredPolygons: PolygonSet
     let authoredFittedPaths: [FittedPath]?
-    let debugOverlay: SVGDebugOverlay?
-    var authoredRings: [Ring] = []
-    var authoredRailJoinSeams: [DirectSilhouetteTracer.RailJoinSeam] = []
     if options.centerlineOnly {
-        centerlines = renderedCenterlines
+        let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
+        var rendered: [String] = []
+        rendered.reserveCapacity(document.inputs.geometry.ink.count)
+        for item in document.inputs.geometry.ink {
+            switch item {
+            case .path(let path):
+                let element = builder.centerlinePathElement(for: path.segments, stroke: "#111111", strokeWidth: 1.0)
+                if !element.isEmpty { rendered.append(element) }
+            case .stroke(let stroke):
+                for skeleton in stroke.skeletons {
+                    if let path = pathById[skeleton] {
+                        let element = builder.centerlinePathElement(for: path.segments, stroke: "#111111", strokeWidth: 1.0)
+                        if !element.isEmpty { rendered.append(element) }
+                    }
+                }
+            case .unknown:
+                continue
+            }
+        }
+        centerlines = rendered
         strokePreviewPolygons = []
         authoredPolygons = []
         authoredFittedPaths = nil
-        debugOverlay = nil
     } else if options.strokePreview {
-        centerlines = renderedCenterlines
+        centerlines = []
         strokePreviewPolygons = buildStrokePreviewPolygons(document: document, options: options)
         authoredPolygons = []
         authoredFittedPaths = nil
-        debugOverlay = nil
     } else {
-        centerlines = renderedCenterlines
+        centerlines = []
         strokePreviewPolygons = []
         let authored = try buildAuthoredStrokePolygons(document: document, options: options)
         authoredPolygons = authored.polygons
         authoredFittedPaths = authored.fittedPaths
-        authoredRings = authored.railsRings
-        authoredRailJoinSeams = authored.railJoinSeams
-        let wantsRailsSamples = options.showRailsSamples || options.showRailsNormals || options.showRailsIndices || options.showRailsSupport
-        let wantsRailsDebug = wantsRailsSamples || options.showRailsJumps || options.showRailsRuns || options.showRailsRing || options.showRailsRingSelected || options.showRailsRingConnectors || options.showRailsConnectorsOnly
-        let railsSampleOptions = SVGDebugOverlay.RailsSampleOptions(
-            step: options.railsSamplesStep,
-            start: options.railsSamplesStart,
-            count: options.railsSamplesCount,
-            tMin: options.railsSamplesTMin,
-            tMax: options.railsSamplesTMax
-        )
-        let ringSampleOptions = SVGDebugOverlay.RingSampleOptions(
-            start: options.ringSamplesStart,
-            count: options.ringSamplesCount,
-            labelStep: options.ringLabelStep,
-            labelCount: options.ringLabelCount
-        )
-        var overlay: SVGDebugOverlay? = nil
-        if options.showJunctions,
-           !authored.junctionPatches.isEmpty || !authored.junctionControlPoints.isEmpty {
-            overlay = SVGDebugOverlay(
-                skeleton: [],
-                stamps: [],
-                bridges: [],
-                samplePoints: [],
-                keyframeMarkers: [],
-                tangentRays: [],
-                angleRays: [],
-                offsetRays: [],
-                envelopeLeft: [],
-                envelopeRight: [],
-                envelopeOutline: [],
-                capPoints: [],
-                leftRailSamples: [],
-                rightRailSamples: [],
-                showRailsSamples: false,
-                showRailsNormals: false,
-                showRailsIndices: false,
-                railsSampleOptions: SVGDebugOverlay.RailsSampleOptions(),
-                junctionPatches: authored.junctionPatches,
-                junctionCorridors: authored.junctionCorridors,
-                junctionControlPoints: authored.junctionControlPoints,
-                showUnionOutline: false,
-                unionPolygons: nil
-            )
-        }
-        if options.showRefDiff, options.finalEnvelopeMode == .direct,
-           let referenceRender {
-            let resolution = options.diffResolution ?? 1024
-            if let diffOverlay = buildReferenceDiffOverlay(
-                current: authoredPolygons,
-                reference: referenceRender,
-                generatedBounds: frameBounds,
-                resolution: resolution,
-                builder: builder,
-                verbose: options.verbose
-            ) {
-                if overlay == nil {
-                    overlay = SVGDebugOverlay(
-                        skeleton: [],
-                        stamps: [],
-                        bridges: [],
-                        samplePoints: [],
-                        keyframeMarkers: [],
-                        tangentRays: [],
-                        angleRays: [],
-                        offsetRays: [],
-                        envelopeLeft: [],
-                        envelopeRight: [],
-                        envelopeOutline: [],
-                        capPoints: [],
-                        leftRailSamples: [],
-                        rightRailSamples: [],
-                        showRailsSamples: false,
-                        showRailsNormals: false,
-                        showRailsIndices: false,
-                        railsSampleOptions: SVGDebugOverlay.RailsSampleOptions(),
-                        junctionPatches: [],
-                        junctionCorridors: [],
-                        junctionControlPoints: [],
-                        showUnionOutline: false,
-                        unionPolygons: nil
-                    )
-                }
-                overlay?.refDiff = diffOverlay
-            }
-        }
-        if !keyframeMarkers.isEmpty {
-            if overlay == nil {
-                overlay = SVGDebugOverlay(
-                    skeleton: [],
-                    stamps: [],
-                    bridges: [],
-                    samplePoints: [],
-                    keyframeMarkers: [],
-                    tangentRays: [],
-                    angleRays: [],
-                    offsetRays: [],
-                    envelopeLeft: [],
-                    envelopeRight: [],
-                    envelopeOutline: [],
-                    capPoints: [],
-                    leftRailSamples: [],
-                    rightRailSamples: [],
-                    showRailsSamples: false,
-                    showRailsNormals: false,
-                    showRailsIndices: false,
-                    railsSampleOptions: SVGDebugOverlay.RailsSampleOptions(),
-                    junctionPatches: [],
-                    junctionCorridors: [],
-                    junctionControlPoints: [],
-                    showUnionOutline: false,
-                    unionPolygons: nil
-                )
-            }
-            overlay?.keyframeMarkers = keyframeMarkers
-        }
-        if wantsRailsDebug {
-            if overlay == nil {
-                overlay = SVGDebugOverlay(
-                    skeleton: [],
-                    stamps: [],
-                    bridges: [],
-                    samplePoints: [],
-                    keyframeMarkers: [],
-                    tangentRays: [],
-                    angleRays: [],
-                    offsetRays: [],
-                    envelopeLeft: [],
-                    envelopeRight: [],
-                    envelopeOutline: [],
-                    capPoints: [],
-                    leftRailSamples: [],
-                    rightRailSamples: [],
-                    leftRailRuns: [],
-                    rightRailRuns: [],
-                    leftRailJumpSamples: [],
-                    rightRailJumpSamples: [],
-                    showRailsSamples: false,
-                    showRailsNormals: false,
-                    showRailsIndices: false,
-                    showRailsJumps: false,
-                    showRailsSupport: false,
-                    showRailsRuns: false,
-                    railsSampleOptions: SVGDebugOverlay.RailsSampleOptions(),
-                    railsJumpThreshold: 20.0,
-                    railsSamplesSource: "full",
-                    junctionPatches: [],
-                    junctionCorridors: [],
-                    junctionControlPoints: [],
-                    showUnionOutline: false,
-                    unionPolygons: nil
-                )
-            }
-            overlay?.leftRailSamples = authored.leftRailSamples.map {
-                SVGDebugOverlay.RailDebugSample(t: $0.t, point: $0.point, normal: $0.normal, supportCase: $0.debugSupportCase, skeletonId: $0.debugSkeletonId, runId: $0.debugRunId)
-            }
-            overlay?.rightRailSamples = authored.rightRailSamples.map {
-                SVGDebugOverlay.RailDebugSample(t: $0.t, point: $0.point, normal: $0.normal, supportCase: $0.debugSupportCase, skeletonId: $0.debugSkeletonId, runId: $0.debugRunId)
-            }
-            overlay?.leftRailJumpSamples = authored.leftRailJumpSamples.map {
-                SVGDebugOverlay.RailDebugSample(t: $0.t, point: $0.point, normal: $0.normal, supportCase: $0.debugSupportCase, skeletonId: $0.debugSkeletonId, runId: $0.debugRunId)
-            }
-            overlay?.rightRailJumpSamples = authored.rightRailJumpSamples.map {
-                SVGDebugOverlay.RailDebugSample(t: $0.t, point: $0.point, normal: $0.normal, supportCase: $0.debugSupportCase, skeletonId: $0.debugSkeletonId, runId: $0.debugRunId)
-            }
-            overlay?.leftRailRuns = authored.leftRailRuns
-            overlay?.rightRailRuns = authored.rightRailRuns
-            overlay?.railsRings = authored.railsRings
-            overlay?.railJoinSeams = authored.railJoinSeams.map { seam in
-                SVGDebugOverlay.RingSeam(
-                    ringIndex: seam.ringIndex,
-                    side: seam.side,
-                    dotForward: seam.dotForward,
-                    dotReversed: seam.dotReversed,
-                    chosen: seam.chosen
-                )
-            }
-            overlay?.railConnectors = authored.railConnectors.map { connector in
-                SVGDebugOverlay.RailConnector(
-                    side: connector.side,
-                    railIndexStart: connector.railIndexStart,
-                    points: connector.points,
-                    length: connector.length,
-                    tStart: connector.tStart,
-                    tEnd: connector.tEnd
-                )
-            }
-            overlay?.showRailsSamples = options.showRailsSamples
-            overlay?.showRailsNormals = options.showRailsNormals
-            overlay?.showRailsIndices = options.showRailsIndices
-            overlay?.showRailsJumps = options.showRailsJumps
-            overlay?.showRailsSupport = options.showRailsSupport
-            overlay?.showRailsRuns = options.showRailsRuns
-            overlay?.showRailsRing = options.showRailsRing
-            overlay?.showRailsRingSelected = options.showRailsRingSelected
-            overlay?.showRailsRingConnectors = options.showRailsRingConnectors
-            overlay?.showRailsConnectorsOnly = options.showRailsConnectorsOnly
-            overlay?.railsSampleOptions = railsSampleOptions
-            overlay?.ringSampleOptions = ringSampleOptions
-            overlay?.railsJumpThreshold = options.railsJumpThreshold
-            overlay?.railsSamplesSource = "full"
-            overlay?.railsWindowSkeleton = options.railsWindowSkeleton
-            overlay?.railsWindowT0 = options.railsWindowT0
-            overlay?.railsWindowT1 = options.railsWindowT1
-            overlay?.railsWindowRect = options.railsWindowRect
-            overlay?.ringWindowT0 = options.ringWindowT0
-            overlay?.ringWindowT1 = options.ringWindowT1
-            overlay?.railsWindowGT0 = options.railsWindowGT0
-            overlay?.railsWindowGT1 = options.railsWindowGT1
-            overlay?.ringWindowGT0 = options.ringWindowGT0
-            overlay?.ringWindowGT1 = options.ringWindowGT1
-            overlay?.assertRailsWindow = options.assertRailsWindow
-            overlay?.assertRingWindow = options.assertRingWindow
-            overlay?.ringWindowExtrema = options.ringWindowExtrema
-            overlay?.ringWindowRadius = options.ringWindowRadius
-            overlay?.assertRingWindowHitsExtrema = options.assertRingWindowHitsExtrema
-        }
-        debugOverlay = overlay
     }
-    let debugRects = traceDebugRects(polygons: authoredPolygons, options: options)
     let svg = builder.svgDocumentForGlyphReference(
         frameBounds: frameBounds,
         size: options.svgSize,
         padding: options.padding,
         reference: referenceRender,
-        referenceOnTop: options.referenceOnTop,
         centerlinePaths: centerlines,
         polygons: strokePreviewPolygons + authoredPolygons,
-        fittedPaths: authoredFittedPaths,
-        debugRects: debugRects,
-        debugOverlay: debugOverlay
+        fittedPaths: authoredFittedPaths
     )
     try svg.write(to: outputURL, atomically: true, encoding: .utf8)
-    if options.railsDebug || options.showRailsRing || options.showRailsRingSelected || options.showRailsRingConnectors || options.showRailsConnectorsOnly {
-        if !authoredRings.isEmpty {
-            for (index, ring) in authoredRings.enumerated() {
-                let available = ring.count > 1 && ring.first == ring.last ? ring.count - 1 : ring.count
-                print("ringDiag name=railsRing source=full ringIndex=\(index) pts=\(available)")
-                if options.showRailsRingSelected {
-                    let requestedStart = max(0, options.ringSamplesStart)
-                    let requestedCount = max(0, options.ringSamplesCount)
-                    let clampedStart = min(requestedStart, max(0, available - 1))
-                    let clampedCount = min(requestedCount, max(0, available - clampedStart))
-                    let endIndex = clampedCount > 0 ? (clampedStart + clampedCount - 1) : clampedStart
-                    if requestedStart != clampedStart || requestedCount != clampedCount {
-                        print("ringDiag clamp ringIndex=\(index) requestedStart=\(requestedStart) requestedCount=\(requestedCount) clampedStart=\(clampedStart) clampedCount=\(clampedCount) available=\(available)")
-                    }
-                    let diag = DirectSilhouetteTracer.ringMaxTurnDegrees(
-                        ring: ring,
-                        start: clampedStart,
-                        count: clampedCount
-                    )
-                    let turn = String(format: "%.3f", diag.degrees)
-                    let turnIndex = diag.index.map(String.init) ?? "nil"
-                    print("ringDiag name=railsRingSelected source=selected ringIndex=\(index) pts=\(clampedCount) window=[\(clampedStart)..\(endIndex)] ringMaxTurnDeg=\(turn) at=\(turnIndex)")
-                }
-                if options.railsDebug, !authoredRailJoinSeams.isEmpty, available > 0 {
-                    let requestedStart = max(0, options.ringSamplesStart)
-                    let requestedCount = max(0, options.ringSamplesCount)
-                    let clampedStart = min(requestedStart, max(0, available - 1))
-                    let clampedCount = min(requestedCount, max(0, available - clampedStart))
-                    let windowEnd = clampedCount > 0 ? (clampedStart + clampedCount - 1) : clampedStart
-                    for seam in authoredRailJoinSeams where seam.ringIndex >= clampedStart && seam.ringIndex <= windowEnd {
-                        let dotF = String(format: "%.4f", seam.dotForward)
-                        let dotR = String(format: "%.4f", seam.dotReversed)
-                        print("railsJoin k=\(seam.ringIndex) side=\(seam.side) dotF=\(dotF) dotR=\(dotR) chosen=\(seam.chosen)")
-                    }
-                }
-            }
-        }
-    }
-    if options.showRailsJumps || options.showRailsSupport || options.showRailsRuns || options.showRailsRing || options.showRailsRingSelected || options.showRailsRingConnectors || options.showRailsConnectorsOnly {
-        var viewTokens: [String] = []
-        if options.showEnvelope == true { viewTokens.append("envelope") }
-        if options.debugSamples { viewTokens.append("samples") }
-        if options.showRays == true { viewTokens.append("rays") }
-        if options.showEnvelopeUnion { viewTokens.append("union") }
-        if options.showAlpha { viewTokens.append("alpha") }
-        if options.showJunctions { viewTokens.append("junctions") }
-        if options.showRailsSamples { viewTokens.append("railsSamples") }
-        if options.showRailsIndices { viewTokens.append("railsIndices") }
-        if options.showRailsNormals { viewTokens.append("railsNormals") }
-        if options.showRailsJumps { viewTokens.append("railsJumps") }
-        if options.showRailsSupport { viewTokens.append("railsSupport") }
-        if options.showRailsRuns { viewTokens.append("railsRuns") }
-        if options.showRailsRing { viewTokens.append("railsRing") }
-        if options.showRailsRingSelected { viewTokens.append("railsRingSelected") }
-        if options.showRailsRingConnectors { viewTokens.append("railsRingConnectors") }
-        if options.showRailsConnectorsOnly { viewTokens.append("railsConnectorsOnly") }
-        if options.showRefDiff { viewTokens.append("ref-diff") }
-        if options.showCenterline { viewTokens.append("centerline") }
-        let viewArg = viewTokens.isEmpty ? nil : viewTokens.joined(separator: ",")
-        let inputPath = options.inputPath ?? "-"
-        var parts: [String] = []
-        parts.append("swift run counterpoint-cli")
-        parts.append(inputPath)
-        parts.append("--svg")
-        parts.append(outputURL.path)
-        if let method = options.strokeOutlineMethod {
-            parts.append("--stroke-outline-method")
-            parts.append(method.rawValue)
-        }
-        if let viewArg {
-            parts.append("--view")
-            parts.append(viewArg)
-        }
-        parts.append("--rails-samples-step")
-        parts.append(String(options.railsSamplesStep))
-        parts.append("--rails-samples-start")
-        parts.append(String(options.railsSamplesStart))
-        parts.append("--rails-samples-count")
-        parts.append(String(options.railsSamplesCount))
-        parts.append("--ring-samples-start")
-        parts.append(String(options.ringSamplesStart))
-        parts.append("--ring-samples-count")
-        parts.append(String(options.ringSamplesCount))
-        if let labelStep = options.ringLabelStep {
-            parts.append("--ring-label-step")
-            parts.append(String(labelStep))
-        }
-        if let labelCount = options.ringLabelCount {
-            parts.append("--ring-label-count")
-            parts.append(String(labelCount))
-        }
-        if let tMin = options.railsSamplesTMin {
-            parts.append("--rails-samples-tmin")
-            parts.append(String(format: "%.6f", tMin))
-        }
-        if let tMax = options.railsSamplesTMax {
-            parts.append("--rails-samples-tmax")
-            parts.append(String(format: "%.6f", tMax))
-        }
-        if options.showRailsJumps {
-            parts.append("--rails-jump-threshold")
-            parts.append(String(format: "%.3f", options.railsJumpThreshold))
-        }
-        if options.railsDebug {
-            parts.append("--rails-debug")
-        }
-        print("Debug repro:\n\(parts.joined(separator: " "))")
-    }
-}
-
-private func buildReferenceDiffOverlay(
-    current: PolygonSet,
-    reference: SVGPathBuilder.BackgroundGlyphRender,
-    generatedBounds: CGRect,
-    resolution: Int,
-    builder: SVGPathBuilder,
-    verbose: Bool
-) -> SVGPathBuilder.RefDiffOverlay? {
-    let referencePolygons = builder.referencePolygons(from: reference, generatedBounds: generatedBounds, sampleSteps: 16)
-    guard let bounds = unionPolygonBounds(current, referencePolygons) else { return nil }
-    let maxDim = max(bounds.width, bounds.height)
-    let pixelSize = max(maxDim / Double(resolution), 1.0e-4)
-    let width = max(1, Int(ceil(bounds.width / pixelSize)))
-    let height = max(1, Int(ceil(bounds.height / pixelSize)))
-    let fixedBounds = Rasterizer.RasterBounds(
-        minX: bounds.minX,
-        minY: bounds.minY,
-        maxX: bounds.minX + Double(width) * pixelSize,
-        maxY: bounds.minY + Double(height) * pixelSize
-    )
-
-    let currentResult = Rasterizer.rasterizeFixed(polygons: current, bounds: fixedBounds, pixelSize: pixelSize)
-    let referenceResult = Rasterizer.rasterizeFixed(polygons: referencePolygons, bounds: fixedBounds, pixelSize: pixelSize)
-    let count = currentResult.grid.width * currentResult.grid.height
-    var data: [UInt8] = Array(repeating: 0, count: count)
-    var matchCount = 0
-    var missingCount = 0
-    var excessCount = 0
-
-    for idx in 0..<count {
-        let ref = referenceResult.grid.data[idx] != 0
-        let cur = currentResult.grid.data[idx] != 0
-        if ref && cur {
-            data[idx] = 1
-            matchCount += 1
-        } else if ref && !cur {
-            data[idx] = 2
-            missingCount += 1
-        } else if !ref && cur {
-            data[idx] = 3
-            excessCount += 1
-        }
-    }
-
-    if verbose {
-        let pixelArea = pixelSize * pixelSize
-        let matchArea = Double(matchCount) * pixelArea
-        let missingArea = Double(missingCount) * pixelArea
-        let excessArea = Double(excessCount) * pixelArea
-        print("ref-diff resolution=\(resolution) pixelSize=\(String(format: "%.4f", pixelSize)) grid=\(width)x\(height)")
-        print("ref-diff areas match=\(String(format: "%.2f", matchArea)) missing=\(String(format: "%.2f", missingArea)) excess=\(String(format: "%.2f", excessArea))")
-    }
-
-    return SVGPathBuilder.RefDiffOverlay(
-        origin: currentResult.origin,
-        pixelSize: currentResult.pixelSize,
-        width: currentResult.grid.width,
-        height: currentResult.grid.height,
-        data: data,
-        matchCount: matchCount,
-        missingCount: missingCount,
-        excessCount: excessCount
-    )
-}
-
-private func unionPolygonBounds(_ a: PolygonSet, _ b: PolygonSet) -> CGRect? {
-    guard let boundsA = polygonBounds(a) else { return polygonBounds(b) }
-    guard let boundsB = polygonBounds(b) else { return boundsA }
-    return boundsA.union(boundsB)
-}
-
-private func polygonBounds(_ polygons: PolygonSet) -> CGRect? {
-    var minX = Double.greatestFiniteMagnitude
-    var maxX = -Double.greatestFiniteMagnitude
-    var minY = Double.greatestFiniteMagnitude
-    var maxY = -Double.greatestFiniteMagnitude
-    for polygon in polygons {
-        for point in polygon.outer {
-            minX = min(minX, point.x)
-            maxX = max(maxX, point.x)
-            minY = min(minY, point.y)
-            maxY = max(maxY, point.y)
-        }
-        for hole in polygon.holes {
-            for point in hole {
-                minX = min(minX, point.x)
-                maxX = max(maxX, point.x)
-                minY = min(minY, point.y)
-                maxY = max(maxY, point.y)
-            }
-        }
-    }
-    guard minX.isFinite, maxX.isFinite, minY.isFinite, maxY.isFinite else { return nil }
-    return CGRect(x: minX, y: minY, width: max(0.0, maxX - minX), height: max(0.0, maxY - minY))
-}
-
-private func traceDebugRects(polygons: PolygonSet, options: CLIOptions) -> [SVGPathBuilder.DebugRect] {
-    guard options.verbose, options.finalUnionMode == .trace else { return [] }
-    guard polygons.count > 1 else { return [] }
-    let areas = polygons.enumerated().map { index, polygon in
-        (index: index, area: abs(signedArea(polygon.outer)))
-    }.sorted { $0.area > $1.area }
-    guard let main = areas.first,
-          let mainBox = boundingBox(polygons[main.index].outer) else {
-        return []
-    }
-    var rects: [SVGPathBuilder.DebugRect] = [
-        SVGPathBuilder.DebugRect(min: mainBox.min, max: mainBox.max, stroke: "#e53935", strokeWidth: 0.8)
-    ]
-    if let candidate = areas.dropFirst().first,
-       let candidateBox = boundingBox(polygons[candidate.index].outer) {
-        rects.append(SVGPathBuilder.DebugRect(min: candidateBox.min, max: candidateBox.max, stroke: "#1e88e5", strokeWidth: 0.8))
-    }
-    return rects
 }
 
 private func resolveReferencePath(_ source: String, inputPath: String?) -> String {
@@ -4123,118 +2909,6 @@ private func glyphFrameBounds(_ frame: GlyphFrame, reference: SVGPathBuilder.Bac
     return CGRect(x: frame.origin.x, y: frame.origin.y, width: 1.0, height: 1.0)
 }
 
-private func buildKeyframeMarkers(document: GlyphDocument, options: CLIOptions) -> [SVGPathBuilder.KeyframeMarker] {
-    let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
-    let quality = options.quality ?? "preview"
-    let useCase = GenerateStrokeOutlineUseCase(
-        sampler: DefaultPathSampler(),
-        evaluator: DefaultParamEvaluator(),
-        unioner: PassthroughPolygonUnioner()
-    )
-    var markers: [SVGPathBuilder.KeyframeMarker] = []
-    for stroke in document.inputs.geometry.strokes {
-        guard let spec = strokeSpec(from: stroke, paths: pathById, quality: quality, outlineMethod: options.strokeOutlineMethod) else { continue }
-        let samples = useCase.generateSamples(for: spec).sorted { $0.t < $1.t }
-        guard !samples.isEmpty else { continue }
-        appendKeyframeMarkers(
-            track: stroke.params.width,
-            color: "#e53935",
-            radius: 1.6,
-            shape: .circle,
-            samples: samples,
-            markers: &markers
-        )
-        if let widthLeft = stroke.params.widthLeft {
-            appendKeyframeMarkers(
-                track: widthLeft,
-                color: "#c2185b",
-                radius: 1.6,
-                shape: .triangleLeft,
-                samples: samples,
-                markers: &markers
-            )
-        }
-        if let widthRight = stroke.params.widthRight {
-            appendKeyframeMarkers(
-                track: widthRight,
-                color: "#00897b",
-                radius: 1.6,
-                shape: .triangleRight,
-                samples: samples,
-                markers: &markers
-            )
-        }
-        appendKeyframeMarkers(
-            track: stroke.params.height,
-            color: "#43a047",
-            radius: 1.6,
-            shape: .square,
-            samples: samples,
-            markers: &markers
-        )
-        appendKeyframeMarkers(
-            track: stroke.params.theta,
-            color: "#fb8c00",
-            radius: 1.6,
-            shape: .diamond,
-            samples: samples,
-            markers: &markers
-        )
-        if let offset = stroke.params.offset {
-            appendKeyframeMarkers(
-                track: offset,
-                color: "#1e88e5",
-                radius: 1.6,
-                shape: .triangle,
-                samples: samples,
-                markers: &markers
-            )
-        }
-        if let alpha = stroke.params.alpha {
-            appendKeyframeMarkers(
-                track: alpha,
-                color: "#8d6e63",
-                radius: 1.6,
-                shape: .invertedTriangle,
-                samples: samples,
-                markers: &markers
-            )
-        }
-    }
-    return markers
-}
-
-private func appendKeyframeMarkers(
-    track: ParamCurve,
-    color: String,
-    radius: Double,
-    shape: SVGPathBuilder.KeyframeMarkerShape,
-    samples: [Sample],
-    markers: inout [SVGPathBuilder.KeyframeMarker]
-) {
-    for keyframe in track.keyframes {
-        let t = ScalarMath.clamp01(keyframe.t)
-        guard let point = interpolatedSamplePoint(at: t, samples: samples) else { continue }
-        markers.append(SVGPathBuilder.KeyframeMarker(point: point, color: color, radius: radius, shape: shape))
-    }
-}
-
-private func interpolatedSamplePoint(at t: Double, samples: [Sample]) -> Point? {
-    guard let first = samples.first, let last = samples.last else { return nil }
-    if t <= first.t { return first.point }
-    if t >= last.t { return last.point }
-    for index in 1..<samples.count {
-        let next = samples[index]
-        if next.t >= t {
-            let prev = samples[index - 1]
-            let span = next.t - prev.t
-            let alpha = span == 0 ? 0.0 : (t - prev.t) / span
-            return prev.point + (next.point - prev.point) * alpha
-        }
-    }
-    return last.point
-}
-
 private func buildStrokePreviewPolygons(document: GlyphDocument, options: CLIOptions) -> PolygonSet {
     var polygons: PolygonSet = []
     polygons.reserveCapacity(document.inputs.geometry.paths.count)
@@ -4255,9 +2929,8 @@ private func buildStrokePreviewPolygons(document: GlyphDocument, options: CLIOpt
     for path in document.inputs.geometry.paths {
         let segments = path.segments.compactMap { segment -> CubicBezier? in
             if case .cubic(let cubic) = segment { return cubic }
-    return nil
-}
-
+            return nil
+        }
         if segments.isEmpty { continue }
 
         let bezierPath = BezierPath(segments: segments)
@@ -4283,8 +2956,6 @@ private func buildStrokePreviewPolygons(document: GlyphDocument, options: CLIOpt
                 point: point,
                 tangentAngle: tangentAngle,
                 width: width,
-                widthLeft: width * 0.5,
-                widthRight: width * 0.5,
                 height: height,
                 theta: angleOffset,
                 effectiveRotation: effectiveRotation,
@@ -4337,52 +3008,10 @@ private func buildStrokePreviewPolygons(document: GlyphDocument, options: CLIOpt
     return polygons
 }
 
-private func renderCenterlines(document: GlyphDocument, builder: SVGPathBuilder) -> [String] {
-    let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
-    var rendered: [String] = []
-    rendered.reserveCapacity(document.inputs.geometry.ink.count)
-    for item in document.inputs.geometry.ink {
-        switch item {
-        case .path(let path):
-            let element = builder.centerlinePathElement(for: path.segments, stroke: "#00e5ff", strokeWidth: 2.0)
-            if !element.isEmpty { rendered.append(element) }
-        case .stroke(let stroke):
-            for skeleton in stroke.skeletons {
-                if let path = pathById[skeleton] {
-                    let element = builder.centerlinePathElement(for: path.segments, stroke: "#00e5ff", strokeWidth: 2.0)
-                    if !element.isEmpty { rendered.append(element) }
-                }
-            }
-        case .unknown:
-            continue
-        }
-    }
-    return rendered
-}
-
-struct AuthoredStrokeRender {
-    let polygons: PolygonSet
-    let fittedPaths: [FittedPath]?
-    let junctionPatches: [Ring]
-    let junctionCorridors: [Ring]
-    let junctionControlPoints: [Point]
-    let junctionDiagnostics: [DirectSilhouetteTracer.JunctionDiagnostic]
-    let railsRings: [Ring]
-    let leftRailSamples: [DirectSilhouetteTracer.RailSample]
-    let rightRailSamples: [DirectSilhouetteTracer.RailSample]
-    let leftRailJumpSamples: [DirectSilhouetteTracer.RailSample]
-    let rightRailJumpSamples: [DirectSilhouetteTracer.RailSample]
-    let leftRailRuns: [[Point]]
-    let rightRailRuns: [[Point]]
-    let railJoinSeams: [DirectSilhouetteTracer.RailJoinSeam]
-    let railConnectors: [DirectSilhouetteTracer.RailConnector]
-}
-
-func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) throws -> AuthoredStrokeRender {
+func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) throws -> (polygons: PolygonSet, fittedPaths: [FittedPath]?) {
     let pathById = Dictionary(uniqueKeysWithValues: document.inputs.geometry.paths.map { ($0.id, $0) })
     let quality = options.quality ?? "preview"
     let isFinal = quality == "final"
-    let useDirectEnvelope = options.finalEnvelopeMode == .direct
     let unionMode: FinalUnionMode
     if isFinal {
         unionMode = options.finalUnionMode ?? .auto
@@ -4406,143 +3035,9 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
     let evaluator = DefaultParamEvaluator()
     var polygons: PolygonSet = []
     polygons.reserveCapacity(document.inputs.geometry.strokes.count)
-    var directFittedPaths: [FittedPath] = []
-    var junctionPatches: [Ring] = []
-    var junctionCorridors: [Ring] = []
-    var junctionControlPoints: [Point] = []
-    var junctionDiagnostics: [DirectSilhouetteTracer.JunctionDiagnostic] = []
-    var railsRings: [Ring] = []
-    var leftRailSamples: [DirectSilhouetteTracer.RailSample] = []
-    var rightRailSamples: [DirectSilhouetteTracer.RailSample] = []
-    var leftRailJumpSamples: [DirectSilhouetteTracer.RailSample] = []
-    var rightRailJumpSamples: [DirectSilhouetteTracer.RailSample] = []
-    var leftRailRuns: [[Point]] = []
-    var rightRailRuns: [[Point]] = []
-    var railJoinSeams: [DirectSilhouetteTracer.RailJoinSeam] = []
-    var railConnectors: [DirectSilhouetteTracer.RailConnector] = []
 
     for stroke in document.inputs.geometry.strokes {
-        guard let spec = strokeSpec(from: stroke, paths: pathById, quality: quality, outlineMethod: options.strokeOutlineMethod) else { continue }
-        if useDirectEnvelope {
-            let skeletonPaths = stroke.skeletons.compactMap { pathById[$0] }.compactMap(bezierPath(from:))
-            if !skeletonPaths.isEmpty {
-                let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
-                let concatenated = useCase.generateConcatenatedSamplesWithJunctions(
-                    for: spec,
-                    paths: skeletonPaths,
-                    debugSkeletonIds: stroke.skeletons
-                )
-                let junctions = concatenated.junctionPairs.enumerated().compactMap { index, pair -> DirectSilhouetteTracer.JunctionContext? in
-                    guard pair.0 >= 0, pair.1 >= 0,
-                          pair.0 < concatenated.samples.count,
-                          pair.1 < concatenated.samples.count else { return nil }
-                    let prev = pair.0 > 0 ? concatenated.samples[pair.0 - 1] : nil
-                    let next = pair.1 + 1 < concatenated.samples.count ? concatenated.samples[pair.1 + 1] : nil
-                    return DirectSilhouetteTracer.JunctionContext(
-                        joinIndex: index,
-                        prev: prev,
-                        a: concatenated.samples[pair.0],
-                        b: concatenated.samples[pair.1],
-                        next: next
-                    )
-                }
-                let railTolerance = spec.samplingPolicy?.envelopeTolerance ?? 0.5
-                let traceWindow: DirectSilhouetteTraceWindow?
-                if let tMin = options.traceTMin, let tMax = options.traceTMax {
-                    let label = options.traceStrokeId ?? stroke.id
-                    traceWindow = DirectSilhouetteTraceWindow(tMin: tMin, tMax: tMax, label: label)
-                } else {
-                    traceWindow = nil
-                }
-
-                if let window = traceWindow, options.traceStrokeId == nil || options.traceStrokeId == stroke.id {
-                    print("direct-trace stroke=\(stroke.id) window [\(String(format: "%.6f", window.tMin))..\((String(format: "%.6f", window.tMax)))]")
-                    for sample in concatenated.samples where window.contains(sample.t) {
-                        if let debug = evaluator.debugEvaluate(spec.width, at: sample.t) {
-                            let linear = debug.v0 + (debug.v1 - debug.v0) * debug.uRaw
-                            let alphaNote = debug.alphaWasNil ? "alphaSource=nil" : "alphaSource=keyframe"
-                            let alphaStart = debug.alphaFromStart.map { String(format: "%.3f", $0) } ?? "nil"
-                            let alphaEnd = debug.alphaFromEnd.map { String(format: "%.3f", $0) } ?? "nil"
-                            let alphaReason: String
-                            if debug.alphaFromStart != nil {
-                                alphaReason = "alphaFromStart"
-                            } else if debug.alphaFromEnd != nil {
-                                alphaReason = "alphaOnEndKeyframe"
-                            } else {
-                                alphaReason = "alphaMissing"
-                            }
-                            print("[EVAL width] t=\(String(format: "%.6f", debug.t)) seg=\(debug.segmentIndex) [\(String(format: "%.6f", debug.t0))..\((String(format: "%.6f", debug.t1)))] v0=\(String(format: "%.3f", debug.v0)) v1=\(String(format: "%.3f", debug.v1)) alpha=\(String(format: "%.3f", debug.alphaUsed)) \(alphaNote) uRaw=\(String(format: "%.6f", debug.uRaw)) uBiased=\(String(format: "%.6f", debug.uBiased)) wLinear=\(String(format: "%.3f", linear)) wEased=\(String(format: "%.3f", debug.value))")
-                            print("[EVAL width segPick] t=\(String(format: "%.6f", debug.t)) i0=\(debug.segmentIndex) i1=\(debug.segmentIndex + 1) alphaFromStart=\(alphaStart) alphaFromEnd=\(alphaEnd) reason=\(alphaReason)")
-                        }
-                        if let debug = evaluator.debugEvaluate(spec.height, at: sample.t) {
-                            print("[EVAL height] t=\(String(format: "%.6f", debug.t)) v=\(String(format: "%.3f", debug.value))")
-                        }
-                        if let debug = evaluator.debugEvaluate(spec.theta, at: sample.t) {
-                            print("[EVAL theta] t=\(String(format: "%.6f", debug.t)) theta=\(String(format: "%.6f", debug.value))")
-                        }
-                    }
-                }
-
-                let paramsProvider: DirectSilhouetteTracer.DirectSilhouetteParamProvider = { t, tangentAngle in
-                    let width = evaluator.evaluate(spec.width, at: t)
-                    let widthLeft = spec.widthLeft.map { evaluator.evaluate($0, at: t) } ?? (width * 0.5)
-                    let widthRight = spec.widthRight.map { evaluator.evaluate($0, at: t) } ?? (width * 0.5)
-                    let height = evaluator.evaluate(spec.height, at: t)
-                    let theta = AngleMath.wrapPi(evaluator.evaluateAngle(spec.theta, at: t))
-                    let tangentPhase = (spec.tangentPhaseDegrees ?? 0.0) * .pi / 180.0
-                    let alpha = spec.alpha.map { evaluator.evaluate($0, at: t) } ?? 0.0
-                    let effectiveRotation: Double
-                    switch spec.angleMode {
-                    case .absolute:
-                        effectiveRotation = theta
-                    case .tangentRelative:
-                        effectiveRotation = AngleMath.wrapPi(tangentAngle + theta + tangentPhase)
-                    }
-                    return (width, widthLeft, widthRight, height, theta, effectiveRotation, alpha)
-                }
-                let directResult = DirectSilhouetteTracer.trace(
-                    samples: concatenated.samples,
-                    junctions: junctions,
-                    capStyle: spec.capStyle,
-                    railTolerance: railTolerance,
-                    railSplitThreshold: options.railsJumpThreshold,
-                    railJumpsSource: options.railsJumpsSource == .raw ? .raw : .selected,
-                    paramsProvider: paramsProvider,
-                    traceWindow: (options.traceStrokeId == nil || options.traceStrokeId == stroke.id) ? traceWindow : nil,
-                    verbose: options.verbose,
-                    railsDebug: options.railsDebug,
-                    railsDebugStart: options.railsDebugStart
-                )
-                if !directResult.outline.isEmpty {
-                    polygons.append(Polygon(outer: directResult.outline))
-                    if let fitted = directFittedPath(from: directResult) {
-                        directFittedPaths.append(fitted)
-                    }
-                    for patch in directResult.junctionPatches {
-                        polygons.append(Polygon(outer: patch))
-                        if let patchPath = catmullRomFittedPath(from: patch) {
-                            directFittedPaths.append(patchPath)
-                        }
-                    }
-                    junctionPatches.append(contentsOf: directResult.junctionPatches)
-                    junctionCorridors.append(contentsOf: directResult.junctionCorridors)
-                    junctionControlPoints.append(contentsOf: directResult.junctionControlPoints)
-                    junctionDiagnostics.append(contentsOf: directResult.junctionDiagnostics)
-                    railsRings.append(directResult.outline)
-                    leftRailSamples.append(contentsOf: directResult.leftRailSamples)
-                    rightRailSamples.append(contentsOf: directResult.rightRailSamples)
-                    leftRailJumpSamples.append(contentsOf: directResult.leftRailSamplesPreRefine)
-                    rightRailJumpSamples.append(contentsOf: directResult.rightRailSamplesPreRefine)
-                    leftRailRuns.append(contentsOf: directResult.leftRailRuns)
-                    rightRailRuns.append(contentsOf: directResult.rightRailRuns)
-                    railJoinSeams.append(contentsOf: directResult.railJoinSeams)
-                    railConnectors.append(contentsOf: directResult.railConnectors)
-                    continue
-                } else if options.verbose {
-                    print("authored-stroke \(stroke.id) direct envelope empty; falling back to union")
-                }
-            }
-        }
+        guard let spec = strokeSpec(from: stroke, paths: pathById, quality: quality) else { continue }
         let estimator = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
         let sampleCount = estimator.generateSamples(for: spec).count
         if options.verbose {
@@ -4587,12 +3082,10 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 verbose: options.verbose,
                 label: "authored-stroke \(stroke.id)"
             )
-        case .trace:
-            unioner = PassthroughPolygonUnioner()
         }
 
         let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: unioner)
-        var outline: PolygonSet
+        let outline: PolygonSet
         do {
             outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges)
         } catch {
@@ -4606,86 +3099,10 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 throw error
             }
         }
-        if case .trace = unionMode {
-            let epsilon = traceEpsilon(unionSimplifyTolerance: unionSimplifyTolerance)
-            let closingPasses = (quality == "final") ? 2 : 1
-            print("authored-stroke \(stroke.id) trace silhouette epsilon=\(String(format: "%.6f", epsilon)) closingPasses=\(closingPasses)")
-            outline = OutlineTracer.traceSilhouette(outline, epsilon: epsilon, closingPasses: closingPasses)
-        }
         polygons.append(contentsOf: outline)
-        if options.showRailsSamples || options.showRailsNormals || options.showRailsIndices || options.showRailsSupport {
-            if let rails = GenerateStrokeOutlineUseCase.lastRailsDebugSamples {
-                leftRailSamples.append(contentsOf: rails.left)
-                rightRailSamples.append(contentsOf: rails.right)
-                print("railsGeom built L=\(rails.left.count) R=\(rails.right.count)")
-            } else {
-                print("railsGeom built L=0 R=0")
-            }
-        }
-        if options.showRailsRing || options.showRailsRingConnectors || options.railsDebug {
-            if let ring = GenerateStrokeOutlineUseCase.lastRailsDebugRing {
-                railsRings.append(ring)
-            }
-        }
-        if options.showRailsJumps || options.showRailsSupport || options.showRailsRuns {
-            let jumpsSourceIsRaw = options.railsJumpsSource == .raw
-            if jumpsSourceIsRaw {
-                if let rails = GenerateStrokeOutlineUseCase.lastRailsDebugSamplesPreRefine {
-                    leftRailJumpSamples.append(contentsOf: rails.left)
-                    rightRailJumpSamples.append(contentsOf: rails.right)
-                }
-            } else {
-                if let rails = GenerateStrokeOutlineUseCase.lastRailsDebugSamples {
-                    leftRailJumpSamples.append(contentsOf: rails.left)
-                    rightRailJumpSamples.append(contentsOf: rails.right)
-                }
-            }
-            if let runs = GenerateStrokeOutlineUseCase.lastRailsDebugRuns {
-                leftRailRuns.append(contentsOf: runs.left)
-                rightRailRuns.append(contentsOf: runs.right)
-            }
-        }
     }
 
-    guard !polygons.isEmpty else {
-        return AuthoredStrokeRender(
-            polygons: [],
-            fittedPaths: nil,
-            junctionPatches: junctionPatches,
-            junctionCorridors: junctionCorridors,
-            junctionControlPoints: junctionControlPoints,
-            junctionDiagnostics: junctionDiagnostics,
-            railsRings: railsRings,
-            leftRailSamples: leftRailSamples,
-            rightRailSamples: rightRailSamples,
-            leftRailJumpSamples: leftRailJumpSamples,
-            rightRailJumpSamples: rightRailJumpSamples,
-            leftRailRuns: leftRailRuns,
-            rightRailRuns: rightRailRuns,
-            railJoinSeams: railJoinSeams,
-            railConnectors: railConnectors
-        )
-    }
-
-    if useDirectEnvelope, !directFittedPaths.isEmpty {
-        return AuthoredStrokeRender(
-            polygons: polygons,
-            fittedPaths: directFittedPaths,
-            junctionPatches: junctionPatches,
-            junctionCorridors: junctionCorridors,
-            junctionControlPoints: junctionControlPoints,
-            junctionDiagnostics: junctionDiagnostics,
-            railsRings: railsRings,
-            leftRailSamples: leftRailSamples,
-            rightRailSamples: rightRailSamples,
-            leftRailJumpSamples: leftRailJumpSamples,
-            rightRailJumpSamples: rightRailJumpSamples,
-            leftRailRuns: leftRailRuns,
-            rightRailRuns: rightRailRuns,
-            railJoinSeams: railJoinSeams,
-            railConnectors: railConnectors
-        )
-    }
+    guard !polygons.isEmpty else { return ([], nil) }
 
     let outlineFit = options.outlineFit ?? .none
     let fitTolerance = options.fitTolerance ?? defaultFitTolerance(polygons: polygons)
@@ -4693,23 +3110,7 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
     let cornerThreshold = 60.0
     switch outlineFit {
     case .none:
-        return AuthoredStrokeRender(
-            polygons: polygons,
-            fittedPaths: nil,
-            junctionPatches: junctionPatches,
-            junctionCorridors: junctionCorridors,
-            junctionControlPoints: junctionControlPoints,
-            junctionDiagnostics: junctionDiagnostics,
-            railsRings: railsRings,
-            leftRailSamples: leftRailSamples,
-            rightRailSamples: rightRailSamples,
-            leftRailJumpSamples: leftRailJumpSamples,
-            rightRailJumpSamples: rightRailJumpSamples,
-            leftRailRuns: leftRailRuns,
-            rightRailRuns: rightRailRuns,
-            railJoinSeams: railJoinSeams,
-            railConnectors: railConnectors
-        )
+        return (polygons, nil)
     case .simplify:
         let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
         let simplified = polygons.map { polygon in
@@ -4717,23 +3118,7 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
             let holes = polygon.holes.map { simplifier.simplifyRing($0, closed: true) }
             return Polygon(outer: outer, holes: holes)
         }
-        return AuthoredStrokeRender(
-            polygons: simplified,
-            fittedPaths: nil,
-            junctionPatches: junctionPatches,
-            junctionCorridors: junctionCorridors,
-            junctionControlPoints: junctionControlPoints,
-            junctionDiagnostics: junctionDiagnostics,
-            railsRings: railsRings,
-            leftRailSamples: leftRailSamples,
-            rightRailSamples: rightRailSamples,
-            leftRailJumpSamples: leftRailJumpSamples,
-            rightRailJumpSamples: rightRailJumpSamples,
-            leftRailRuns: leftRailRuns,
-            rightRailRuns: rightRailRuns,
-            railJoinSeams: railJoinSeams,
-            railConnectors: railConnectors
-        )
+        return (simplified, nil)
     case .bezier:
         let simplifier = BezierFitter(tolerance: simplifyTolerance, cornerThresholdDegrees: cornerThreshold)
         let simplified = polygons.map { polygon in
@@ -4743,44 +3128,11 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
         }
         let fitter = BezierFitter(tolerance: fitTolerance, cornerThresholdDegrees: cornerThreshold)
         let fitted = fitter.fitPolygonSet(simplified)
-        return AuthoredStrokeRender(
-            polygons: [],
-            fittedPaths: fitted,
-            junctionPatches: junctionPatches,
-            junctionCorridors: junctionCorridors,
-            junctionControlPoints: junctionControlPoints,
-            junctionDiagnostics: junctionDiagnostics,
-            railsRings: railsRings,
-            leftRailSamples: leftRailSamples,
-            rightRailSamples: rightRailSamples,
-            leftRailJumpSamples: leftRailJumpSamples,
-            rightRailJumpSamples: rightRailJumpSamples,
-            leftRailRuns: leftRailRuns,
-            rightRailRuns: rightRailRuns,
-            railJoinSeams: railJoinSeams,
-            railConnectors: railConnectors
-        )
+        return ([], fitted)
     }
 }
 
-func bezierPath(from path: PathGeometry) -> BezierPath? {
-    let segments = path.segments.compactMap { segment -> CubicBezier? in
-        if case .cubic(let cubic) = segment { return cubic }
-        return nil
-    }
-    guard !segments.isEmpty else { return nil }
-    return BezierPath(segments: segments)
-}
-
-private func thetaTrackFromGlyph(_ curve: ParamCurve) -> ParamTrack {
-    // Glyph theta values are authored in degrees; convert once to radians.
-    let frames = curve.keyframes.map {
-        Keyframe(t: $0.t, value: $0.value * .pi / 180.0, interpolationToNext: $0.interpolationToNext)
-    }
-    return ParamTrack(keyframes: frames)
-}
-
-func strokeSpec(from stroke: StrokeGeometry, paths: [String: PathGeometry], quality: String, outlineMethod: StrokeOutlineMethod? = nil) -> StrokeSpec? {
+private func strokeSpec(from stroke: StrokeGeometry, paths: [String: PathGeometry], quality: String) -> StrokeSpec? {
     let skeletonSegments = stroke.skeletons.compactMap { paths[$0] }.flatMap { path in
         path.segments.compactMap { segment -> CubicBezier? in
             if case .cubic(let cubic) = segment { return cubic }
@@ -4792,94 +3144,34 @@ func strokeSpec(from stroke: StrokeGeometry, paths: [String: PathGeometry], qual
     let samplingPolicy = stroke.samplingPolicy ?? ((quality == "final") ? .final : .preview)
     let samplingSpec = SamplingSpec()
     let width = paramTrack(from: stroke.params.width)
-    let widthLeft = stroke.params.widthLeft.map { paramTrack(from: $0) }
-    let widthRight = stroke.params.widthRight.map { paramTrack(from: $0) }
     let height = paramTrack(from: stroke.params.height)
-    let theta = thetaTrackFromGlyph(stroke.params.theta)
+    let theta = paramTrack(from: stroke.params.theta)
     let offset = stroke.params.offset.map { paramTrack(from: $0) }
     let alpha = stroke.params.alpha.map { paramTrack(from: $0) }
     let angleMode = stroke.params.angleMode ?? .absolute
-    let tangentPhaseDegrees = stroke.params.tangentPhaseDegrees
-    let capStyle = stroke.joins?.capStyle ?? CapStylePair(.butt)
+    let capStyle = stroke.joins?.capStyle ?? .butt
     let joinStyle = stroke.joins?.joinStyle ?? .round
 
-    let output = OutputSpec(coordinateMode: .raw, outlineMethod: outlineMethod ?? .union)
     return StrokeSpec(
         path: BezierPath(segments: skeletonSegments),
         width: width,
-        widthLeft: widthLeft,
-        widthRight: widthRight,
         height: height,
         theta: theta,
         offset: offset,
         alpha: alpha,
         angleMode: angleMode,
-        tangentPhaseDegrees: tangentPhaseDegrees,
         capStyle: capStyle,
         joinStyle: joinStyle,
         counterpointShape: .rectangle,
         sampling: samplingSpec,
         samplingPolicy: samplingPolicy,
-        output: output
+        output: OutputSpec(coordinateMode: .raw)
     )
 }
 
 private func paramTrack(from curve: ParamCurve) -> ParamTrack {
-    let frames = curve.keyframes.map { Keyframe(t: $0.t, value: $0.value, interpolationToNext: $0.interpolationToNext) }
+    let frames = curve.keyframes.map { Keyframe(t: $0.t, value: $0.value) }
     return ParamTrack(keyframes: frames)
-}
-
-private func dumpDecodedKeyframes(document: GlyphDocument, options: CLIOptions) {
-    let targetId = options.traceStrokeId
-    for stroke in document.inputs.geometry.strokes {
-        if let targetId, stroke.id != targetId { continue }
-        let phaseText: String
-        if let phase = stroke.params.tangentPhaseDegrees {
-            phaseText = String(format: "%.6f", phase)
-        } else {
-            phaseText = "nil"
-        }
-        print("decoded-param stroke=\(stroke.id) tangentPhaseDegrees=\(phaseText)")
-        print("decoded-keyframes stroke=\(stroke.id) track=width")
-        for (index, keyframe) in stroke.params.width.keyframes.enumerated() {
-            let alphaText: String
-            if let alpha = keyframe.interpolationToNext?.alpha {
-                alphaText = String(format: "%.6f", alpha)
-            } else {
-                alphaText = "nil"
-            }
-            print("  [\(index)] t=\(String(format: "%.6f", keyframe.t)) value=\(String(format: "%.6f", keyframe.value)) alpha=\(alphaText)")
-        }
-    }
-}
-
-private func dumpDecodedStrokeParams(document: GlyphDocument, options: CLIOptions) {
-    let targetId = options.traceStrokeId
-    for stroke in document.inputs.geometry.strokes {
-        if let targetId, stroke.id != targetId { continue }
-        let angleMode = stroke.params.angleMode.map { String(describing: $0) } ?? "nil"
-        let phaseText: String
-        if let phase = stroke.params.tangentPhaseDegrees {
-            phaseText = String(format: "%.6f", phase)
-        } else {
-            phaseText = "nil"
-        }
-        print("decoded-stroke-params stroke=\(stroke.id) angleMode=\(angleMode) tangentPhaseDegrees=\(phaseText)")
-    }
-}
-
-private func sanitizedStrokeIdForFilename(_ id: String) -> String {
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-    var result = String()
-    result.reserveCapacity(id.count)
-    for scalar in id.unicodeScalars {
-        if scalar.isASCII, allowed.contains(scalar) {
-            result.unicodeScalars.append(scalar)
-        } else {
-            result.append("_")
-        }
-    }
-    return result.isEmpty ? "stroke" : result
 }
 
 struct CleanupStats {
@@ -5792,9 +4084,9 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--reference-on-top] [--show-keyframes] [--show-centerline] [--stroke-outline-method union|rails] [--rails-debug] [--rails-debug-start N] [--rails-samples-step N] [--rails-samples-start N] [--rails-samples-count N] [--rails-samples-tmin N] [--rails-samples-tmax N] [--rails-window-gt0 N] [--rails-window-gt1 N] [--ring-samples-start N] [--ring-samples-count N] [--ring-window-t0 N] [--ring-window-t1 N] [--ring-window-gt0 N] [--ring-window-gt1 N] [--ring-window-extrema minX|maxX|minY|maxY] [--ring-window-radius N] [--assert-rails-window] [--assert-ring-window] [--assert-ring-window-hits-extrema] [--ring-label-step N] [--ring-label-count N] [--rails-jump-threshold N] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always|trace] [--final-envelope direct] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,railsSamples,railsNormals,railsIndices,railsJumps,railsSupport,railsRuns,railsRing,railsRingSelected,railsRingConnectors,railsConnectorsOnly,caps,junctions,union,centerline,offset,alpha,ref-diff|all|none] [--alpha-probe-t N] [--alpha-demo N] [--alpha-debug] [--diff-resolution N] [--trace-alpha-window tmin tmax] [--trace-stroke <id>] [--trace-tmin N] [--trace-tmax N] [--dump-keyframes] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
-    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union|direct] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,railsSamples,railsNormals,railsIndices,railsJumps,railsSupport,railsRuns,railsRing,railsRingSelected,railsRingConnectors,railsConnectorsOnly,caps,junctions,union,centerline,offset,alpha,ref-diff|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
-    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union|direct] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,railsSamples,railsNormals,railsIndices,railsJumps,railsSupport,railsRuns,railsRing,railsRingSelected,railsRingConnectors,railsConnectorsOnly,caps,junctions,union,centerline,offset,alpha,ref-diff|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N]\n".utf8))
+    stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
+    stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))
     stderr.write(Data("       counterpoint-cli union-dump <input.json> [--svg out.svg] [--out out.json] [--keep-first N] [--drop-original-index N] [--drop-index N] [--keep-indices 0,1,2-5] [--cleanup-coincident-edges 0|1] [--cleanup-touching-edges 0|1] [--snap-tol N] [--touch-eps N] [--no-union|--cleanup-only] [--dump-after-cleanup <path>] [--dry-run] [--print-ring-original-index N]\n".utf8))
     exit(1)

@@ -10,59 +10,6 @@ final class GlyphDocumentV0Tests: XCTestCase {
         XCTAssertEqual(doc.inputs.geometry.strokes.count, 1)
     }
 
-    func testDecodesTangentPhaseDegrees() throws {
-        let json = """
-        {
-          "schema": "\(GlyphDocument.schemaId)",
-          "frame": {
-            "origin": {"x": 0, "y": 0},
-            "size": {"width": 600, "height": 700},
-            "advanceWidth": 600,
-            "leftSidebearing": 50,
-            "rightSidebearing": 50
-          },
-          "inputs": {
-            "geometry": {
-              "paths": [
-                {
-                  "id": "path-stem",
-                  "type": "path",
-                  "segments": [
-                    {
-                      "type": "cubic",
-                      "p0": {"x": 0, "y": 0},
-                      "p1": {"x": 0, "y": 0},
-                      "p2": {"x": 0, "y": 100},
-                      "p3": {"x": 0, "y": 100}
-                    }
-                  ]
-                }
-              ],
-              "strokes": [
-                {
-                  "id": "stroke-main",
-                  "type": "stroke",
-                  "skeletons": ["path-stem"],
-                  "params": {
-                    "angleMode": "tangentRelative",
-                    "tangentPhaseDegrees": 90,
-                    "width": {"keyframes": [{"t": 0, "value": 10}]},
-                    "height": {"keyframes": [{"t": 0, "value": 6}]},
-                    "theta": {"keyframes": [{"t": 0, "value": 0}]}
-                  }
-                }
-              ],
-              "whitespace": []
-            }
-          }
-        }
-        """
-        let data = Data(json.utf8)
-        let doc = try GlyphDocument.load(from: data)
-        let stroke = try XCTUnwrap(doc.inputs.geometry.strokes.first)
-        XCTAssertEqual(stroke.params.tangentPhaseDegrees ?? 0.0, 90.0, accuracy: 1.0e-6)
-    }
-
     func testRejectsDuplicateIds() throws {
         let json = """
         {
@@ -279,7 +226,7 @@ final class GlyphDocumentV0Tests: XCTestCase {
     }
 
     func testLoadsUserGlyphFile() throws {
-        let data = try loadFixture(named: "glyph_v0_min.json")
+        let data = try loadGlyphFixture(named: "J.v0.json")
         let doc = try GlyphDocument.load(from: data)
         XCTAssertEqual(doc.schema, GlyphDocument.schemaId)
     }
@@ -300,10 +247,6 @@ final class GlyphDocumentV0Tests: XCTestCase {
         let fileURL = URL(fileURLWithPath: #file)
         var dir = fileURL.deletingLastPathComponent()
         while dir.path != "/" {
-            let testCandidate = dir.appendingPathComponent("Tests/Fixtures/\(name)")
-            if FileManager.default.fileExists(atPath: testCandidate.path) {
-                return try Data(contentsOf: testCandidate)
-            }
             let candidate = dir.appendingPathComponent("Fixtures/\(name)")
             if FileManager.default.fileExists(atPath: candidate.path) {
                 return try Data(contentsOf: candidate)
@@ -313,4 +256,16 @@ final class GlyphDocumentV0Tests: XCTestCase {
         throw NSError(domain: "GlyphDocumentV0Tests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Fixture not found: \(name)"])
     }
 
+    private func loadGlyphFixture(named name: String) throws -> Data {
+        let fileURL = URL(fileURLWithPath: #file)
+        var dir = fileURL.deletingLastPathComponent()
+        while dir.path != "/" {
+            let candidate = dir.appendingPathComponent("Fixtures/glyphs/\(name)")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return try Data(contentsOf: candidate)
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        throw NSError(domain: "GlyphDocumentV0Tests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Glyph fixture not found: \(name)"])
+    }
 }

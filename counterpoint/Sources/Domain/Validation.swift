@@ -33,16 +33,7 @@ public struct StrokeSpecValidator: SpecValidating {
         }
 
         validate(track: spec.width, name: "width", mustBePositive: true, errors: &errors)
-        if let widthLeft = spec.widthLeft {
-            validate(track: widthLeft, name: "widthLeft", mustBePositive: false, errors: &errors)
-            validateNonNegative(track: widthLeft, name: "widthLeft", errors: &errors)
-        }
-        if let widthRight = spec.widthRight {
-            validate(track: widthRight, name: "widthRight", mustBePositive: false, errors: &errors)
-            validateNonNegative(track: widthRight, name: "widthRight", errors: &errors)
-        }
-        validate(track: spec.height, name: "height", mustBePositive: false, errors: &errors)
-        validateNonNegative(track: spec.height, name: "height", errors: &errors)
+        validate(track: spec.height, name: "height", mustBePositive: true, errors: &errors)
         validate(track: spec.theta, name: "theta", mustBePositive: false, errors: &errors)
         if let offset = spec.offset {
             validate(track: offset, name: "offset", mustBePositive: false, errors: &errors)
@@ -112,15 +103,6 @@ public struct StrokeSpecValidator: SpecValidating {
             if policy.envelopeTolerance < 0 || !policy.envelopeTolerance.isFinite {
                 errors.append("SamplingPolicy envelopeTolerance must be non-negative and finite.")
             }
-            if policy.railChordTolerance < 0 || !policy.railChordTolerance.isFinite {
-                errors.append("SamplingPolicy railChordTolerance must be non-negative and finite.")
-            }
-            if policy.railMaxSegmentLength < 0 || !policy.railMaxSegmentLength.isFinite {
-                errors.append("SamplingPolicy railMaxSegmentLength must be non-negative and finite.")
-            }
-            if policy.railMaxTurnAngleDegrees < 0 || !policy.railMaxTurnAngleDegrees.isFinite {
-                errors.append("SamplingPolicy railMaxTurnAngleDegrees must be non-negative and finite.")
-            }
             if policy.maxSamples <= 1 {
                 errors.append("SamplingPolicy maxSamples must be greater than 1.")
             }
@@ -165,14 +147,6 @@ public struct StrokeSpecValidator: SpecValidating {
                 if !interpolation.alpha.isFinite || interpolation.alpha < -1.0 || interpolation.alpha > 1.0 {
                     errors.append("ParamTrack '\(name)' keyframe \(index) interpolation alpha must be in [-1,1].")
                 }
-            }
-        }
-    }
-
-    private func validateNonNegative(track: ParamTrack, name: String, errors: inout [String]) {
-        for (index, keyframe) in track.keyframes.enumerated() {
-            if keyframe.value < 0.0 {
-                errors.append("ParamTrack '\(name)' keyframe \(index) must be >= 0.")
             }
         }
     }

@@ -167,7 +167,7 @@ final class ScurvePlaygroundTests: XCTestCase {
         let center = (lastLeft + lastRight) * 0.5
         let centerline = pointAtS(1.0, samples: geometry.centerlineSamples)
         let offset = center.y - centerline.y
-        XCTAssertEqual(offset, -10.0, accuracy: 0.5)
+        XCTAssertEqual(offset, 10.0, accuracy: 0.5)
     }
 
     func testOffsetShiftsEnvelopeBounds() throws {
@@ -194,7 +194,7 @@ final class ScurvePlaygroundTests: XCTestCase {
         let baseBounds = railsBounds(left: baseGeom.envelopeLeft, right: baseGeom.envelopeRight)
         let offsetBounds = railsBounds(left: offsetGeom.envelopeLeft, right: offsetGeom.envelopeRight)
 
-        XCTAssertLessThan(offsetBounds.minY, baseBounds.minY)
+        XCTAssertGreaterThan(offsetBounds.maxY, baseBounds.maxY)
     }
 
     private func hasSelfIntersection(_ ring: Ring) -> Bool {

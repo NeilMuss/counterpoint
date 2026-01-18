@@ -29,7 +29,7 @@ final class StrokeOutlineCapJoinTests: XCTestCase {
             height: baseSpec.height,
             theta: baseSpec.theta,
             angleMode: baseSpec.angleMode,
-            capStyle: CapStylePair(.round),
+            capStyle: .round,
             joinStyle: .bevel,
             sampling: baseSpec.sampling
         ))
@@ -39,7 +39,7 @@ final class StrokeOutlineCapJoinTests: XCTestCase {
             height: baseSpec.height,
             theta: baseSpec.theta,
             angleMode: baseSpec.angleMode,
-            capStyle: CapStylePair(.square),
+            capStyle: .square,
             joinStyle: .bevel,
             sampling: baseSpec.sampling
         ))
@@ -85,7 +85,7 @@ final class StrokeOutlineCapJoinTests: XCTestCase {
             height: base.height,
             theta: base.theta,
             angleMode: base.angleMode,
-            capStyle: CapStylePair(.butt),
+            capStyle: .butt,
             joinStyle: .miter(miterLimit: 10.0),
             sampling: base.sampling
         ))
@@ -95,7 +95,7 @@ final class StrokeOutlineCapJoinTests: XCTestCase {
             height: base.height,
             theta: base.theta,
             angleMode: base.angleMode,
-            capStyle: CapStylePair(.butt),
+            capStyle: .butt,
             joinStyle: .round,
             sampling: base.sampling
         ))
@@ -108,56 +108,6 @@ final class StrokeOutlineCapJoinTests: XCTestCase {
         XCTAssertLessThanOrEqual(bevelBounds.maxY, miterBounds.maxY)
         XCTAssertLessThanOrEqual(bevelBounds.maxX, roundBounds.maxX)
         XCTAssertLessThanOrEqual(bevelBounds.maxY, roundBounds.maxY)
-    }
-
-    func testCircleCapUsesWidthRadius() throws {
-        let baseSpec = StrokeSpec(
-            path: BezierPath(segments: [
-                CubicBezier(
-                    p0: Point(x: 0, y: 0),
-                    p1: Point(x: 33, y: 0),
-                    p2: Point(x: 66, y: 0),
-                    p3: Point(x: 100, y: 0)
-                )
-            ]),
-            width: ParamTrack.constant(20),
-            widthLeft: ParamTrack.constant(10),
-            widthRight: ParamTrack.constant(10),
-            height: ParamTrack.constant(40),
-            theta: ParamTrack.constant(0),
-            angleMode: .absolute,
-            sampling: SamplingSpec()
-        )
-
-        let useCase = makeUseCase()
-        let butt = try useCase.generateOutline(for: baseSpec)
-        let circle = try useCase.generateOutline(for: StrokeSpec(
-            path: baseSpec.path,
-            width: baseSpec.width,
-            widthLeft: baseSpec.widthLeft,
-            widthRight: baseSpec.widthRight,
-            height: baseSpec.height,
-            theta: baseSpec.theta,
-            angleMode: baseSpec.angleMode,
-            capStyle: CapStylePair(start: .butt, end: .circle),
-            joinStyle: .bevel,
-            sampling: baseSpec.sampling
-        ))
-        let round = try useCase.generateOutline(for: StrokeSpec(
-            path: baseSpec.path,
-            width: baseSpec.width,
-            widthLeft: baseSpec.widthLeft,
-            widthRight: baseSpec.widthRight,
-            height: baseSpec.height,
-            theta: baseSpec.theta,
-            angleMode: baseSpec.angleMode,
-            capStyle: CapStylePair(start: .butt, end: .round),
-            joinStyle: .bevel,
-            sampling: baseSpec.sampling
-        ))
-
-        XCTAssertEqual(circle.count, butt.count + 1)
-        XCTAssertEqual(round.count, butt.count + 1)
     }
 
     private func makeUseCase() -> GenerateStrokeOutlineUseCase {
