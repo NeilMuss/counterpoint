@@ -4,6 +4,11 @@ import CP2Skeleton
 
 struct CLIOptions {
     var outPath: String = "out/line.svg"
+    var verbose: Bool = false
+    var debugParam: Bool = false
+    var debugSweep: Bool = false
+    var debugSVG: Bool = false
+    var probeCount: Int = 5
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -11,13 +16,41 @@ func parseArgs(_ args: [String]) -> CLIOptions {
     var index = 0
     while index < args.count {
         let arg = args[index]
-        if arg == "--out", index + 1 < args.count {
+        if arg == "--help" || arg == "-h" {
+            printUsage()
+            exit(0)
+        } else if arg == "--out", index + 1 < args.count {
             options.outPath = args[index + 1]
+            index += 1
+        } else if arg == "--verbose" {
+            options.verbose = true
+        } else if arg == "--debug-param" {
+            options.debugParam = true
+        } else if arg == "--debug-sweep" {
+            options.debugSweep = true
+        } else if arg == "--debug-svg" {
+            options.debugSVG = true
+        } else if arg == "--probe-count", index + 1 < args.count {
+            options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
             index += 1
         }
         index += 1
     }
     return options
+}
+
+func printUsage() {
+    let text = """
+Usage: cp2-cli [--out <path>] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+
+Debug flags:
+  --verbose        Enable verbose logging
+  --debug-param    Print parameterization summary + probe mappings
+  --debug-sweep    Print sweep tracing stats
+  --debug-svg      Include skeleton/sample overlay in the SVG
+  --probe-count N  Number of globalT probe points (default: 5)
+"""
+    print(text)
 }
 
 func svgPath(for ring: [Vec2]) -> String {
@@ -48,15 +81,62 @@ let bezier = CubicBezier2(
     p3: Vec2(0, 100)
 )
 let path = SkeletonPath(segments: [bezier])
+let sweepSampleCount = 64
+let sweepWidth = 20.0
+let sweepHeight = 10.0
+let sweepAngle = 0.0
+let paramSamplesPerSegment = 256
+
+let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
+if options.verbose || options.debugParam {
+    let segmentCount = path.segments.count
+    var lengths: [Double] = []
+    lengths.reserveCapacity(segmentCount)
+    for segment in path.segments {
+        let subPath = SkeletonPath(segment)
+        let param = ArcLengthParameterization(path: subPath, samplesPerSegment: paramSamplesPerSegment)
+        lengths.append(param.totalLength)
+    }
+    let lengthList = lengths.map { String(format: "%.6f", $0) }.joined(separator: ", ")
+    print("param segments=\(segmentCount) totalLength=\(String(format: "%.6f", pathParam.totalLength))")
+    print("param segmentLengths=[\(lengthList)]")
+}
+
+if options.debugParam {
+    let count = max(1, options.probeCount)
+    var probes: [Double] = []
+    if count == 1 {
+        probes = [0.0]
+    } else {
+        probes = (0..<count).map { Double($0) / Double(count - 1) }
+    }
+    for gt in probes {
+        let mapping = pathParam.map(globalT: gt)
+        let pos = pathParam.position(globalT: gt)
+        print(String(format: "param probe gt=%.4f seg=%d u=%.6f pos=(%.6f,%.6f)", gt, mapping.segmentIndex, mapping.localU, pos.x, pos.y))
+    }
+}
+
 let soup = boundarySoup(
     path: path,
-    width: 20,
-    height: 10,
-    effectiveAngle: 0,
-    sampleCount: 64
+    width: sweepWidth,
+    height: sweepHeight,
+    effectiveAngle: sweepAngle,
+    sampleCount: sweepSampleCount
 )
 let rings = traceLoops(segments: soup, eps: 1.0e-6)
 let ring = rings.first ?? []
+
+if options.debugSweep || options.verbose {
+    let ringCount = rings.count
+    let vertexCount = ring.count
+    let firstPoint = ring.first ?? Vec2(0, 0)
+    let lastPoint = ring.last ?? Vec2(0, 0)
+    let closure = (firstPoint - lastPoint).length
+    let area = signedArea(ring)
+    print("sweep samples=\(sweepSampleCount) segments=\(soup.count) rings=\(ringCount)")
+    print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f", vertexCount, closure, area))
+}
 
 let padding = 10.0
 let bounds = ringBounds(ring)
@@ -66,9 +146,103 @@ let width = bounds.width + padding * 2.0
 let height = bounds.height + padding * 2.0
 
 let pathData = svgPath(for: ring)
+var debugSVG = ""
+if options.debugSVG {
+    let arclen = ArcLengthParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
+    let tableU = arclen.uTable()
+    let tableP = arclen.sampleTable()
+    let count = max(2, sweepSampleCount)
+    var left: [Vec2] = []
+    var right: [Vec2] = []
+    left.reserveCapacity(count)
+    right.reserveCapacity(count)
+    let tableCount = max(2, tableU.count)
+    for i in 0..<count {
+        let t = Double(i) / Double(count - 1)
+        let tableIndex = Int(round(t * Double(tableCount - 1)))
+        let u = tableU[tableIndex]
+        let point = tableP[tableIndex]
+        let tangent = path.tangent(u).normalized()
+        let normal = Vec2(-tangent.y, tangent.x)
+        let halfW = sweepWidth * 0.5
+        let halfH = sweepHeight * 0.5
+        let corners: [Vec2] = [
+            Vec2(-halfW, -halfH),
+            Vec2(halfW, -halfH),
+            Vec2(halfW, halfH),
+            Vec2(-halfW, halfH)
+        ]
+        let cosA = cos(sweepAngle)
+        let sinA = sin(sweepAngle)
+        var minDot = Double.greatestFiniteMagnitude
+        var maxDot = -Double.greatestFiniteMagnitude
+        var leftPoint = point
+        var rightPoint = point
+        for corner in corners {
+            let rotated = Vec2(
+                corner.x * cosA - corner.y * sinA,
+                corner.x * sinA + corner.y * cosA
+            )
+            let world = tangent * rotated.y + normal * rotated.x
+            let cornerWorld = point + world
+            let d = cornerWorld.dot(normal)
+            if d < minDot {
+                minDot = d
+                leftPoint = cornerWorld
+            }
+            if d > maxDot {
+                maxDot = d
+                rightPoint = cornerWorld
+            }
+        }
+        left.append(leftPoint)
+        right.append(rightPoint)
+    }
+
+    let skeletonPath = tableP.enumerated().map { index, p in
+        let cmd = index == 0 ? "M" : "L"
+        return String(format: "\(cmd) %.4f %.4f", p.x, p.y)
+    }.joined(separator: " ")
+    let leftPath = left.enumerated().map { index, p in
+        let cmd = index == 0 ? "M" : "L"
+        return String(format: "\(cmd) %.4f %.4f", p.x, p.y)
+    }.joined(separator: " ")
+    let rightPath = right.enumerated().map { index, p in
+        let cmd = index == 0 ? "M" : "L"
+        return String(format: "\(cmd) %.4f %.4f", p.x, p.y)
+    }.joined(separator: " ")
+    var sampleDots: [String] = []
+    sampleDots.reserveCapacity(count)
+    for p in tableP {
+        sampleDots.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"1.2\" fill=\"none\" stroke=\"blue\" stroke-width=\"0.5\"/>", p.x, p.y))
+    }
+    var normalLines: [String] = []
+    normalLines.reserveCapacity(count)
+    for i in 0..<count {
+        let t = Double(i) / Double(count - 1)
+        let tableIndex = Int(round(t * Double(tableCount - 1)))
+        let u = tableU[tableIndex]
+        let point = tableP[tableIndex]
+        let tangent = path.tangent(u).normalized()
+        let normal = Vec2(-tangent.y, tangent.x)
+        let end = point + normal * (sweepWidth * 0.5)
+        normalLines.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"purple\" stroke-width=\"0.5\"/>", point.x, point.y, end.x, end.y))
+    }
+    debugSVG = """
+  <g id="debug">
+    <path d="\(skeletonPath)" fill="none" stroke="orange" stroke-width="0.6" />
+    <path d="\(leftPath)" fill="none" stroke="green" stroke-width="0.6" />
+    <path d="\(rightPath)" fill="none" stroke="green" stroke-width="0.6" />
+    \(normalLines.joined(separator: "\n    "))
+    \(sampleDots.joined(separator: "\n    "))
+  </g>
+"""
+}
+
 let svg = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="\(String(format: "%.4f", minX)) \(String(format: "%.4f", minY)) \(String(format: "%.4f", width)) \(String(format: "%.4f", height))">
   <path d="\(pathData)" fill="none" stroke="black" stroke-width="1" />
+\(debugSVG)
 </svg>
 """
 
