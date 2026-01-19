@@ -171,6 +171,97 @@ final class SweepTraceTests: XCTestCase {
         assertNoRailFlip(path: path)
     }
 
+    func testJSerifOnlySweepProducesDeterministicClosedRing() {
+        let path = jSerifOnlyFixturePath()
+        let height = 10.0
+        let samples = 64
+        let soupA = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: widthRamp,
+            angleAtT: thetaRampRadians,
+            alphaAtT: { _ in 0.0 },
+            alphaStart: 0.90
+        )
+        let soupB = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: widthRamp,
+            angleAtT: thetaRampRadians,
+            alphaAtT: { _ in 0.0 },
+            alphaStart: 0.90
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
+
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+
+        assertNoRailFlip(path: path, angleAtT: thetaRampRadians)
+    }
+
+    func testJSerifOnlyAlphaAffectsOnlyTailRegion() {
+        let path = jSerifOnlyFixturePath()
+        let height = 10.0
+        let samples = 64
+        let alphaStart = 0.90
+        let alphaEnd = -0.35
+        let alphaAtT: (Double) -> Double = { t in
+            if t < alphaStart {
+                return 0.0
+            }
+            let phase = (t - alphaStart) / (1.0 - alphaStart)
+            return alphaEnd * max(0.0, min(1.0, phase))
+        }
+
+        let noAlphaSoup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: widthRamp,
+            angleAtT: thetaRampRadians,
+            alphaAtT: { _ in 0.0 },
+            alphaStart: alphaStart
+        )
+        let alphaSoup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: widthRamp,
+            angleAtT: thetaRampRadians,
+            alphaAtT: alphaAtT,
+            alphaStart: alphaStart
+        )
+
+        let railsNoAlpha = railPoints(segments: noAlphaSoup, sampleCount: samples)
+        let railsAlpha = railPoints(segments: alphaSoup, sampleCount: samples)
+        XCTAssertEqual(railsNoAlpha.left.count, samples)
+        XCTAssertEqual(railsAlpha.left.count, samples)
+
+        for i in 0..<min(10, samples) {
+            XCTAssertTrue(Epsilon.approxEqual(railsNoAlpha.left[i], railsAlpha.left[i], eps: 1.0e-6))
+            XCTAssertTrue(Epsilon.approxEqual(railsNoAlpha.right[i], railsAlpha.right[i], eps: 1.0e-6))
+        }
+
+        var maxTailDelta = 0.0
+        let tailStart = max(0, Int(Double(samples - 1) * 0.9))
+        for i in tailStart..<samples {
+            let delta = (railsNoAlpha.left[i] - railsAlpha.left[i]).length
+            if delta > maxTailDelta {
+                maxTailDelta = delta
+            }
+        }
+        XCTAssertGreaterThan(maxTailDelta, 1.0e-6)
+    }
+
     func testJHookSweepProducesDeterministicClosedRing() {
         let path = jFullFixturePath()
         let width = 20.0

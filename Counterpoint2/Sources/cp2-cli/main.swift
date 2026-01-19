@@ -72,7 +72,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|j_serif_only|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -121,6 +121,8 @@ if options.example?.lowercased() == "scurve" {
     path = jStemFixturePath()
 } else if options.example?.lowercased() == "j" {
     path = jFullFixturePath()
+} else if options.example?.lowercased() == "j_serif_only" {
+    path = jSerifOnlyFixturePath()
 } else {
     let line = CubicBezier2(
         p0: Vec2(0, 0),
@@ -149,7 +151,7 @@ let alphaEndValue: Double = {
     }
     return options.alphaEnd ?? 0.0
 }()
-if options.example?.lowercased() == "j" {
+if example == "j" || example == "j_serif_only" {
     widthAtT = { t in
         let clamped = max(0.0, min(1.0, t))
         let midT = 0.45
@@ -311,7 +313,7 @@ let soupLineEndRamp = boundarySoupVariableWidthAngleAlpha(
 )
 let soupUsed = example == "j" ? soupJ : soup
 let rings = traceLoops(
-    segments: example == "j"
+    segments: (example == "j" || example == "j_serif_only")
         ? soupJThetaAlpha
         : (example == "line_end_ramp" ? soupLineEndRamp : soupUsed),
     eps: 1.0e-6
@@ -334,7 +336,7 @@ if options.debugSweep || options.verbose {
     } else {
         winding = "flat"
     }
-    let sweepSegmentsCount = example == "j"
+    let sweepSegmentsCount = (example == "j" || example == "j_serif_only")
         ? soupJThetaAlpha.count
         : (example == "line_end_ramp" ? soupLineEndRamp.count : soupUsed.count)
     print("sweep samples=\(sweepSampleCount) segments=\(sweepSegmentsCount) rings=\(ringCount)")

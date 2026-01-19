@@ -37,3 +37,19 @@ public func jFullFixturePath() -> SkeletonPath {
     )
     return SkeletonPath(segments: [hook, stem, head])
 }
+
+public func jSerifOnlyFixturePath() -> SkeletonPath {
+    let stem = CubicBezier2(
+        p0: Vec2(0, 25),
+        p1: Vec2(2, 45),
+        p2: Vec2(2, 70),
+        p3: Vec2(0, 95)
+    )
+    let head = CubicBezier2(
+        p0: Vec2(0, 95),
+        p1: Vec2(-2, 105),
+        p2: Vec2(-2, 115),
+        p3: Vec2(0, 125)
+    )
+    return SkeletonPath(segments: [stem, head])
+}
