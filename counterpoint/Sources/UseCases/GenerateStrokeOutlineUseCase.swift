@@ -24,8 +24,22 @@ public struct GenerateStrokeOutlineUseCase {
         self.unioner = unioner
     }
 
-    public func generateOutline(for spec: StrokeSpec, includeBridges: Bool = true) throws -> PolygonSet {
-        let samples = generateSamples(for: spec)
+    public func generateOutline(
+        for spec: StrokeSpec,
+        includeBridges: Bool = true,
+        outlineMode: OutlineMode = .union,
+        bumpSmoothing: (window: BumpWindow, policy: BumpSmoothingPolicy)? = nil
+    ) throws -> PolygonSet {
+        var samples = generateSamples(for: spec)
+        if outlineMode == .silhouette, let smoothing = bumpSmoothing {
+            let chain = railChainForSamples(samples, side: smoothing.window.side)
+            let smoothed = smoothRailChain(chain, window: smoothing.window, policy: smoothing.policy)
+            if let run = smoothed.runs.first, run.samples.count == samples.count {
+                for index in 0..<samples.count {
+                    samples[index].point = run.samples[index].p
+                }
+            }
+        }
         let stamping = CounterpointStamping()
         let rings = samples.map { stamping.ring(for: $0, shape: spec.counterpointShape) }
         let capRings = capRings(for: samples, capStyle: spec.capStyle)
@@ -37,7 +51,17 @@ public struct GenerateStrokeOutlineUseCase {
         } else {
             allRings = rings + capRings + joinRings
         }
-        return try unioner.union(subjectRings: allRings)
+        switch outlineMode {
+        case .union:
+            return try unioner.union(subjectRings: allRings)
+        case .silhouette:
+            let outline = SilhouetteOutlineTracer.trace(
+                rings: allRings,
+                pixelSize: 1.0,
+                padding: 10.0
+            )
+            return outline.map { Polygon(outer: $0) }
+        }
     }
 
     public func generateSamples(for spec: StrokeSpec) -> [Sample] {
@@ -87,12 +111,13 @@ public struct GenerateStrokeOutlineUseCase {
         let width = evaluator.evaluate(spec.width, at: progress)
         let height = evaluator.evaluate(spec.height, at: progress)
         let theta = evaluator.evaluateAngle(spec.theta, at: progress)
+        let relativeOffsetRad = (spec.relativeAngleOffset ?? 0.0) * .pi / 180.0
         let effectiveRotation: Double
         switch spec.angleMode {
         case .absolute:
             effectiveRotation = theta
         case .tangentRelative:
-            effectiveRotation = theta + tangentAngle
+            effectiveRotation = theta + tangentAngle + relativeOffsetRad
         }
         let offsetValue = spec.offset.map { evaluator.evaluate($0, at: progress) } ?? 0.0
         let axis = Point(x: cos(effectiveRotation), y: sin(effectiveRotation))
@@ -109,6 +134,22 @@ public struct GenerateStrokeOutlineUseCase {
             effectiveRotation: effectiveRotation,
             alpha: alpha
         )
+    }
+
+    private func railChainForSamples(_ samples: [Sample], side: RailSide) -> RailChain2 {
+        let railSamples: [RailSample2] = samples.map { sample in
+            let tangent = Point(x: cos(sample.tangentAngle), y: sin(sample.tangentAngle))
+            let normal = tangent.leftNormal()
+            return RailSample2(
+                p: sample.point,
+                n: normal,
+                lt: sample.t,
+                sourceGT: sample.t,
+                chainGT: sample.t
+            )
+        }
+        let run = RailRun2(id: 0, side: side, samples: railSamples, inkLength: 0.0, sortKey: 0.0)
+        return RailChain2(side: side, runs: [run], edges: [], metricLength: 0.0)
     }
 
     private func adaptiveSamples(spec: StrokeSpec, polyline: PathPolyline, policy: SamplingPolicy, translation: Point, start: Sample, end: Sample) -> [Sample] {

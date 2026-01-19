@@ -190,6 +190,7 @@ public struct StrokeSpec: Codable, Equatable {
         case offset
         case alpha
         case angleMode
+        case relativeAngleOffset
         case capStyle
         case joinStyle
         case counterpointShape
@@ -206,6 +207,7 @@ public struct StrokeSpec: Codable, Equatable {
     public var offset: ParamTrack?
     public var alpha: ParamTrack?
     public var angleMode: AngleMode
+    public var relativeAngleOffset: Double?
     public var capStyle: CapStyle
     public var joinStyle: JoinStyle
     public var counterpointShape: CounterpointShape
@@ -223,6 +225,7 @@ public struct StrokeSpec: Codable, Equatable {
         offset: ParamTrack? = nil,
         alpha: ParamTrack? = nil,
         angleMode: AngleMode,
+        relativeAngleOffset: Double? = nil,
         capStyle: CapStyle = .butt,
         joinStyle: JoinStyle = .round,
         counterpointShape: CounterpointShape = .rectangle,
@@ -239,6 +242,7 @@ public struct StrokeSpec: Codable, Equatable {
         self.offset = offset
         self.alpha = alpha
         self.angleMode = angleMode
+        self.relativeAngleOffset = relativeAngleOffset
         self.capStyle = capStyle
         self.joinStyle = joinStyle
         self.counterpointShape = counterpointShape
@@ -258,6 +262,7 @@ public struct StrokeSpec: Codable, Equatable {
         offset = try container.decodeIfPresent(ParamTrack.self, forKey: .offset)
         alpha = try container.decodeIfPresent(ParamTrack.self, forKey: .alpha)
         angleMode = try container.decode(AngleMode.self, forKey: .angleMode)
+        relativeAngleOffset = try container.decodeIfPresent(Double.self, forKey: .relativeAngleOffset)
         capStyle = try container.decodeIfPresent(CapStyle.self, forKey: .capStyle) ?? .butt
         joinStyle = try container.decodeIfPresent(JoinStyle.self, forKey: .joinStyle) ?? .round
         counterpointShape = try container.decodeIfPresent(CounterpointShape.self, forKey: .counterpointShape) ?? .rectangle
@@ -281,6 +286,9 @@ public struct StrokeSpec: Codable, Equatable {
             try container.encode(alpha, forKey: .alpha)
         }
         try container.encode(angleMode, forKey: .angleMode)
+        if let relativeAngleOffset {
+            try container.encode(relativeAngleOffset, forKey: .relativeAngleOffset)
+        }
         try container.encode(capStyle, forKey: .capStyle)
         try container.encode(joinStyle, forKey: .joinStyle)
         try container.encode(counterpointShape, forKey: .counterpointShape)

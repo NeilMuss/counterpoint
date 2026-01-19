@@ -50,6 +50,7 @@
 
           "params": {
             "angleMode": "tangentRelative",
+            "relativeAngleOffset": 90,
             "theta":  { "keyframes": [{ "t": 0, "value": 0 }, { "t": 1, "value": 0 }] },
             "width":  { "keyframes": [{ "t": 0, "value": 28 }, { "t": 1, "value": 28 }] },
             "height": { "keyframes": [{ "t": 0, "value": 6  }, { "t": 1, "value": 6  }] }

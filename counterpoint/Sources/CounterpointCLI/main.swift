@@ -114,7 +114,8 @@ struct CLI {
             let samples = useCase.generateSamples(for: spec)
             try dumpSamplesCSV(samples: samples, spec: spec, to: dumpPath)
         }
-        let outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges)
+        let outlineMode = options.outlineMode ?? .union
+        let outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges, outlineMode: outlineMode)
 
         if let svgPath = options.svgOutputPath {
             let outputURL = URL(fileURLWithPath: svgPath)
@@ -714,6 +715,8 @@ struct CLIOptions {
     var unionSilhouetteK: Int?
     var unionSilhouetteDropContained: Bool?
     var unionDumpInputPath: String?
+    var dumpUnionInputPath: String? = nil
+    var outlineMode: OutlineMode? = nil
     var outlineFit: OutlineFitMode?
     var fitTolerance: Double?
     var simplifyTolerance: Double?
@@ -815,6 +818,30 @@ enum FinalUnionMode: String {
     case auto
     case never
     case always
+    case force
+    case skip
+}
+
+enum FinalUnionPolicy: String {
+    case auto
+    case force
+    case skip
+}
+
+func shouldSkipAutoUnionForTouchingPairs(
+    policy: FinalUnionPolicy,
+    touchingPairsRemaining: Int,
+    droppedCount: Int,
+    maxDrops: Int
+) -> Bool {
+    switch policy {
+    case .force:
+        return false
+    case .skip:
+        return true
+    case .auto:
+        return touchingPairsRemaining > 0 || droppedCount >= maxDrops
+    }
 }
 
 struct ScurveGeometry {
@@ -953,10 +980,10 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             options.previewUnionMode = parsed
             index += 1
         case "--final-union":
-            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always") }
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--final-union requires auto|never|always|force|skip") }
             let mode = args[index + 1].lowercased()
             guard let parsed = FinalUnionMode(rawValue: mode) else {
-                throw CLIError.invalidArguments("--final-union must be auto|never|always")
+                throw CLIError.invalidArguments("--final-union must be auto|never|always|force|skip")
             }
             options.finalUnionMode = parsed
             index += 1
@@ -1026,6 +1053,10 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
             guard index + 1 < args.count else { throw CLIError.invalidArguments("--union-dump-input requires a file path") }
             options.unionDumpInputPath = args[index + 1]
             index += 1
+        case "--dump-union-input":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--dump-union-input requires a file path") }
+            options.dumpUnionInputPath = args[index + 1]
+            index += 1
         case "--union-min-ring-area":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
                 throw CLIError.invalidArguments("--union-min-ring-area requires a number")
@@ -1039,6 +1070,14 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
                 throw CLIError.invalidArguments("--outline-fit must be none|simplify|bezier")
             }
             options.outlineFit = parsed
+            index += 1
+        case "--outline-mode":
+            guard index + 1 < args.count else { throw CLIError.invalidArguments("--outline-mode requires union|silhouette") }
+            let mode = args[index + 1].lowercased()
+            guard let parsed = OutlineMode(rawValue: mode) else {
+                throw CLIError.invalidArguments("--outline-mode must be union|silhouette")
+            }
+            options.outlineMode = parsed
             index += 1
         case "--fit-tolerance":
             guard index + 1 < args.count, let value = Double(args[index + 1]) else {
@@ -1128,6 +1167,12 @@ private func parseOptions(_ args: [String]) throws -> CLIOptions {
 
     return options
 }
+
+#if DEBUG
+func parseOptionsForTests(_ args: [String]) throws -> CLIOptions {
+    try parseOptions(args)
+}
+#endif
 
 private func parseUnionDumpOptions(_ args: [String]) throws -> UnionDumpOptions {
     guard let inputPath = args.first, !inputPath.hasPrefix("--") else {
@@ -3132,6 +3177,15 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
     } else {
         unionMode = FinalUnionMode(rawValue: options.previewUnionMode?.rawValue ?? "never") ?? .never
     }
+    let unionPolicy: FinalUnionPolicy
+    switch unionMode {
+    case .force:
+        unionPolicy = .force
+    case .skip:
+        unionPolicy = .skip
+    default:
+        unionPolicy = .auto
+    }
     let unionSimplifyTolerance = options.unionSimplifyTolerance ?? 0.75
     let unionMaxVertices = options.unionMaxVertices ?? 5000
     let unionBatchSize = max(1, options.unionBatchSize ?? 50)
@@ -3159,7 +3213,7 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
         }
         let unioner: PolygonUnioning
         switch unionMode {
-        case .never:
+        case .never, .skip:
             unioner = PassthroughPolygonUnioner()
         case .always:
             unioner = SimplifyingUnioner(
@@ -3175,10 +3229,12 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 silhouetteK: unionSilhouetteK,
                 silhouetteDropContained: unionSilhouetteDropContained,
                 dumpInputPath: unionDumpInputPath,
+                dumpUnionInputPath: options.dumpUnionInputPath,
+                unionMode: unionMode,
                 verbose: options.verbose,
                 label: "authored-stroke \(stroke.id)"
             )
-        case .auto:
+        case .auto, .force:
             unioner = AutoUnioner(
                 base: IOverlayPolygonUnionAdapter(),
                 simplifyTolerance: unionSimplifyTolerance,
@@ -3189,10 +3245,13 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
                 edgeEps: unionEdgeEps,
                 batchSize: unionBatchSize,
                 autoTimeBudgetMs: unionAutoTimeBudgetMs,
+                policy: unionPolicy,
                 inputFilter: unionInputFilter,
                 silhouetteK: unionSilhouetteK,
                 silhouetteDropContained: unionSilhouetteDropContained,
                 dumpInputPath: unionDumpInputPath,
+                dumpUnionInputPath: options.dumpUnionInputPath,
+                unionMode: unionMode,
                 verbose: options.verbose,
                 label: "authored-stroke \(stroke.id)"
             )
@@ -3201,14 +3260,16 @@ func buildAuthoredStrokePolygons(document: GlyphDocument, options: CLIOptions) t
         let useCase = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: unioner)
         let outline: PolygonSet
         do {
-            outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges)
+            let outlineMode = options.outlineMode ?? .union
+            outline = try useCase.generateOutline(for: spec, includeBridges: options.useBridges, outlineMode: outlineMode)
         } catch {
             if case .auto = unionMode, isFinal {
                 if options.verbose {
                     print("authored-stroke \(stroke.id) union skipped due to error: \(error)")
                 }
                 let fallback = GenerateStrokeOutlineUseCase(sampler: sampler, evaluator: evaluator, unioner: PassthroughPolygonUnioner())
-                outline = try fallback.generateOutline(for: spec, includeBridges: options.useBridges)
+                let outlineMode = options.outlineMode ?? .union
+                outline = try fallback.generateOutline(for: spec, includeBridges: options.useBridges, outlineMode: outlineMode)
             } else {
                 throw error
             }
@@ -3453,6 +3514,74 @@ private func dumpUnionInputOnce(_ rings: [Ring], to path: String) {
     dumpUnionInputRings(rings, to: path)
 }
 
+struct UnionInputDumpSettings: Codable, Equatable {
+    let batchSize: Int
+    let simplifyTolerance: Double
+    let maxVertices: Int
+    let unionMode: String
+}
+
+struct UnionInputDumpPoint: Codable, Equatable {
+    let x: Double
+    let y: Double
+}
+
+struct UnionInputDump: Codable, Equatable {
+    let rings: [[UnionInputDumpPoint]]
+    let settings: UnionInputDumpSettings
+
+    static func make(rings: [Ring], settings: UnionInputDumpSettings) -> UnionInputDump {
+        let dumpRings = rings.map { ring in
+            ring.map { UnionInputDumpPoint(x: $0.x, y: $0.y) }
+        }
+        return UnionInputDump(rings: dumpRings, settings: settings)
+    }
+}
+
+func writeUnionInputDump(_ dump: UnionInputDump, to path: String) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(dump)
+    try data.write(to: URL(fileURLWithPath: path))
+}
+
+private func callUnionAdapterWithTimeout(
+    unioner: PolygonUnioning,
+    rings: [Ring],
+    timeoutSeconds: TimeInterval?,
+    dumpPath: String?
+) throws -> PolygonSet {
+#if DEBUG
+    if let timeoutSeconds {
+        let semaphore = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var result: Result<PolygonSet, Error>?
+        DispatchQueue.global(qos: .userInitiated).async {
+            let unionResult: Result<PolygonSet, Error>
+            do {
+                unionResult = .success(try unioner.union(subjectRings: rings))
+            } catch {
+                unionResult = .failure(error)
+            }
+            lock.lock()
+            result = unionResult
+            lock.unlock()
+            semaphore.signal()
+        }
+        let waitResult = semaphore.wait(timeout: .now() + timeoutSeconds)
+        if waitResult == .timedOut {
+            let dumpNote = dumpPath ?? "nil"
+            fatalError("Union adapter hang after \(timeoutSeconds)s. dumpUnionInputPath=\(dumpNote)")
+        }
+        lock.lock()
+        let resolved = result
+        lock.unlock()
+        return try resolved?.get() ?? unioner.union(subjectRings: rings)
+    }
+#endif
+    return try unioner.union(subjectRings: rings)
+}
+
 private func percentile(_ values: [Double], _ p: Double) -> Double {
     guard !values.isEmpty else { return 0.0 }
     let sorted = values.sorted()
@@ -3659,6 +3788,8 @@ private struct SimplifyingUnioner: PolygonUnioning {
     let silhouetteK: Int
     let silhouetteDropContained: Bool
     let dumpInputPath: String?
+    let dumpUnionInputPath: String?
+    let unionMode: FinalUnionMode
     let verbose: Bool
     let label: String
 
@@ -3701,7 +3832,27 @@ private struct SimplifyingUnioner: PolygonUnioning {
         if let dumpInputPath {
             dumpUnionInputOnce(batches, to: dumpInputPath)
         }
-        let result = try base.union(subjectRings: batches)
+        if let dumpUnionInputPath {
+            let settings = UnionInputDumpSettings(
+                batchSize: batchSize,
+                simplifyTolerance: simplifyTolerance,
+                maxVertices: maxVertices,
+                unionMode: unionMode.rawValue
+            )
+            let dump = UnionInputDump.make(rings: batches, settings: settings)
+            do {
+                try writeUnionInputDump(dump, to: dumpUnionInputPath)
+            } catch {
+                throw CLIError.runtime("Failed to write union input dump: \(error)")
+            }
+        }
+        let timeoutSeconds: TimeInterval? = dumpUnionInputPath == nil ? nil : 2.0
+        let result = try callUnionAdapterWithTimeout(
+            unioner: base,
+            rings: batches,
+            timeoutSeconds: timeoutSeconds,
+            dumpPath: dumpUnionInputPath
+        )
         if verbose {
             let elapsed = Date().timeIntervalSince(start)
             print("\(label) union time \(String(format: "%.3f", elapsed))s")
@@ -3720,10 +3871,13 @@ private struct AutoUnioner: PolygonUnioning {
     let edgeEps: Double
     let batchSize: Int
     let autoTimeBudgetMs: Int
+    let policy: FinalUnionPolicy
     let inputFilter: UnionInputFilter
     let silhouetteK: Int
     let silhouetteDropContained: Bool
     let dumpInputPath: String?
+    let dumpUnionInputPath: String?
+    let unionMode: FinalUnionMode
     let verbose: Bool
     let label: String
 
@@ -3802,7 +3956,12 @@ private struct AutoUnioner: PolygonUnioning {
         )
         logTouchingCleanup(label: label, result: touchCleanup)
         unionInput = touchCleanup.rings.map { $0.ring }
-        if touchCleanup.pairCount > 0 || touchCleanup.dropped.count >= maxDrops {
+        if shouldSkipAutoUnionForTouchingPairs(
+            policy: policy,
+            touchingPairsRemaining: touchCleanup.pairCount,
+            droppedCount: touchCleanup.dropped.count,
+            maxDrops: maxDrops
+        ) {
             print("\(label) auto union skipped: touchingPairsRemaining pairs=\(touchCleanup.pairCount) remaining=\(unionInput.count)")
             print("\(label) auto union preflight rings=\(unionInput.count) pairs=\(touchCleanup.pairCount) action=skip")
             return cleaned.rings.map { Polygon(outer: $0) }
@@ -3851,6 +4010,8 @@ private struct AutoUnioner: PolygonUnioning {
             silhouetteK: silhouetteK,
             silhouetteDropContained: silhouetteDropContained,
             dumpInputPath: dumpInputPath,
+            dumpUnionInputPath: dumpUnionInputPath,
+            unionMode: unionMode,
             verbose: verbose,
             label: label
         )
@@ -4198,7 +4359,7 @@ do {
     let message = (error as? LocalizedError)?.errorDescription ?? (error as NSError).localizedDescription
     let stderr = FileHandle.standardError
     stderr.write(Data(("counterpoint-cli error: \(message)\n").utf8))
-    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N] [--label-bump] [--label-bump-gt0 N] [--label-bump-gt1 N] [--label-bump-side left|right|both]\n".utf8))
+    stderr.write(Data("Usage: counterpoint-cli <path-to-spec.json>|- [--example [s-curve]] [--svg <outputPath>] [--svg-size WxH] [--padding N] [--quiet] [--bridges|--no-bridges] [--debug-samples|--debug-overlay] [--dump-samples <path>] [--centerline-only] [--stroke-preview] [--preview-samples N] [--preview-quality preview|final] [--preview-angle-mode absolute|relative] [--preview-angle-deg N] [--preview-width N] [--preview-height N] [--preview-nib-rotate-deg N] [--preview-union auto|never|always] [--final-union auto|never|always|force|skip] [--union-simplify-tol N] [--union-max-verts N] [--union-batch-size N] [--union-area-eps N] [--union-weld-eps N] [--union-edge-eps N] [--union-min-ring-area N] [--union-auto-time-budget-ms N] [--union-input-filter none|silhouette] [--union-silhouette-k N] [--union-silhouette-drop-contained 0|1] [--union-dump-input <path>] [--dump-union-input <path>] [--outline-fit none|simplify|bezier] [--outline-mode union|silhouette] [--fit-tolerance N] [--simplify-tolerance N] [--show-envelope] [--show-envelope-union] [--show-rays|--no-rays] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--cp-size N] [--angle-mode absolute|relative] [--quality preview|final] [--envelope-tol N] [--flatten-tol N] [--max-samples N] [--label-bump] [--label-bump-gt0 N] [--label-bump-gt1 N] [--label-bump-side left|right|both]\n".utf8))
     stderr.write(Data("       counterpoint-cli scurve --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli line --svg <outputPath> [--angle-start N] [--angle-end N] [--size-start N] [--size-end N] [--aspect-start N] [--aspect-end N] [--offset-start N] [--offset-end N] [--width-start N] [--width-end N] [--height-start N] [--height-end N] [--alpha-start N] [--alpha-end N] [--angle-mode absolute|relative] [--samples N] [--quality preview|final] [--envelope-mode rails|union] [--envelope-sides N] [--join round|bevel|miter] [--miter-limit N] [--outline-fit none|simplify|bezier] [--fit-tolerance N] [--simplify-tolerance N] [--view envelope,samples,rays,rails,union,centerline,offset|all|none] [--dump-samples <path>] [--kink] [--no-centerline] [--verbose]\n".utf8))
     stderr.write(Data("       counterpoint-cli showcase --out <dir> [--quality preview|final]\n".utf8))

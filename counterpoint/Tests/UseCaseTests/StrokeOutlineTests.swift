@@ -127,6 +127,59 @@ final class StrokeOutlineTests: XCTestCase {
         }
     }
 
+    func testTangentRelativeRelativeAngleOffsetAddsNinetyDegrees() throws {
+        var spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 33, y: 0),
+                    p2: Point(x: 66, y: 0),
+                    p3: Point(x: 100, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(10),
+            height: ParamTrack.constant(20),
+            theta: ParamTrack.constant(0),
+            angleMode: .tangentRelative,
+            sampling: SamplingSpec()
+        )
+        spec.relativeAngleOffset = 90.0
+
+        let outline = try makeUseCase().generateOutline(for: spec)
+        let bounds = boundsOf(polygons: outline)
+
+        XCTAssertEqual(bounds.minX, -10.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.maxX, 110.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.minY, -5.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.maxY, 5.0, accuracy: tolerance)
+    }
+
+    func testTangentRelativeNoOffsetMatchesExistingBehavior() throws {
+        let spec = StrokeSpec(
+            path: BezierPath(segments: [
+                CubicBezier(
+                    p0: Point(x: 0, y: 0),
+                    p1: Point(x: 33, y: 0),
+                    p2: Point(x: 66, y: 0),
+                    p3: Point(x: 100, y: 0)
+                )
+            ]),
+            width: ParamTrack.constant(10),
+            height: ParamTrack.constant(20),
+            theta: ParamTrack.constant(0),
+            angleMode: .tangentRelative,
+            sampling: SamplingSpec()
+        )
+
+        let outline = try makeUseCase().generateOutline(for: spec)
+        let bounds = boundsOf(polygons: outline)
+
+        XCTAssertEqual(bounds.minX, -5.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.maxX, 105.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.minY, -10.0, accuracy: tolerance)
+        XCTAssertEqual(bounds.maxY, 10.0, accuracy: tolerance)
+    }
+
     func testWidthVariationExpandsBounds() throws {
         let spec = StrokeSpec(
             path: BezierPath(segments: [
