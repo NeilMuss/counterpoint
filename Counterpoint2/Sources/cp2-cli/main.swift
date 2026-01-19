@@ -72,7 +72,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|j_serif_only|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -123,6 +123,8 @@ if options.example?.lowercased() == "scurve" {
     path = jFullFixturePath()
 } else if options.example?.lowercased() == "j_serif_only" {
     path = jSerifOnlyFixturePath()
+} else if options.example?.lowercased() == "poly3" {
+    path = poly3FixturePath()
 } else {
     let line = CubicBezier2(
         p0: Vec2(0, 0),
@@ -207,6 +209,28 @@ if example == "j" || example == "j_serif_only" {
         let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
         return alphaEndValue * max(0.0, min(1.0, phase))
     }
+} else if options.example?.lowercased() == "poly3" {
+    widthAtT = { t in
+        let clamped = max(0.0, min(1.0, t))
+        let midT = 0.5
+        let start = 16.0
+        let mid = 28.0
+        let end = 16.0
+        if clamped <= midT {
+            let u = clamped / midT
+            return start + (mid - start) * u
+        }
+        let u = (clamped - midT) / (1.0 - midT)
+        return mid + (end - mid) * u
+    }
+    thetaAtT = { _ in 0.0 }
+    alphaAtT = { t in
+        if t < alphaStartGT {
+            return 0.0
+        }
+        let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
+        return alphaEndValue * max(0.0, min(1.0, phase))
+    }
 } else {
     widthAtT = { _ in sweepWidth }
     thetaAtT = { _ in 0.0 }
@@ -238,19 +262,36 @@ let scaledWidthAtT: (Double) -> Double = { t in
 }
 
 let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
-if options.verbose || options.debugParam {
-    let segmentCount = path.segments.count
-    var lengths: [Double] = []
-    lengths.reserveCapacity(segmentCount)
+    if options.verbose || options.debugParam {
+        let segmentCount = path.segments.count
+        var lengths: [Double] = []
+        lengths.reserveCapacity(segmentCount)
     for segment in path.segments {
         let subPath = SkeletonPath(segment)
         let param = ArcLengthParameterization(path: subPath, samplesPerSegment: paramSamplesPerSegment)
         lengths.append(param.totalLength)
     }
-    let lengthList = lengths.map { String(format: "%.6f", $0) }.joined(separator: ", ")
-    print("param segments=\(segmentCount) totalLength=\(String(format: "%.6f", pathParam.totalLength)) arcSamples=\(paramSamplesPerSegment)")
-    print("param segmentLengths=[\(lengthList)]")
-}
+        let lengthList = lengths.map { String(format: "%.6f", $0) }.joined(separator: ", ")
+        print("param segments=\(segmentCount) totalLength=\(String(format: "%.6f", pathParam.totalLength)) arcSamples=\(paramSamplesPerSegment)")
+        print("param segmentLengths=[\(lengthList)]")
+    }
+
+    var joinGTs: [Double] = []
+    if options.debugSweep, path.segments.count > 1 {
+        var lengths: [Double] = []
+        lengths.reserveCapacity(path.segments.count)
+        for segment in path.segments {
+            let subPath = SkeletonPath(segment)
+            let param = ArcLengthParameterization(path: subPath, samplesPerSegment: paramSamplesPerSegment)
+            lengths.append(param.totalLength)
+        }
+        let total = max(Epsilon.defaultValue, lengths.reduce(0.0, +))
+        var accumulated = 0.0
+        for (index, length) in lengths.enumerated() where index < lengths.count - 1 {
+            accumulated += length
+            joinGTs.append(accumulated / total)
+        }
+    }
 
 if options.debugParam {
     let count = max(1, options.probeCount)
@@ -313,16 +354,16 @@ let soupLineEndRamp = boundarySoupVariableWidthAngleAlpha(
 )
 let soupUsed = example == "j" ? soupJ : soup
 let rings = traceLoops(
-    segments: (example == "j" || example == "j_serif_only")
+    segments: (example == "j" || example == "j_serif_only" || example == "poly3")
         ? soupJThetaAlpha
         : (example == "line_end_ramp" ? soupLineEndRamp : soupUsed),
     eps: 1.0e-6
 )
 let ring = rings.first ?? []
 
-if options.debugSweep || options.verbose {
-    let ringCount = rings.count
-    let vertexCount = ring.count
+    if options.debugSweep || options.verbose {
+        let ringCount = rings.count
+        let vertexCount = ring.count
     let firstPoint = ring.first ?? Vec2(0, 0)
     let lastPoint = ring.last ?? Vec2(0, 0)
     let closure = (firstPoint - lastPoint).length
@@ -336,14 +377,48 @@ if options.debugSweep || options.verbose {
     } else {
         winding = "flat"
     }
-    let sweepSegmentsCount = (example == "j" || example == "j_serif_only")
+    let sweepSegmentsCount = (example == "j" || example == "j_serif_only" || example == "poly3")
         ? soupJThetaAlpha.count
         : (example == "line_end_ramp" ? soupLineEndRamp.count : soupUsed.count)
     print("sweep samples=\(sweepSampleCount) segments=\(sweepSegmentsCount) rings=\(ringCount)")
-    print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
+        print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
+        if !joinGTs.isEmpty {
+            let joinList = joinGTs.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+            print("sweep joinGTs=[\(joinList)]")
+            let joinProbeOffsets: [Double] = [-0.02, -0.01, 0.0, 0.01, 0.02]
+            var joinProbeGT: [Double] = []
+            for join in joinGTs {
+                for offset in joinProbeOffsets {
+                    let gt = max(0.0, min(1.0, join + offset))
+                    joinProbeGT.append(gt)
+                }
+            }
+            let joinWidths = joinProbeGT.map { scaledWidthAtT(warpT($0)) }
+            let joinWidthList = joinWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+            let joinGTList = joinProbeGT.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+            print("sweep joinWidthProbes=[\(joinWidthList)] gt=[\(joinGTList)]")
+            if abs(alphaEndValue) > Epsilon.defaultValue {
+                let joinWarped = joinProbeGT.map { warpT($0) }
+                let joinWarpedList = joinWarped.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+                print("sweep joinWarpProbes gt=[\(joinGTList)] warped=[\(joinWarpedList)]")
+            }
+            if ring.count > 3 {
+                let ringPoints = stripDuplicateClosure(ring)
+                let halfWindow = 8
+                let param = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
+                for (index, join) in joinGTs.enumerated() {
+                    let center = param.position(globalT: join)
+                    let nearest = nearestIndex(points: ringPoints, to: center)
+                    let deviation = chordDeviation(points: ringPoints, centerIndex: nearest, halfWindow: halfWindow)
+                    let widthAtJoin = scaledWidthAtT(warpT(join))
+                    let ratio = deviation / max(Epsilon.defaultValue, widthAtJoin)
+                    print(String(format: "sweep joinBulge[%d] dev=%.6f ratio=%.6f", index, deviation, ratio))
+                }
+            }
+        }
 
-    let widthMin = widths.min() ?? baselineWidth
-    let widthMax = widths.max() ?? baselineWidth
+        let widthMin = widths.min() ?? baselineWidth
+        let widthMax = widths.max() ?? baselineWidth
     let heightMin = sweepHeight
     let heightMax = sweepHeight
     let probeGT: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -485,3 +560,51 @@ let svg = """
 let outURL = URL(fileURLWithPath: options.outPath)
 try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 try? svg.data(using: .utf8)?.write(to: outURL)
+
+func stripDuplicateClosure(_ ring: [Vec2]) -> [Vec2] {
+    guard ring.count > 1, Epsilon.approxEqual(ring.first ?? Vec2(0, 0), ring.last ?? Vec2(0, 0), eps: 1.0e-9) else {
+        return ring
+    }
+    return Array(ring.dropLast())
+}
+
+func nearestIndex(points: [Vec2], to target: Vec2) -> Int {
+    var best = 0
+    var bestDist = Double.greatestFiniteMagnitude
+    for (index, point) in points.enumerated() {
+        let d = (point - target).length
+        if d < bestDist {
+            bestDist = d
+            best = index
+        }
+    }
+    return best
+}
+
+func chordDeviation(points: [Vec2], centerIndex: Int, halfWindow: Int) -> Double {
+    guard !points.isEmpty else { return 0.0 }
+    let start = max(0, centerIndex - halfWindow)
+    let end = min(points.count - 1, centerIndex + halfWindow)
+    if end <= start + 1 {
+        return 0.0
+    }
+    let a = points[start]
+    let b = points[end]
+    var maxDev = 0.0
+    for i in (start + 1)..<end {
+        let d = distancePointToSegment(points[i], a, b)
+        if d > maxDev {
+            maxDev = d
+        }
+    }
+    return maxDev
+}
+
+func distancePointToSegment(_ p: Vec2, _ a: Vec2, _ b: Vec2) -> Double {
+    let ab = b - a
+    let ap = p - a
+    let denom = max(Epsilon.defaultValue, ab.dot(ab))
+    let t = max(0.0, min(1.0, ap.dot(ab) / denom))
+    let proj = a + ab * t
+    return (p - proj).length
+}

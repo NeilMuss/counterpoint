@@ -576,6 +576,120 @@ final class SweepTraceTests: XCTestCase {
         let tailWidth = (rails.right[samples - 1] - rails.left[samples - 1]).length
         XCTAssertGreaterThan(tailWidth, earlyWidth)
     }
+
+    func testPoly3SweepProducesDeterministicClosedRing() {
+        let path = poly3FixturePath()
+        let height = 10.0
+        let samples = 64
+        let soupA = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: poly3WidthRamp,
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: 0.30
+        )
+        let soupB = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: poly3WidthRamp,
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: 0.30
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
+
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+
+        assertNoRailFlip(path: path)
+    }
+
+    func testPoly3JoinContinuityForWidthAndRails() {
+        let path = poly3FixturePath()
+        let height = 10.0
+        let samples = 64
+        let joinGTs = poly3JoinGTs()
+        XCTAssertEqual(joinGTs.count, 2)
+
+        for join in joinGTs {
+            let before = max(0.0, join - 0.01)
+            let after = min(1.0, join + 0.01)
+            let wBefore = poly3WidthRamp(t: before)
+            let wAfter = poly3WidthRamp(t: after)
+            XCTAssertLessThan(abs(wBefore - wAfter), 1.0)
+        }
+
+        let soup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: poly3WidthRamp,
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: 0.30
+        )
+        let rails = railPoints(segments: soup, sampleCount: samples)
+        XCTAssertEqual(rails.left.count, samples)
+        XCTAssertEqual(rails.right.count, samples)
+        assertNoRailFlip(path: path)
+    }
+
+    func testPoly3JoinBulgeMetricIsBoundedAndDeterministic() {
+        let path = poly3FixturePath()
+        let height = 10.0
+        let samples = 64
+        let soup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: poly3WidthRamp,
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: 0.30
+        )
+        let ring = traceLoops(segments: soup, eps: 1.0e-6).first ?? []
+        XCTAssertFalse(ring.isEmpty)
+        let ringPoints = stripDuplicateClosure(ring)
+
+        let joins = poly3JoinGTs()
+        let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+        let halfWindow = 8
+        var ratiosA: [Double] = []
+        var ratiosB: [Double] = []
+
+        for join in joins {
+            let center = param.position(globalT: join)
+            let index = nearestIndex(points: ringPoints, to: center)
+            let deviation = chordDeviation(points: ringPoints, centerIndex: index, halfWindow: halfWindow)
+            let widthAtJoin = poly3WidthRamp(t: join)
+            let ratio = deviation / max(Epsilon.defaultValue, widthAtJoin)
+            ratiosA.append(ratio)
+        }
+        for join in joins {
+            let center = param.position(globalT: join)
+            let index = nearestIndex(points: ringPoints, to: center)
+            let deviation = chordDeviation(points: ringPoints, centerIndex: index, halfWindow: halfWindow)
+            let widthAtJoin = poly3WidthRamp(t: join)
+            let ratio = deviation / max(Epsilon.defaultValue, widthAtJoin)
+            ratiosB.append(ratio)
+        }
+
+        XCTAssertEqual(ratiosA.count, joins.count)
+        for (a, b) in zip(ratiosA, ratiosB) {
+            XCTAssertEqual(a, b, accuracy: 1.0e-9)
+            XCTAssertLessThan(a, 0.35)
+        }
+    }
 }
 
 private func rectangleCorners(
@@ -721,4 +835,84 @@ private func lineFixtureCubic() -> CubicBezier2 {
         p2: Vec2(0, 66),
         p3: Vec2(0, 100)
     )
+}
+
+private func stripDuplicateClosure(_ ring: [Vec2]) -> [Vec2] {
+    guard ring.count > 1, Epsilon.approxEqual(ring.first ?? Vec2(0, 0), ring.last ?? Vec2(0, 0), eps: 1.0e-9) else {
+        return ring
+    }
+    return Array(ring.dropLast())
+}
+
+private func nearestIndex(points: [Vec2], to target: Vec2) -> Int {
+    var best = 0
+    var bestDist = Double.greatestFiniteMagnitude
+    for (index, point) in points.enumerated() {
+        let d = (point - target).length
+        if d < bestDist {
+            bestDist = d
+            best = index
+        }
+    }
+    return best
+}
+
+private func chordDeviation(points: [Vec2], centerIndex: Int, halfWindow: Int) -> Double {
+    guard !points.isEmpty else { return 0.0 }
+    let start = max(0, centerIndex - halfWindow)
+    let end = min(points.count - 1, centerIndex + halfWindow)
+    if end <= start + 1 {
+        return 0.0
+    }
+    let a = points[start]
+    let b = points[end]
+    var maxDev = 0.0
+    for i in (start + 1)..<end {
+        let d = distancePointToSegment(points[i], a, b)
+        if d > maxDev {
+            maxDev = d
+        }
+    }
+    return maxDev
+}
+
+private func distancePointToSegment(_ p: Vec2, _ a: Vec2, _ b: Vec2) -> Double {
+    let ab = b - a
+    let ap = p - a
+    let denom = max(Epsilon.defaultValue, ab.dot(ab))
+    let t = max(0.0, min(1.0, ap.dot(ab) / denom))
+    let proj = a + ab * t
+    return (p - proj).length
+}
+
+private func poly3WidthRamp(t: Double) -> Double {
+    let clamped = max(0.0, min(1.0, t))
+    let midT = 0.5
+    let start = 16.0
+    let mid = 28.0
+    let end = 16.0
+    if clamped <= midT {
+        let u = clamped / midT
+        return start + (mid - start) * u
+    }
+    let u = (clamped - midT) / (1.0 - midT)
+    return mid + (end - mid) * u
+}
+
+private func poly3JoinGTs() -> [Double] {
+    let segments = poly3FixturePath().segments
+    var lengths: [Double] = []
+    lengths.reserveCapacity(segments.count)
+    for segment in segments {
+        let param = ArcLengthParameterization(path: SkeletonPath(segment), samplesPerSegment: 256)
+        lengths.append(param.totalLength)
+    }
+    let total = max(Epsilon.defaultValue, lengths.reduce(0.0, +))
+    var joinGTs: [Double] = []
+    var accumulated = 0.0
+    for (index, length) in lengths.enumerated() where index < lengths.count - 1 {
+        accumulated += length
+        joinGTs.append(accumulated / total)
+    }
+    return joinGTs
 }

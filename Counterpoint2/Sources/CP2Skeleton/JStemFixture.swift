@@ -53,3 +53,25 @@ public func jSerifOnlyFixturePath() -> SkeletonPath {
     )
     return SkeletonPath(segments: [stem, head])
 }
+
+public func poly3FixturePath() -> SkeletonPath {
+    let a = CubicBezier2(
+        p0: Vec2(0, 0),
+        p1: Vec2(0, 20),
+        p2: Vec2(0, 40),
+        p3: Vec2(0, 60)
+    )
+    let b = CubicBezier2(
+        p0: Vec2(0, 60),
+        p1: Vec2(0, 67),
+        p2: Vec2(0, 73),
+        p3: Vec2(0, 80)
+    )
+    let c = CubicBezier2(
+        p0: Vec2(0, 80),
+        p1: Vec2(0, 100),
+        p2: Vec2(0, 120),
+        p3: Vec2(0, 140)
+    )
+    return SkeletonPath(segments: [a, b, c])
+}
