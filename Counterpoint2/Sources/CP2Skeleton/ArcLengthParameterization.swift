@@ -55,6 +55,34 @@ public struct ArcLengthParameterization {
         return a.point.lerp(to: b.point, t: t)
     }
 
+    public func u(atDistance s: Double) -> Double {
+        if totalLength <= Epsilon.defaultValue {
+            return 0.0
+        }
+        let clamped = max(0.0, min(totalLength, s))
+        if clamped <= samples.first?.cumulative ?? 0.0 {
+            return 0.0
+        }
+        if clamped >= samples.last?.cumulative ?? 0.0 {
+            return 1.0
+        }
+        var low = 0
+        var high = samples.count - 1
+        while low + 1 < high {
+            let mid = (low + high) / 2
+            if samples[mid].cumulative < clamped {
+                low = mid
+            } else {
+                high = mid
+            }
+        }
+        let a = samples[low]
+        let b = samples[high]
+        let span = max(Epsilon.defaultValue, b.cumulative - a.cumulative)
+        let t = (clamped - a.cumulative) / span
+        return a.u + (b.u - a.u) * t
+    }
+
     public func sampleTable() -> [Vec2] {
         samples.map { $0.point }
     }
