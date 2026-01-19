@@ -78,6 +78,76 @@ final class ScallopMetricsTests: XCTestCase {
 
         XCTAssertGreaterThan(fastMetrics.filtered.normalizedMaxChordDeviation, scurveMetrics.filtered.normalizedMaxChordDeviation * 1.2)
     }
+
+    func testScallopMetricsOrderingAcrossStressLadder() {
+        let width = 20.0
+        let height = 10.0
+        let samples = 64
+        let scurveRing = stripDuplicateClosure(traceLoops(
+            segments: boundarySoup(
+                path: SkeletonPath(segments: [sCurveFixtureCubic()]),
+                width: width,
+                height: height,
+                effectiveAngle: 0,
+                sampleCount: samples
+            ),
+            eps: 1.0e-6
+        ).first ?? [])
+        let fastRing = stripDuplicateClosure(traceLoops(
+            segments: boundarySoup(
+                path: SkeletonPath(segments: [fastSCurveFixtureCubic()]),
+                width: width,
+                height: height,
+                effectiveAngle: 0,
+                sampleCount: samples
+            ),
+            eps: 1.0e-6
+        ).first ?? [])
+        let fast2Ring = stripDuplicateClosure(traceLoops(
+            segments: boundarySoup(
+                path: SkeletonPath(segments: [fastSCurve2FixtureCubic()]),
+                width: width,
+                height: height,
+                effectiveAngle: 0,
+                sampleCount: samples
+            ),
+            eps: 1.0e-6
+        ).first ?? [])
+
+        let scurveMetrics = analyzeScallops(
+            points: scurveRing,
+            width: width,
+            halfWindow: 20,
+            epsilon: 1.0e-6,
+            cornerThreshold: 2.5,
+            capTrim: 4
+        )
+        let fastMetrics = analyzeScallops(
+            points: fastRing,
+            width: width,
+            halfWindow: 20,
+            epsilon: 1.0e-6,
+            cornerThreshold: 2.5,
+            capTrim: 4
+        )
+        let fast2Metrics = analyzeScallops(
+            points: fast2Ring,
+            width: width,
+            halfWindow: 20,
+            epsilon: 1.0e-6,
+            cornerThreshold: 2.5,
+            capTrim: 4
+        )
+
+        XCTAssertGreaterThanOrEqual(
+            fastMetrics.filtered.normalizedMaxChordDeviation,
+            scurveMetrics.filtered.normalizedMaxChordDeviation * 1.3
+        )
+        XCTAssertGreaterThanOrEqual(
+            fast2Metrics.filtered.normalizedMaxChordDeviation,
+            fastMetrics.filtered.normalizedMaxChordDeviation * 1.2
+        )
+    }
 }
 
 private func stripDuplicateClosure(_ ring: [Vec2]) -> [Vec2] {
