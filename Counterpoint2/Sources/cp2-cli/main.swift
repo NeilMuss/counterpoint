@@ -111,6 +111,7 @@ let sweepHeight = 10.0
 let sweepAngle = 0.0
 let paramSamplesPerSegment = options.arcSamples
 let widthAtT: (Double) -> Double
+let thetaAtT: (Double) -> Double
 if options.example?.lowercased() == "j" {
     widthAtT = { t in
         let clamped = max(0.0, min(1.0, t))
@@ -125,8 +126,25 @@ if options.example?.lowercased() == "j" {
         let u = (clamped - midT) / (1.0 - midT)
         return mid + (end - mid) * u
     }
+    thetaAtT = { t in
+        let clamped = max(0.0, min(1.0, t))
+        let midT = 0.5
+        let start = 12.0
+        let mid = 4.0
+        let end = 0.0
+        let deg: Double
+        if clamped <= midT {
+            let u = clamped / midT
+            deg = start + (mid - start) * u
+        } else {
+            let u = (clamped - midT) / (1.0 - midT)
+            deg = mid + (end - mid) * u
+        }
+        return deg * Double.pi / 180.0
+    }
 } else {
     widthAtT = { _ in sweepWidth }
+    thetaAtT = { _ in 0.0 }
 }
 
 let sweepGT: [Double] = (0..<sweepSampleCount).map {
@@ -188,8 +206,16 @@ let soupJ = boundarySoupVariableWidth(
     arcSamplesPerSegment: paramSamplesPerSegment,
     widthAtT: scaledWidthAtT
 )
+let soupJTheta = boundarySoupVariableWidthAngle(
+    path: path,
+    height: sweepHeight,
+    sampleCount: sweepSampleCount,
+    arcSamplesPerSegment: paramSamplesPerSegment,
+    widthAtT: scaledWidthAtT,
+    angleAtT: thetaAtT
+)
 let soupUsed = options.example?.lowercased() == "j" ? soupJ : soup
-let rings = traceLoops(segments: soupUsed, eps: 1.0e-6)
+let rings = traceLoops(segments: options.example?.lowercased() == "j" ? soupJTheta : soupUsed, eps: 1.0e-6)
 let ring = rings.first ?? []
 
 if options.debugSweep || options.verbose {
@@ -208,7 +234,8 @@ if options.debugSweep || options.verbose {
     } else {
         winding = "flat"
     }
-    print("sweep samples=\(sweepSampleCount) segments=\(soupUsed.count) rings=\(ringCount)")
+    let sweepSegmentsCount = options.example?.lowercased() == "j" ? soupJTheta.count : soupUsed.count
+    print("sweep samples=\(sweepSampleCount) segments=\(sweepSegmentsCount) rings=\(ringCount)")
     print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
 
     let widthMin = widths.min() ?? baselineWidth
@@ -220,9 +247,16 @@ if options.debugSweep || options.verbose {
     let probeHeights = probeGT.map { _ in sweepHeight }
     let widthList = probeWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
     let heightList = probeHeights.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+    let thetaValues = sweepGT.map { thetaAtT($0) * 180.0 / Double.pi }
+    let thetaMin = thetaValues.min() ?? 0.0
+    let thetaMax = thetaValues.max() ?? 0.0
+    let thetaProbes = probeGT.map { thetaAtT($0) * 180.0 / Double.pi }
+    let thetaList = thetaProbes.map { String(format: "%.4f", $0) }.joined(separator: ", ")
     print(String(format: "sweep widthMin=%.4f widthMax=%.4f heightMin=%.4f heightMax=%.4f", widthMin * widthScale, widthMax * widthScale, heightMin, heightMax))
     print("sweep widthProbes=[\(widthList)] gt=[0,0.25,0.5,0.75,1]")
     print("sweep heightProbes=[\(heightList)] gt=[0,0.25,0.5,0.75,1]")
+    print(String(format: "sweep thetaMin=%.4f thetaMax=%.4f", thetaMin, thetaMax))
+    print("sweep thetaProbes=[\(thetaList)] gt=[0,0.25,0.5,0.75,1]")
 }
 
 let padding = 10.0
@@ -250,14 +284,15 @@ if options.debugSVG {
         tableP.append(point)
         let halfW = scaledWidthAtT(t) * 0.5
         let halfH = sweepHeight * 0.5
+        let angle = thetaAtT(t)
         let corners: [Vec2] = [
             Vec2(-halfW, -halfH),
             Vec2(halfW, -halfH),
             Vec2(halfW, halfH),
             Vec2(-halfW, halfH)
         ]
-        let cosA = cos(sweepAngle)
-        let sinA = sin(sweepAngle)
+        let cosA = cos(angle)
+        let sinA = sin(angle)
         var minDot = Double.greatestFiniteMagnitude
         var maxDot = -Double.greatestFiniteMagnitude
         var leftPoint = point

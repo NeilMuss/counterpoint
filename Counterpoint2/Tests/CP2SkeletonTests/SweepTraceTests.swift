@@ -176,21 +176,23 @@ final class SweepTraceTests: XCTestCase {
         let width = 20.0
         let height = 10.0
         let samples = 64
-        let soupA = boundarySoupVariableWidth(
+        let soupA = boundarySoupVariableWidthAngle(
             path: path,
             height: height,
-            effectiveAngle: 0,
             sampleCount: samples
         ) { t in
             widthRamp(t: t)
+        } angleAtT: { t in
+            thetaRampRadians(t: t)
         }
-        let soupB = boundarySoupVariableWidth(
+        let soupB = boundarySoupVariableWidthAngle(
             path: path,
             height: height,
-            effectiveAngle: 0,
             sampleCount: samples
         ) { t in
             widthRamp(t: t)
+        } angleAtT: { t in
+            thetaRampRadians(t: t)
         }
         let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
         let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
@@ -228,7 +230,38 @@ final class SweepTraceTests: XCTestCase {
         XCTAssertGreaterThan(hookBounds.height, stemBounds.height)
         XCTAssertGreaterThan(hookBounds.width, stemBounds.width)
 
-        assertNoRailFlip(path: path)
+        assertNoRailFlip(path: path, angleAtT: thetaRampRadians)
+    }
+
+    func testJHookAngleRampAreaStaysReasonable() {
+        let path = jFullFixturePath()
+        let height = 10.0
+        let samples = 64
+        let widthSoup = boundarySoupVariableWidth(
+            path: path,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        ) { t in
+            widthRamp(t: t)
+        }
+        let angleSoup = boundarySoupVariableWidthAngle(
+            path: path,
+            height: height,
+            sampleCount: samples
+        ) { t in
+            widthRamp(t: t)
+        } angleAtT: { t in
+            thetaRampRadians(t: t)
+        }
+        let widthRing = traceLoops(segments: widthSoup, eps: 1.0e-6).first ?? []
+        let angleRing = traceLoops(segments: angleSoup, eps: 1.0e-6).first ?? []
+        let widthArea = abs(signedArea(widthRing))
+        let angleArea = abs(signedArea(angleRing))
+        XCTAssertTrue(angleArea >= widthArea * 0.5)
+        XCTAssertTrue(angleArea <= widthArea * 1.5)
+
+        assertNoRailFlip(path: path, angleAtT: thetaRampRadians)
     }
 
     func testJHookRampIsWiderThanConstant() {
@@ -293,7 +326,10 @@ private func rectangleCorners(
     }
 }
 
-private func assertNoRailFlip(path: SkeletonPath) {
+private func assertNoRailFlip(
+    path: SkeletonPath,
+    angleAtT: (Double) -> Double = { _ in 0.0 }
+) {
     let width = 20.0
     let height = 10.0
     let samples = 64
@@ -310,7 +346,7 @@ private func assertNoRailFlip(path: SkeletonPath) {
             normal: normal,
             width: width,
             height: height,
-            effectiveAngle: 0
+            effectiveAngle: angleAtT(t)
         )
         var minDot = Double.greatestFiniteMagnitude
         var maxDot = -Double.greatestFiniteMagnitude
@@ -346,4 +382,21 @@ private func widthRamp(t: Double) -> Double {
     }
     let u = (clamped - midT) / (1.0 - midT)
     return mid + (end - mid) * u
+}
+
+private func thetaRampRadians(t: Double) -> Double {
+    let clamped = max(0.0, min(1.0, t))
+    let midT = 0.5
+    let start = 12.0
+    let mid = 4.0
+    let end = 0.0
+    let deg: Double
+    if clamped <= midT {
+        let u = clamped / midT
+        deg = start + (mid - start) * u
+    } else {
+        let u = (clamped - midT) / (1.0 - midT)
+        deg = mid + (end - mid) * u
+    }
+    return deg * Double.pi / 180.0
 }

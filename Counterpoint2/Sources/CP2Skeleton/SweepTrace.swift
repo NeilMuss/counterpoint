@@ -132,6 +132,68 @@ public func boundarySoupVariableWidth(
     return segments
 }
 
+public func boundarySoupVariableWidthAngle(
+    path: SkeletonPath,
+    height: Double,
+    sampleCount: Int,
+    arcSamplesPerSegment: Int = 256,
+    widthAtT: (Double) -> Double,
+    angleAtT: (Double) -> Double
+) -> [Segment2] {
+    let count = max(2, sampleCount)
+    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
+    var left: [Vec2] = []
+    var right: [Vec2] = []
+    left.reserveCapacity(count)
+    right.reserveCapacity(count)
+
+    for i in 0..<count {
+        let t = Double(i) / Double(count - 1)
+        let point = param.position(globalT: t)
+        let tangent = param.tangent(globalT: t).normalized()
+        let normal = Vec2(-tangent.y, tangent.x)
+        let width = widthAtT(t)
+        let angle = angleAtT(t)
+        let corners = rectangleCorners(
+            center: point,
+            tangent: tangent,
+            normal: normal,
+            width: width,
+            height: height,
+            effectiveAngle: angle
+        )
+        var minDot = Double.greatestFiniteMagnitude
+        var maxDot = -Double.greatestFiniteMagnitude
+        var leftPoint = point
+        var rightPoint = point
+        for corner in corners {
+            let d = corner.dot(normal)
+            if d < minDot {
+                minDot = d
+                leftPoint = corner
+            }
+            if d > maxDot {
+                maxDot = d
+                rightPoint = corner
+            }
+        }
+        left.append(leftPoint)
+        right.append(rightPoint)
+    }
+
+    var segments: [Segment2] = []
+    segments.reserveCapacity(count * 2 + 2)
+    for i in 0..<(count - 1) {
+        segments.append(Segment2(left[i], left[i + 1]))
+    }
+    for i in stride(from: count - 1, to: 0, by: -1) {
+        segments.append(Segment2(right[i], right[i - 1]))
+    }
+    segments.append(Segment2(left[0], right[0]))
+    segments.append(Segment2(right[count - 1], left[count - 1]))
+    return segments
+}
+
 private func rectangleCorners(
     center: Vec2,
     tangent: Vec2,
