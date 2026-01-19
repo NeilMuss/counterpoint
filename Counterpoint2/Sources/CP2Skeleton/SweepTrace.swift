@@ -20,10 +20,7 @@ public func boundarySoup(
     arcSamplesPerSegment: Int = 256
 ) -> [Segment2] {
     let count = max(2, sampleCount)
-    let arclen = ArcLengthParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
-    let tableU = arclen.uTable()
-    let tableP = arclen.sampleTable()
-    let tableCount = max(2, tableU.count)
+    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
@@ -31,10 +28,8 @@ public func boundarySoup(
 
     for i in 0..<count {
         let t = Double(i) / Double(count - 1)
-        let tableIndex = Int(round(t * Double(tableCount - 1)))
-        let u = tableU[tableIndex]
-        let point = tableP[tableIndex]
-        let tangent = path.tangent(u).normalized()
+        let point = param.position(globalT: t)
+        let tangent = param.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
         let corners = rectangleCorners(
             center: point,
@@ -67,7 +62,9 @@ public func boundarySoup(
     segments.reserveCapacity(count * 2 + 2)
     for i in 0..<(count - 1) {
         segments.append(Segment2(left[i], left[i + 1]))
-        segments.append(Segment2(right[i], right[i + 1]))
+    }
+    for i in stride(from: count - 1, to: 0, by: -1) {
+        segments.append(Segment2(right[i], right[i - 1]))
     }
     segments.append(Segment2(left[0], right[0]))
     segments.append(Segment2(right[count - 1], left[count - 1]))
