@@ -61,4 +61,24 @@ final class SkeletonPathParameterizationTests: XCTestCase {
         XCTAssertEqual(tanA.x, tanB.x, accuracy: 1.0e-9)
         XCTAssertEqual(tanA.y, tanB.y, accuracy: 1.0e-9)
     }
+
+    func testHigherSampleCountImprovesMidpointAccuracy() {
+        let a = CubicBezier2(
+            p0: Vec2(0, 0),
+            p1: Vec2(0, 33),
+            p2: Vec2(0, 66),
+            p3: Vec2(0, 100)
+        )
+        let path = SkeletonPath(segments: [a])
+        let coarse = SkeletonPathParameterization(path: path, samplesPerSegment: 64)
+        let fine = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+
+        let expectedY = 50.0
+        let coarseY = coarse.position(globalT: 0.5).y
+        let fineY = fine.position(globalT: 0.5).y
+        let coarseError = abs(coarseY - expectedY)
+        let fineError = abs(fineY - expectedY)
+
+        XCTAssertLessThanOrEqual(fineError, coarseError + 1.0e-9)
+    }
 }

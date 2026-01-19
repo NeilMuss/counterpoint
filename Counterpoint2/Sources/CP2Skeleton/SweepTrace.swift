@@ -16,10 +16,11 @@ public func boundarySoup(
     width: Double,
     height: Double,
     effectiveAngle: Double,
-    sampleCount: Int
+    sampleCount: Int,
+    arcSamplesPerSegment: Int = 256
 ) -> [Segment2] {
     let count = max(2, sampleCount)
-    let arclen = ArcLengthParameterization(path: path)
+    let arclen = ArcLengthParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
     let tableU = arclen.uTable()
     let tableP = arclen.sampleTable()
     let tableCount = max(2, tableU.count)

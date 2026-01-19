@@ -9,6 +9,7 @@ struct CLIOptions {
     var debugSweep: Bool = false
     var debugSVG: Bool = false
     var probeCount: Int = 5
+    var arcSamples: Int = 256
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -33,6 +34,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--probe-count", index + 1 < args.count {
             options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
             index += 1
+        } else if arg == "--arc-samples", index + 1 < args.count {
+            options.arcSamples = max(2, Int(args[index + 1]) ?? options.arcSamples)
+            index += 1
         }
         index += 1
     }
@@ -49,6 +53,7 @@ Debug flags:
   --debug-sweep    Print sweep tracing stats
   --debug-svg      Include skeleton/sample overlay in the SVG
   --probe-count N  Number of globalT probe points (default: 5)
+  --arc-samples N  Arc-length samples per segment (default: 256)
 """
     print(text)
 }
@@ -85,7 +90,7 @@ let sweepSampleCount = 64
 let sweepWidth = 20.0
 let sweepHeight = 10.0
 let sweepAngle = 0.0
-let paramSamplesPerSegment = 256
+let paramSamplesPerSegment = options.arcSamples
 
 let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
 if options.verbose || options.debugParam {
@@ -98,7 +103,7 @@ if options.verbose || options.debugParam {
         lengths.append(param.totalLength)
     }
     let lengthList = lengths.map { String(format: "%.6f", $0) }.joined(separator: ", ")
-    print("param segments=\(segmentCount) totalLength=\(String(format: "%.6f", pathParam.totalLength))")
+    print("param segments=\(segmentCount) totalLength=\(String(format: "%.6f", pathParam.totalLength)) arcSamples=\(paramSamplesPerSegment)")
     print("param segmentLengths=[\(lengthList)]")
 }
 
@@ -122,7 +127,8 @@ let soup = boundarySoup(
     width: sweepWidth,
     height: sweepHeight,
     effectiveAngle: sweepAngle,
-    sampleCount: sweepSampleCount
+    sampleCount: sweepSampleCount,
+    arcSamplesPerSegment: paramSamplesPerSegment
 )
 let rings = traceLoops(segments: soup, eps: 1.0e-6)
 let ring = rings.first ?? []
@@ -134,8 +140,17 @@ if options.debugSweep || options.verbose {
     let lastPoint = ring.last ?? Vec2(0, 0)
     let closure = (firstPoint - lastPoint).length
     let area = signedArea(ring)
+    let absArea = abs(area)
+    let winding: String
+    if area < -Epsilon.defaultValue {
+        winding = "CW"
+    } else if area > Epsilon.defaultValue {
+        winding = "CCW"
+    } else {
+        winding = "flat"
+    }
     print("sweep samples=\(sweepSampleCount) segments=\(soup.count) rings=\(ringCount)")
-    print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f", vertexCount, closure, area))
+    print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
 }
 
 let padding = 10.0
