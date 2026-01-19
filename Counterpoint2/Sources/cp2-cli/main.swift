@@ -5,6 +5,7 @@ import CP2Skeleton
 struct CLIOptions {
     var outPath: String = "out/line.svg"
     var example: String? = nil
+    var specPath: String? = nil
     var verbose: Bool = false
     var debugParam: Bool = false
     var debugSweep: Bool = false
@@ -21,6 +22,19 @@ struct CLIOptions {
     var flatnessEps: Double = 0.25
     var maxDepth: Int = 12
     var maxSamples: Int = 512
+    var canvasOverride: CanvasSize? = nil
+    var fitOverride: RenderFitMode? = nil
+    var paddingOverride: Double? = nil
+    var clipOverride: Bool? = nil
+    var worldFrameOverride: WorldRect? = nil
+    var referencePath: String? = nil
+    var referenceTranslate: Vec2? = nil
+    var referenceScale: Double? = nil
+    var referenceRotateDeg: Double? = nil
+    var referenceOpacity: Double? = nil
+    var referenceLockOverride: Bool? = nil
+    var refFitToFrame: Bool = false
+    var refFitWritePath: String? = nil
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -33,6 +47,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             exit(0)
         } else if arg == "--out", index + 1 < args.count {
             options.outPath = args[index + 1]
+            index += 1
+        } else if arg == "--spec", index + 1 < args.count {
+            options.specPath = args[index + 1]
             index += 1
         } else if arg == "--example", index + 1 < args.count {
             options.example = args[index + 1]
@@ -79,6 +96,52 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--max-samples", index + 1 < args.count {
             options.maxSamples = max(2, Int(args[index + 1]) ?? options.maxSamples)
             index += 1
+        } else if arg == "--canvas", index + 1 < args.count {
+            if let canvas = parseCanvas(args[index + 1]) {
+                options.canvasOverride = canvas
+            }
+            index += 1
+        } else if arg == "--fit", index + 1 < args.count {
+            if let mode = RenderFitMode(rawValue: args[index + 1]) {
+                options.fitOverride = mode
+            } else if args[index + 1] == "glyph+ref" {
+                options.fitOverride = .glyphPlusReference
+            }
+            index += 1
+        } else if arg == "--padding", index + 1 < args.count {
+            options.paddingOverride = Double(args[index + 1])
+            index += 1
+        } else if arg == "--clip" {
+            options.clipOverride = true
+        } else if arg == "--world-frame", index + 1 < args.count {
+            options.worldFrameOverride = parseWorldFrame(args[index + 1])
+            index += 1
+        } else if arg == "--ref", index + 1 < args.count {
+            options.referencePath = args[index + 1]
+            index += 1
+        } else if arg == "--ref-translate", index + 1 < args.count {
+            if let vec = parseVec2(args[index + 1]) {
+                options.referenceTranslate = vec
+            }
+            index += 1
+        } else if arg == "--ref-scale", index + 1 < args.count {
+            options.referenceScale = Double(args[index + 1])
+            index += 1
+        } else if arg == "--ref-rotate", index + 1 < args.count {
+            options.referenceRotateDeg = Double(args[index + 1])
+            index += 1
+        } else if arg == "--ref-opacity", index + 1 < args.count {
+            options.referenceOpacity = Double(args[index + 1])
+            index += 1
+        } else if arg == "--ref-lock" {
+            options.referenceLockOverride = true
+        } else if arg == "--no-ref-lock" {
+            options.referenceLockOverride = false
+        } else if arg == "--ref-fit-to-frame" {
+            options.refFitToFrame = true
+        } else if arg == "--ref-fit-write", index + 1 < args.count {
+            options.refFitWritePath = args[index + 1]
+            index += 1
         }
         index += 1
     }
@@ -96,6 +159,21 @@ Debug flags:
   --debug-svg      Include skeleton/sample overlay in the SVG
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
+  --canvas WxH     Output canvas pixel size (default: 1200x1200)
+  --fit MODE       glyph|glyph+ref|everything|none (default: glyph)
+  --padding N      World padding around fit bounds (default: 30)
+  --clip           Clip to frame
+  --world-frame minX,minY,maxX,maxY  Explicit world frame
+  --ref PATH       Reference SVG path
+  --ref-translate x,y  Reference translate in world units
+  --ref-scale N    Reference scale
+  --ref-rotate N   Reference rotation degrees
+  --ref-opacity N  Reference opacity (default: 0.35)
+  --ref-lock       Lock reference placement (default)
+  --no-ref-lock    Allow reference placement to be updated
+  --ref-fit-to-frame  Print suggested ref translate/scale to fit frame
+  --ref-fit-write PATH Write suggested ref transform into JSON spec
+  --spec PATH      JSON spec with optional render/reference blocks
   --normalize-width  Normalize width to match baseline mean (example-only)
   --alpha-end N      Alpha end value (example-only; default: -0.35 for j)
   --alpha-start-gt N Alpha ramp start gt (default: 0.85)
@@ -108,6 +186,126 @@ Debug flags:
   --max-samples N      Adaptive max samples (default: 512)
 """
     print(text)
+}
+
+struct CP2Spec: Codable {
+    var example: String?
+    var render: RenderSettings?
+    var reference: ReferenceLayer?
+}
+
+func parseCanvas(_ value: String) -> CanvasSize? {
+    let parts = value.lowercased().split(separator: "x")
+    guard parts.count == 2,
+          let w = Int(parts[0]),
+          let h = Int(parts[1]) else { return nil }
+    return CanvasSize(width: max(1, w), height: max(1, h))
+}
+
+func parseVec2(_ value: String) -> Vec2? {
+    let parts = value.split(separator: ",")
+    guard parts.count == 2,
+          let x = Double(parts[0]),
+          let y = Double(parts[1]) else { return nil }
+    return Vec2(x, y)
+}
+
+func parseWorldFrame(_ value: String) -> WorldRect? {
+    let parts = value.split(separator: ",")
+    guard parts.count == 4,
+          let minX = Double(parts[0]),
+          let minY = Double(parts[1]),
+          let maxX = Double(parts[2]),
+          let maxY = Double(parts[3]) else { return nil }
+    return WorldRect(minX: minX, minY: minY, maxX: maxX, maxY: maxY)
+}
+
+func loadSpec(path: String) -> CP2Spec? {
+    let url = URL(fileURLWithPath: path)
+    guard let data = try? Data(contentsOf: url) else { return nil }
+    return try? JSONDecoder().decode(CP2Spec.self, from: data)
+}
+
+func writeSpec(_ spec: CP2Spec, path: String) {
+    let url = URL(fileURLWithPath: path)
+    if let data = try? JSONEncoder().encode(spec) {
+        try? data.write(to: url)
+    }
+}
+
+struct DebugOverlay {
+    var svg: String
+    var bounds: AABB
+}
+
+func svgTransformString(_ transform: Transform2D) -> String {
+    String(
+        format: "matrix(%.6f %.6f %.6f %.6f %.6f %.6f)",
+        transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty
+    )
+}
+
+func parseSVGViewBox(_ svg: String) -> WorldRect? {
+    guard let range = svg.range(of: "viewBox=\"") else { return nil }
+    let tail = svg[range.upperBound...]
+    guard let end = tail.firstIndex(of: "\"") else { return nil }
+    let values = tail[..<end].split(whereSeparator: { $0 == " " || $0 == "," })
+    guard values.count == 4,
+          let minX = Double(values[0]),
+          let minY = Double(values[1]),
+          let width = Double(values[2]),
+          let height = Double(values[3]) else { return nil }
+    return WorldRect(minX: minX, minY: minY, maxX: minX + width, maxY: minY + height)
+}
+
+func extractSVGInnerContent(_ svg: String) -> String {
+    guard let openRange = svg.range(of: "<svg"),
+          let openEnd = svg[openRange.upperBound...].firstIndex(of: ">"),
+          let closeRange = svg.range(of: "</svg>") else {
+        return svg
+    }
+    let contentStart = svg.index(after: openEnd)
+    return String(svg[contentStart..<closeRange.lowerBound])
+}
+
+func applyTransform(_ point: Vec2, _ t: Transform2D) -> Vec2 {
+    let x = t.a * point.x + t.c * point.y + t.tx
+    let y = t.b * point.x + t.d * point.y + t.ty
+    return Vec2(x, y)
+}
+
+func referenceBounds(viewBox: WorldRect, layer: ReferenceLayer) -> AABB {
+    let t = referenceTransformMatrix(layer)
+    let corners = [
+        Vec2(viewBox.minX, viewBox.minY),
+        Vec2(viewBox.maxX, viewBox.minY),
+        Vec2(viewBox.maxX, viewBox.maxY),
+        Vec2(viewBox.minX, viewBox.maxY)
+    ]
+    var box = AABB.empty
+    for corner in corners {
+        box.expand(by: applyTransform(corner, t))
+    }
+    return box
+}
+
+func fitReferenceTransform(
+    referenceViewBox: WorldRect,
+    to frame: WorldRect
+) -> (translate: Vec2, scale: Double) {
+    let refWidth = max(Epsilon.defaultValue, referenceViewBox.width)
+    let refHeight = max(Epsilon.defaultValue, referenceViewBox.height)
+    let scale = min(frame.width / refWidth, frame.height / refHeight)
+    let refCenter = Vec2(
+        (referenceViewBox.minX + referenceViewBox.maxX) * 0.5,
+        (referenceViewBox.minY + referenceViewBox.maxY) * 0.5
+    )
+    let frameCenter = Vec2(
+        (frame.minX + frame.maxX) * 0.5,
+        (frame.minY + frame.maxY) * 0.5
+    )
+    let translated = frameCenter - refCenter * scale
+    return (translated, scale)
 }
 
 func svgPath(for ring: [Vec2]) -> String {
@@ -131,22 +329,56 @@ func ringBounds(_ ring: [Vec2]) -> AABB {
 
 let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
 
+let spec = options.specPath.flatMap(loadSpec(path:))
+
+var renderSettings = spec?.render ?? RenderSettings()
+if let canvas = options.canvasOverride {
+    renderSettings.canvasPx = canvas
+}
+if let fit = options.fitOverride {
+    renderSettings.fitMode = fit
+}
+if let padding = options.paddingOverride {
+    renderSettings.paddingWorld = padding
+}
+if let clip = options.clipOverride {
+    renderSettings.clipToFrame = clip
+}
+if let worldFrame = options.worldFrameOverride {
+    renderSettings.worldFrame = worldFrame
+}
+
+var referenceLayer = spec?.reference
+if let refPath = options.referencePath ?? referenceLayer?.path {
+    let base = referenceLayer ?? ReferenceLayer(path: refPath)
+    referenceLayer = ReferenceLayer(
+        path: refPath,
+        translateWorld: options.referenceTranslate ?? base.translateWorld,
+        scale: options.referenceScale ?? base.scale,
+        rotateDeg: options.referenceRotateDeg ?? base.rotateDeg,
+        opacity: options.referenceOpacity ?? base.opacity,
+        lockPlacement: options.referenceLockOverride ?? base.lockPlacement
+    )
+}
+
+let exampleName = options.example ?? spec?.example
+
 let path: SkeletonPath
-if options.example?.lowercased() == "scurve" {
+if exampleName?.lowercased() == "scurve" {
     path = SkeletonPath(segments: [sCurveFixtureCubic()])
-} else if options.example?.lowercased() == "fast_scurve" {
+} else if exampleName?.lowercased() == "fast_scurve" {
     path = SkeletonPath(segments: [fastSCurveFixtureCubic()])
-} else if options.example?.lowercased() == "fast_scurve2" {
+} else if exampleName?.lowercased() == "fast_scurve2" {
     path = SkeletonPath(segments: [fastSCurve2FixtureCubic()])
-} else if options.example?.lowercased() == "twoseg" {
+} else if exampleName?.lowercased() == "twoseg" {
     path = twoSegFixturePath()
-} else if options.example?.lowercased() == "jstem" {
+} else if exampleName?.lowercased() == "jstem" {
     path = jStemFixturePath()
-} else if options.example?.lowercased() == "j" {
+} else if exampleName?.lowercased() == "j" {
     path = jFullFixturePath()
-} else if options.example?.lowercased() == "j_serif_only" {
+} else if exampleName?.lowercased() == "j_serif_only" {
     path = jSerifOnlyFixturePath()
-} else if options.example?.lowercased() == "poly3" {
+} else if exampleName?.lowercased() == "poly3" {
     path = poly3FixturePath()
 } else {
     let line = CubicBezier2(
@@ -166,7 +398,7 @@ let widthAtT: (Double) -> Double
 let thetaAtT: (Double) -> Double
 let alphaAtT: (Double) -> Double
 let alphaStartGT = options.alphaStartGT
-let example = options.example?.lowercased()
+let example = exampleName?.lowercased()
 let alphaEndValue: Double = {
     if example == "j" {
         return options.alphaEnd ?? -0.35
@@ -517,14 +749,8 @@ if options.debugSweep || options.verbose {
 }
 
 let padding = 10.0
-let bounds = ringBounds(ring)
-let minX = bounds.min.x - padding
-let minY = bounds.min.y - padding
-let width = bounds.width + padding * 2.0
-let height = bounds.height + padding * 2.0
-
-let pathData = svgPath(for: ring)
-var debugSVG = ""
+let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
+var debugOverlay: DebugOverlay? = nil
 if options.debugSVG {
     let count = max(2, sweepSampleCount)
     var left: [Vec2] = []
@@ -603,7 +829,11 @@ if options.debugSVG {
         let end = point + normal * (sweepWidth * 0.5)
         normalLines.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"purple\" stroke-width=\"0.5\"/>", point.x, point.y, end.x, end.y))
     }
-    debugSVG = """
+    var debugBounds = AABB.empty
+    for point in tableP + left + right {
+        debugBounds.expand(by: point)
+    }
+    let svg = """
   <g id="debug">
     <path d="\(skeletonPath)" fill="none" stroke="orange" stroke-width="0.6" />
     <path d="\(leftPath)" fill="none" stroke="green" stroke-width="0.6" />
@@ -612,12 +842,95 @@ if options.debugSVG {
     \(sampleDots.joined(separator: "\n    "))
   </g>
 """
+    debugOverlay = DebugOverlay(svg: svg, bounds: debugBounds)
 }
 
-let svg = """
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="\(String(format: "%.4f", minX)) \(String(format: "%.4f", minY)) \(String(format: "%.4f", width)) \(String(format: "%.4f", height))">
-  <path d="\(pathData)" fill="none" stroke="black" stroke-width="1" />
+var referenceSVG: String? = nil
+var referenceViewBox: WorldRect? = nil
+if let layer = referenceLayer {
+    let url = URL(fileURLWithPath: layer.path)
+    if let data = try? Data(contentsOf: url),
+       let svgText = String(data: data, encoding: .utf8) {
+        referenceViewBox = parseSVGViewBox(svgText)
+        referenceSVG = extractSVGInnerContent(svgText)
+    }
+}
+
+let referenceBoundsAABB: AABB? = {
+    if let viewBox = referenceViewBox, let layer = referenceLayer {
+        return referenceBounds(viewBox: viewBox, layer: layer)
+    }
+    return nil
+}()
+
+let frame = resolveWorldFrame(
+    settings: renderSettings,
+    glyphBounds: glyphBounds,
+    referenceBounds: referenceBoundsAABB,
+    debugBounds: debugOverlay?.bounds
+)
+
+if options.refFitToFrame, let viewBox = referenceViewBox, let layer = referenceLayer {
+    let fit = fitReferenceTransform(referenceViewBox: viewBox, to: frame)
+    print(String(format: "ref-fit translate=(%.6f,%.6f) scale=%.6f", fit.translate.x, fit.translate.y, fit.scale))
+    if let writePath = options.refFitWritePath {
+        var outSpec = spec ?? CP2Spec()
+        let updated = ReferenceLayer(
+            path: layer.path,
+            translateWorld: fit.translate,
+            scale: fit.scale,
+            rotateDeg: layer.rotateDeg,
+            opacity: layer.opacity,
+            lockPlacement: layer.lockPlacement
+        )
+        outSpec.reference = updated
+        writeSpec(outSpec, path: writePath)
+    }
+}
+
+let viewMinX = frame.minX
+let viewMinY = frame.minY
+let viewWidth = frame.width
+let viewHeight = frame.height
+
+let pathData = svgPath(for: ring)
+let clipId = "frameClip"
+let clipPath = renderSettings.clipToFrame ? """
+  <clipPath id="\(clipId)">
+    <rect x="\(String(format: "%.4f", viewMinX))" y="\(String(format: "%.4f", viewMinY))" width="\(String(format: "%.4f", viewWidth))" height="\(String(format: "%.4f", viewHeight))" />
+  </clipPath>
+""" : ""
+let referenceGroup: String = {
+    guard let layer = referenceLayer, let referenceSVG else { return "" }
+    let transform = svgTransformString(referenceTransformMatrix(layer))
+    return """
+  <g id="reference" opacity="\(String(format: "%.4f", layer.opacity))" transform="\(transform)">
+\(referenceSVG)
+  </g>
+"""
+}()
+let debugSVG = debugOverlay?.svg ?? ""
+let glyphGroup = renderSettings.clipToFrame ? """
+  <g id="glyph" clip-path="url(#\(clipId))">
+    <path d="\(pathData)" fill="none" stroke="black" stroke-width="1" />
+  </g>
+""" : """
+  <g id="glyph">
+    <path d="\(pathData)" fill="none" stroke="black" stroke-width="1" />
+  </g>
+"""
+let debugGroup = renderSettings.clipToFrame ? """
+  <g id="debugOverlay" clip-path="url(#\(clipId))">
 \(debugSVG)
+  </g>
+""" : debugSVG
+
+let svg = """
+<svg xmlns="http://www.w3.org/2000/svg" width="\(renderSettings.canvasPx.width)" height="\(renderSettings.canvasPx.height)" viewBox="\(String(format: "%.4f", viewMinX)) \(String(format: "%.4f", viewMinY)) \(String(format: "%.4f", viewWidth)) \(String(format: "%.4f", viewHeight))">
+\(clipPath)
+\(referenceGroup)
+\(glyphGroup)
+\(debugGroup)
 </svg>
 """
 

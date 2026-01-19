@@ -5,3 +5,7 @@ Run:
 
 This produces a baseline SVG outline for a straight-line skeleton using a deterministic
 boundary soup + loop tracing approach (no raster, no polygon union).
+
+Reference asset:
+- Fixtures/references/big_caslon_J.svg
+- Enable via: --ref Fixtures/references/big_caslon_J.svg
