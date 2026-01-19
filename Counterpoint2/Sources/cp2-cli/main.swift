@@ -49,7 +49,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|twoseg|line] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|line] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -88,6 +88,8 @@ if options.example?.lowercased() == "scurve" {
     path = SkeletonPath(segments: [sCurveFixtureCubic()])
 } else if options.example?.lowercased() == "twoseg" {
     path = twoSegFixturePath()
+} else if options.example?.lowercased() == "jstem" {
+    path = jStemFixturePath()
 } else {
     let line = CubicBezier2(
         p0: Vec2(0, 0),

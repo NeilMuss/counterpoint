@@ -123,6 +123,53 @@ final class SweepTraceTests: XCTestCase {
 
         assertNoRailFlip(path: path)
     }
+
+    func testJStemSweepProducesDeterministicClosedRing() {
+        let path = jStemFixturePath()
+        let width = 20.0
+        let height = 10.0
+        let samples = 64
+        let soupA = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let soupB = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
+
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+
+        let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+        var skeletonBounds = AABB.empty
+        for i in 0..<samples {
+            let t = Double(i) / Double(samples - 1)
+            skeletonBounds.expand(by: param.position(globalT: t))
+        }
+        var ringBounds = AABB.empty
+        for p in ringA {
+            ringBounds.expand(by: p)
+        }
+        XCTAssertGreaterThanOrEqual(ringBounds.height, skeletonBounds.height - 1.0e-6)
+        XCTAssertGreaterThanOrEqual(ringBounds.width, width - 1.0e-6)
+
+        assertNoRailFlip(path: path)
+    }
 }
 
 private func rectangleCorners(
