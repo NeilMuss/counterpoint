@@ -11,6 +11,7 @@ struct CLIOptions {
     var debugSVG: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
+    var normalizeWidth: Bool = false
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -41,6 +42,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--arc-samples", index + 1 < args.count {
             options.arcSamples = max(2, Int(args[index + 1]) ?? options.arcSamples)
             index += 1
+        } else if arg == "--normalize-width" {
+            options.normalizeWidth = true
         }
         index += 1
     }
@@ -58,6 +61,7 @@ Debug flags:
   --debug-svg      Include skeleton/sample overlay in the SVG
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
+  --normalize-width  Normalize width to match baseline mean (example-only)
 """
     print(text)
 }
@@ -125,6 +129,19 @@ if options.example?.lowercased() == "j" {
     widthAtT = { _ in sweepWidth }
 }
 
+let sweepGT: [Double] = (0..<sweepSampleCount).map {
+    Double($0) / Double(max(1, sweepSampleCount - 1))
+}
+let baselineWidth = sweepWidth
+let widths = sweepGT.map { widthAtT($0) }
+let meanWidth = widths.reduce(0.0, +) / Double(max(1, widths.count))
+let widthScale = (options.normalizeWidth && options.example?.lowercased() == "j" && meanWidth > Epsilon.defaultValue)
+    ? (baselineWidth / meanWidth)
+    : 1.0
+let scaledWidthAtT: (Double) -> Double = { t in
+    widthAtT(t) * widthScale
+}
+
 let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
 if options.verbose || options.debugParam {
     let segmentCount = path.segments.count
@@ -169,7 +186,7 @@ let soupJ = boundarySoupVariableWidth(
     effectiveAngle: sweepAngle,
     sampleCount: sweepSampleCount,
     arcSamplesPerSegment: paramSamplesPerSegment,
-    widthAtT: widthAtT
+    widthAtT: scaledWidthAtT
 )
 let soupUsed = options.example?.lowercased() == "j" ? soupJ : soup
 let rings = traceLoops(segments: soupUsed, eps: 1.0e-6)
@@ -193,6 +210,19 @@ if options.debugSweep || options.verbose {
     }
     print("sweep samples=\(sweepSampleCount) segments=\(soupUsed.count) rings=\(ringCount)")
     print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
+
+    let widthMin = widths.min() ?? baselineWidth
+    let widthMax = widths.max() ?? baselineWidth
+    let heightMin = sweepHeight
+    let heightMax = sweepHeight
+    let probeGT: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
+    let probeWidths = probeGT.map { widthAtT($0) * widthScale }
+    let probeHeights = probeGT.map { _ in sweepHeight }
+    let widthList = probeWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+    let heightList = probeHeights.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+    print(String(format: "sweep widthMin=%.4f widthMax=%.4f heightMin=%.4f heightMax=%.4f", widthMin * widthScale, widthMax * widthScale, heightMin, heightMax))
+    print("sweep widthProbes=[\(widthList)] gt=[0,0.25,0.5,0.75,1]")
+    print("sweep heightProbes=[\(heightList)] gt=[0,0.25,0.5,0.75,1]")
 }
 
 let padding = 10.0
@@ -218,7 +248,7 @@ if options.debugSVG {
         let tangent = pathParam.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
         tableP.append(point)
-        let halfW = widthAtT(t) * 0.5
+        let halfW = scaledWidthAtT(t) * 0.5
         let halfH = sweepHeight * 0.5
         let corners: [Vec2] = [
             Vec2(-halfW, -halfH),
