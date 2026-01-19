@@ -7,12 +7,11 @@ public struct ArcLengthParameterization {
         let cumulative: Double
     }
 
-    private static let tableSize: Int = 256
     private let samples: [Sample]
     public let totalLength: Double
 
-    public init(path: SkeletonPath) {
-        let count = ArcLengthParameterization.tableSize
+    public init(path: SkeletonPath, samplesPerSegment: Int = 256) {
+        let count = max(2, samplesPerSegment)
         var table: [Sample] = []
         table.reserveCapacity(count)
         var cumulative = 0.0
