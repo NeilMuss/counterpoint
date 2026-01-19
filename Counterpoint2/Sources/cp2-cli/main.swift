@@ -12,6 +12,11 @@ struct CLIOptions {
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
+    var alphaEnd: Double? = nil
+    var alphaStartGT: Double = 0.85
+    var widthStart: Double = 16.0
+    var widthEnd: Double = 28.0
+    var widthRampStartGT: Double = 0.85
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -44,6 +49,21 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             index += 1
         } else if arg == "--normalize-width" {
             options.normalizeWidth = true
+        } else if arg == "--alpha-end", index + 1 < args.count {
+            options.alphaEnd = Double(args[index + 1])
+            index += 1
+        } else if arg == "--alpha-start-gt", index + 1 < args.count {
+            options.alphaStartGT = Double(args[index + 1]) ?? options.alphaStartGT
+            index += 1
+        } else if arg == "--width-start", index + 1 < args.count {
+            options.widthStart = Double(args[index + 1]) ?? options.widthStart
+            index += 1
+        } else if arg == "--width-end", index + 1 < args.count {
+            options.widthEnd = Double(args[index + 1]) ?? options.widthEnd
+            index += 1
+        } else if arg == "--width-ramp-start-gt", index + 1 < args.count {
+            options.widthRampStartGT = Double(args[index + 1]) ?? options.widthRampStartGT
+            index += 1
         }
         index += 1
     }
@@ -52,7 +72,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|line] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -62,6 +82,11 @@ Debug flags:
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --normalize-width  Normalize width to match baseline mean (example-only)
+  --alpha-end N      Alpha end value (example-only; default: -0.35 for j)
+  --alpha-start-gt N Alpha ramp start gt (default: 0.85)
+  --width-start N    Line end ramp width start (default: 16)
+  --width-end N      Line end ramp width end (default: 28)
+  --width-ramp-start-gt N  Line end ramp start gt (default: 0.85)
 """
     print(text)
 }
@@ -112,6 +137,18 @@ let sweepAngle = 0.0
 let paramSamplesPerSegment = options.arcSamples
 let widthAtT: (Double) -> Double
 let thetaAtT: (Double) -> Double
+let alphaAtT: (Double) -> Double
+let alphaStartGT = options.alphaStartGT
+let example = options.example?.lowercased()
+let alphaEndValue: Double = {
+    if example == "j" {
+        return options.alphaEnd ?? -0.35
+    }
+    if example == "line_end_ramp" {
+        return options.alphaEnd ?? 0.0
+    }
+    return options.alphaEnd ?? 0.0
+}()
 if options.example?.lowercased() == "j" {
     widthAtT = { t in
         let clamped = max(0.0, min(1.0, t))
@@ -142,16 +179,54 @@ if options.example?.lowercased() == "j" {
         }
         return deg * Double.pi / 180.0
     }
+    alphaAtT = { t in
+        if t < alphaStartGT {
+            return 0.0
+        }
+        let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
+        return alphaEndValue * max(0.0, min(1.0, phase))
+    }
+} else if options.example?.lowercased() == "line_end_ramp" {
+    let rampStart = options.widthRampStartGT
+    let start = options.widthStart
+    let end = options.widthEnd
+    widthAtT = { t in
+        if t < rampStart {
+            return start
+        }
+        let phase = (t - rampStart) / max(1.0e-12, 1.0 - rampStart)
+        return start + (end - start) * max(0.0, min(1.0, phase))
+    }
+    thetaAtT = { _ in 0.0 }
+    alphaAtT = { t in
+        if t < alphaStartGT {
+            return 0.0
+        }
+        let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
+        return alphaEndValue * max(0.0, min(1.0, phase))
+    }
 } else {
     widthAtT = { _ in sweepWidth }
     thetaAtT = { _ in 0.0 }
+    alphaAtT = { _ in 0.0 }
 }
 
 let sweepGT: [Double] = (0..<sweepSampleCount).map {
     Double($0) / Double(max(1, sweepSampleCount - 1))
 }
 let baselineWidth = sweepWidth
-let widths = sweepGT.map { widthAtT($0) }
+let warpT: (Double) -> Double = { t in
+    let alphaValue = alphaAtT(t)
+    if t <= alphaStartGT || abs(alphaValue) <= Epsilon.defaultValue {
+        return t
+    }
+    let span = max(Epsilon.defaultValue, 1.0 - alphaStartGT)
+    let phase = max(0.0, min(1.0, (t - alphaStartGT) / span))
+    let exponent = max(0.05, 1.0 + alphaValue)
+    let biased = pow(phase, exponent)
+    return alphaStartGT + biased * span
+}
+let widths = sweepGT.map { widthAtT(warpT($0)) }
 let meanWidth = widths.reduce(0.0, +) / Double(max(1, widths.count))
 let widthScale = (options.normalizeWidth && options.example?.lowercased() == "j" && meanWidth > Epsilon.defaultValue)
     ? (baselineWidth / meanWidth)
@@ -214,8 +289,33 @@ let soupJTheta = boundarySoupVariableWidthAngle(
     widthAtT: scaledWidthAtT,
     angleAtT: thetaAtT
 )
-let soupUsed = options.example?.lowercased() == "j" ? soupJ : soup
-let rings = traceLoops(segments: options.example?.lowercased() == "j" ? soupJTheta : soupUsed, eps: 1.0e-6)
+let soupJThetaAlpha = boundarySoupVariableWidthAngleAlpha(
+    path: path,
+    height: sweepHeight,
+    sampleCount: sweepSampleCount,
+    arcSamplesPerSegment: paramSamplesPerSegment,
+    widthAtT: { t in scaledWidthAtT(warpT(t)) },
+    angleAtT: { t in thetaAtT(warpT(t)) },
+    alphaAtT: alphaAtT,
+    alphaStart: alphaStartGT
+)
+let soupLineEndRamp = boundarySoupVariableWidthAngleAlpha(
+    path: path,
+    height: sweepHeight,
+    sampleCount: sweepSampleCount,
+    arcSamplesPerSegment: paramSamplesPerSegment,
+    widthAtT: { t in scaledWidthAtT(warpT(t)) },
+    angleAtT: { t in thetaAtT(warpT(t)) },
+    alphaAtT: alphaAtT,
+    alphaStart: alphaStartGT
+)
+let soupUsed = example == "j" ? soupJ : soup
+let rings = traceLoops(
+    segments: example == "j"
+        ? soupJThetaAlpha
+        : (example == "line_end_ramp" ? soupLineEndRamp : soupUsed),
+    eps: 1.0e-6
+)
 let ring = rings.first ?? []
 
 if options.debugSweep || options.verbose {
@@ -234,7 +334,9 @@ if options.debugSweep || options.verbose {
     } else {
         winding = "flat"
     }
-    let sweepSegmentsCount = options.example?.lowercased() == "j" ? soupJTheta.count : soupUsed.count
+    let sweepSegmentsCount = example == "j"
+        ? soupJThetaAlpha.count
+        : (example == "line_end_ramp" ? soupLineEndRamp.count : soupUsed.count)
     print("sweep samples=\(sweepSampleCount) segments=\(sweepSegmentsCount) rings=\(ringCount)")
     print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
 
@@ -243,20 +345,34 @@ if options.debugSweep || options.verbose {
     let heightMin = sweepHeight
     let heightMax = sweepHeight
     let probeGT: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
-    let probeWidths = probeGT.map { widthAtT($0) * widthScale }
+    let probeWidths = probeGT.map { scaledWidthAtT(warpT($0)) }
     let probeHeights = probeGT.map { _ in sweepHeight }
     let widthList = probeWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
     let heightList = probeHeights.map { String(format: "%.4f", $0) }.joined(separator: ", ")
-    let thetaValues = sweepGT.map { thetaAtT($0) * 180.0 / Double.pi }
+    let thetaValues = sweepGT.map { thetaAtT(warpT($0)) * 180.0 / Double.pi }
     let thetaMin = thetaValues.min() ?? 0.0
     let thetaMax = thetaValues.max() ?? 0.0
-    let thetaProbes = probeGT.map { thetaAtT($0) * 180.0 / Double.pi }
+    let thetaProbes = probeGT.map { thetaAtT(warpT($0)) * 180.0 / Double.pi }
     let thetaList = thetaProbes.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+    let alphaValues = sweepGT.map { alphaAtT($0) }
+    let alphaMin = alphaValues.min() ?? 0.0
+    let alphaMax = alphaValues.max() ?? 0.0
+    let alphaProbes = probeGT.map { alphaAtT($0) }
+    let alphaList = alphaProbes.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+    let endProbeGT: [Double] = [0.80, 0.85, 0.90, 0.95, 1.00]
+    let endWidths = endProbeGT.map { scaledWidthAtT(warpT($0)) }
+    let endWidthList = endWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+    let warpValues = endProbeGT.map { warpT($0) }
+    let warpList = warpValues.map { String(format: "%.4f", $0) }.joined(separator: ", ")
     print(String(format: "sweep widthMin=%.4f widthMax=%.4f heightMin=%.4f heightMax=%.4f", widthMin * widthScale, widthMax * widthScale, heightMin, heightMax))
     print("sweep widthProbes=[\(widthList)] gt=[0,0.25,0.5,0.75,1]")
+    print("sweep widthEndProbes=[\(endWidthList)] gt=[0.80,0.85,0.90,0.95,1.00]")
     print("sweep heightProbes=[\(heightList)] gt=[0,0.25,0.5,0.75,1]")
     print(String(format: "sweep thetaMin=%.4f thetaMax=%.4f", thetaMin, thetaMax))
     print("sweep thetaProbes=[\(thetaList)] gt=[0,0.25,0.5,0.75,1]")
+    print(String(format: "sweep alphaMin=%.4f alphaMax=%.4f alphaWindow=[%.2f..1.00]", alphaMin, alphaMax, alphaStartGT))
+    print("sweep alphaProbes=[\(alphaList)] gt=[0,0.25,0.5,0.75,1]")
+    print("sweep warpProbes gt=[0.80,0.85,0.90,0.95,1.00] warped=[\(warpList)]")
 }
 
 let padding = 10.0
@@ -282,9 +398,10 @@ if options.debugSVG {
         let tangent = pathParam.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
         tableP.append(point)
-        let halfW = scaledWidthAtT(t) * 0.5
+        let warped = warpT(t)
+        let halfW = scaledWidthAtT(warped) * 0.5
         let halfH = sweepHeight * 0.5
-        let angle = thetaAtT(t)
+        let angle = thetaAtT(warped)
         let corners: [Vec2] = [
             Vec2(-halfW, -halfH),
             Vec2(halfW, -halfH),

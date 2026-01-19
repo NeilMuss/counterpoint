@@ -264,6 +264,64 @@ final class SweepTraceTests: XCTestCase {
         assertNoRailFlip(path: path, angleAtT: thetaRampRadians)
     }
 
+    func testJHookAlphaAffectsOnlyTailRegion() {
+        let path = jFullFixturePath()
+        let height = 10.0
+        let samples = 64
+        let alphaStart = 0.85
+        let alphaEnd = -0.35
+        let alphaAtT: (Double) -> Double = { t in
+            if t < alphaStart {
+                return 0.0
+            }
+            let phase = (t - alphaStart) / (1.0 - alphaStart)
+            return alphaEnd * max(0.0, min(1.0, phase))
+        }
+
+        let noAlphaSoup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: widthRamp,
+            angleAtT: thetaRampRadians,
+            alphaAtT: { _ in 0.0 },
+            alphaStart: alphaStart
+        )
+        let alphaSoup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: widthRamp,
+            angleAtT: thetaRampRadians,
+            alphaAtT: alphaAtT,
+            alphaStart: alphaStart
+        )
+
+        let leftNoAlpha = leftRailPoints(segments: noAlphaSoup, sampleCount: samples)
+        let leftAlpha = leftRailPoints(segments: alphaSoup, sampleCount: samples)
+        XCTAssertEqual(leftNoAlpha.count, samples)
+        XCTAssertEqual(leftAlpha.count, samples)
+
+        for i in 0..<min(10, samples) {
+            XCTAssertTrue(Epsilon.approxEqual(leftNoAlpha[i], leftAlpha[i], eps: 1.0e-6))
+        }
+
+        var maxTailDelta = 0.0
+        let tailStart = max(0, Int(Double(samples - 1) * 0.9))
+        for i in tailStart..<samples {
+            let delta = (leftNoAlpha[i] - leftAlpha[i]).length
+            if delta > maxTailDelta {
+                maxTailDelta = delta
+            }
+        }
+        XCTAssertGreaterThan(maxTailDelta, 1.0e-6)
+
+        let ring = traceLoops(segments: alphaSoup, eps: 1.0e-6).first ?? []
+        XCTAssertFalse(ring.isEmpty)
+        XCTAssertTrue(Epsilon.approxEqual(ring.first!, ring.last!))
+        XCTAssertTrue(abs(signedArea(ring)) > 1.0e-6)
+    }
+
     func testJHookRampIsWiderThanConstant() {
         let path = jFullFixturePath()
         let height = 10.0
@@ -295,6 +353,137 @@ final class SweepTraceTests: XCTestCase {
             rampBounds.expand(by: p)
         }
         XCTAssertGreaterThanOrEqual(rampBounds.width, constantBounds.width - 1.0e-6)
+    }
+
+    func testLineEndRampProducesDeterministicClosedRing() {
+        let path = SkeletonPath(segments: [lineFixtureCubic()])
+        let height = 10.0
+        let samples = 64
+        let widthStart = 16.0
+        let widthEnd = 28.0
+        let rampStart = 0.85
+
+        let soupA = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: { t in
+                endRampWidth(t: t, start: widthStart, end: widthEnd, rampStart: rampStart)
+            },
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: rampStart
+        )
+        let soupB = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: { t in
+                endRampWidth(t: t, start: widthStart, end: widthEnd, rampStart: rampStart)
+            },
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: rampStart
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
+
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+    }
+
+    func testLineEndRampAlphaLocality() {
+        let path = SkeletonPath(segments: [lineFixtureCubic()])
+        let height = 10.0
+        let samples = 64
+        let widthStart = 16.0
+        let widthEnd = 28.0
+        let rampStart = 0.85
+        let alphaEnd = -0.35
+
+        let noAlphaSoup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: { t in
+                endRampWidth(t: t, start: widthStart, end: widthEnd, rampStart: rampStart)
+            },
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: rampStart
+        )
+        let alphaSoup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: { t in
+                endRampWidth(t: t, start: widthStart, end: widthEnd, rampStart: rampStart)
+            },
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { t in
+                if t < rampStart {
+                    return 0.0
+                }
+                let phase = (t - rampStart) / (1.0 - rampStart)
+                return alphaEnd * max(0.0, min(1.0, phase))
+            },
+            alphaStart: rampStart
+        )
+
+        let railsNoAlpha = railPoints(segments: noAlphaSoup, sampleCount: samples)
+        let railsAlpha = railPoints(segments: alphaSoup, sampleCount: samples)
+        XCTAssertEqual(railsNoAlpha.left.count, samples)
+        XCTAssertEqual(railsAlpha.left.count, samples)
+
+        for i in 0..<min(10, samples) {
+            XCTAssertTrue(Epsilon.approxEqual(railsNoAlpha.left[i], railsAlpha.left[i], eps: 1.0e-6))
+            XCTAssertTrue(Epsilon.approxEqual(railsNoAlpha.right[i], railsAlpha.right[i], eps: 1.0e-6))
+        }
+
+        var maxTailDelta = 0.0
+        let tailStart = max(0, Int(Double(samples - 1) * 0.9))
+        for i in tailStart..<samples {
+            let delta = (railsNoAlpha.left[i] - railsAlpha.left[i]).length
+            if delta > maxTailDelta {
+                maxTailDelta = delta
+            }
+        }
+        XCTAssertGreaterThan(maxTailDelta, 1.0e-6)
+    }
+
+    func testLineEndRampWidthIncreasesNearEnd() {
+        let path = SkeletonPath(segments: [lineFixtureCubic()])
+        let height = 10.0
+        let samples = 64
+        let widthStart = 16.0
+        let widthEnd = 28.0
+        let rampStart = 0.85
+
+        let soup = boundarySoupVariableWidthAngleAlpha(
+            path: path,
+            height: height,
+            sampleCount: samples,
+            widthAtT: { t in
+                endRampWidth(t: t, start: widthStart, end: widthEnd, rampStart: rampStart)
+            },
+            angleAtT: { _ in 0.0 },
+            alphaAtT: { _ in 0.0 },
+            alphaStart: rampStart
+        )
+
+        let rails = railPoints(segments: soup, sampleCount: samples)
+        XCTAssertEqual(rails.left.count, samples)
+        XCTAssertEqual(rails.right.count, samples)
+
+        let earlyWidth = (rails.right[0] - rails.left[0]).length
+        let tailWidth = (rails.right[samples - 1] - rails.left[samples - 1]).length
+        XCTAssertGreaterThan(tailWidth, earlyWidth)
     }
 }
 
@@ -399,4 +588,46 @@ private func thetaRampRadians(t: Double) -> Double {
         deg = mid + (end - mid) * u
     }
     return deg * Double.pi / 180.0
+}
+
+private func leftRailPoints(segments: [Segment2], sampleCount: Int) -> [Vec2] {
+    let count = max(2, sampleCount)
+    let leftSegments = Array(segments.prefix(count - 1))
+    guard let first = leftSegments.first else { return [] }
+    var points: [Vec2] = [first.a, first.b]
+    points.reserveCapacity(count)
+    for segment in leftSegments.dropFirst() {
+        points.append(segment.b)
+    }
+    return points
+}
+
+private func railPoints(segments: [Segment2], sampleCount: Int) -> (left: [Vec2], right: [Vec2]) {
+    let count = max(2, sampleCount)
+    guard segments.count >= (count - 1) * 2 else {
+        return ([], [])
+    }
+    let leftSegments = Array(segments.prefix(count - 1))
+    let rightSegments = Array(segments.dropFirst(count - 1).prefix(count - 1))
+    let leftPoints = leftRailPoints(segments: leftSegments, sampleCount: count)
+    let rightPointsReversed = leftRailPoints(segments: rightSegments, sampleCount: count)
+    let rightPoints = rightPointsReversed.reversed()
+    return (leftPoints, Array(rightPoints))
+}
+
+private func endRampWidth(t: Double, start: Double, end: Double, rampStart: Double) -> Double {
+    if t < rampStart {
+        return start
+    }
+    let phase = (t - rampStart) / max(1.0e-12, 1.0 - rampStart)
+    return start + (end - start) * max(0.0, min(1.0, phase))
+}
+
+private func lineFixtureCubic() -> CubicBezier2 {
+    CubicBezier2(
+        p0: Vec2(0, 0),
+        p1: Vec2(0, 33),
+        p2: Vec2(0, 66),
+        p3: Vec2(0, 100)
+    )
 }
