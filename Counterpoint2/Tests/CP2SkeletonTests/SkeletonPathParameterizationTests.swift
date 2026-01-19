@@ -98,4 +98,36 @@ final class SkeletonPathParameterizationTests: XCTestCase {
 
         XCTAssertLessThanOrEqual(fineError, coarseError + 1.0e-9)
     }
+
+    func testUnequalSegmentLengthsMapByArcLength() {
+        let a = CubicBezier2(
+            p0: Vec2(0, 0),
+            p1: Vec2(0, 30),
+            p2: Vec2(0, 60),
+            p3: Vec2(0, 90)
+        )
+        let b = CubicBezier2(
+            p0: Vec2(0, 90),
+            p1: Vec2(0, 93),
+            p2: Vec2(0, 97),
+            p3: Vec2(0, 100)
+        )
+        let path = SkeletonPath(segments: [a, b])
+        let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+
+        let y089 = param.position(globalT: 0.89).y
+        let y090 = param.position(globalT: 0.90).y
+        let y091 = param.position(globalT: 0.91).y
+        XCTAssertLessThan(y089, 89.8)
+        XCTAssertEqual(y090, 90.0, accuracy: 0.5)
+        XCTAssertGreaterThan(y091, 90.2)
+
+        XCTAssertEqual(param.map(globalT: 0.89).segmentIndex, 0)
+        XCTAssertEqual(param.map(globalT: 0.91).segmentIndex, 1)
+
+        let first = param.map(globalT: 0.91)
+        let second = param.map(globalT: 0.91)
+        XCTAssertEqual(first.segmentIndex, second.segmentIndex)
+        XCTAssertEqual(first.localU, second.localU, accuracy: 1.0e-12)
+    }
 }

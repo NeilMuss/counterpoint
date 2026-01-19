@@ -73,45 +73,55 @@ final class SweepTraceTests: XCTestCase {
     }
 
     func testSCurveNoRailFlip() {
-        let path = SkeletonPath(segments: [sCurveFixtureCubic()])
+        assertNoRailFlip(path: SkeletonPath(segments: [sCurveFixtureCubic()]))
+    }
+
+    func testTwoSegSweepProducesDeterministicClosedRing() {
+        let path = twoSegFixturePath()
         let width = 20.0
         let height = 10.0
         let samples = 64
-        let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+        let soupA = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let soupB = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
 
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+
+        let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+        var skeletonBounds = AABB.empty
         for i in 0..<samples {
             let t = Double(i) / Double(samples - 1)
-            let point = param.position(globalT: t)
-            let tangent = param.tangent(globalT: t).normalized()
-            let normal = Vec2(-tangent.y, tangent.x)
-            let corners = rectangleCorners(
-                center: point,
-                tangent: tangent,
-                normal: normal,
-                width: width,
-                height: height,
-                effectiveAngle: 0
-            )
-            var minDot = Double.greatestFiniteMagnitude
-            var maxDot = -Double.greatestFiniteMagnitude
-            var leftPoint = point
-            var rightPoint = point
-            for corner in corners {
-                let d = corner.dot(normal)
-                if d < minDot {
-                    minDot = d
-                    leftPoint = corner
-                }
-                if d > maxDot {
-                    maxDot = d
-                    rightPoint = corner
-                }
-            }
-            let leftDelta = (leftPoint - point).dot(normal)
-            let rightDelta = (rightPoint - point).dot(normal)
-            XCTAssertLessThanOrEqual(leftDelta, 1.0e-9)
-            XCTAssertGreaterThanOrEqual(rightDelta, -1.0e-9)
+            skeletonBounds.expand(by: param.position(globalT: t))
         }
+        var ringBounds = AABB.empty
+        for p in ringA {
+            ringBounds.expand(by: p)
+        }
+        let expandX = ringBounds.width - skeletonBounds.width
+        let expandY = ringBounds.height - skeletonBounds.height
+        XCTAssertTrue(expandX >= width * 0.5 - 1.0e-6 || expandY >= height * 0.5 - 1.0e-6)
+
+        assertNoRailFlip(path: path)
     }
 }
 
@@ -140,5 +150,46 @@ private func rectangleCorners(
         )
         let world = tangent * rotated.y + normal * rotated.x
         return center + world
+    }
+}
+
+private func assertNoRailFlip(path: SkeletonPath) {
+    let width = 20.0
+    let height = 10.0
+    let samples = 64
+    let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+
+    for i in 0..<samples {
+        let t = Double(i) / Double(samples - 1)
+        let point = param.position(globalT: t)
+        let tangent = param.tangent(globalT: t).normalized()
+        let normal = Vec2(-tangent.y, tangent.x)
+        let corners = rectangleCorners(
+            center: point,
+            tangent: tangent,
+            normal: normal,
+            width: width,
+            height: height,
+            effectiveAngle: 0
+        )
+        var minDot = Double.greatestFiniteMagnitude
+        var maxDot = -Double.greatestFiniteMagnitude
+        var leftPoint = point
+        var rightPoint = point
+        for corner in corners {
+            let d = corner.dot(normal)
+            if d < minDot {
+                minDot = d
+                leftPoint = corner
+            }
+            if d > maxDot {
+                maxDot = d
+                rightPoint = corner
+            }
+        }
+        let leftDelta = (leftPoint - point).dot(normal)
+        let rightDelta = (rightPoint - point).dot(normal)
+        XCTAssertLessThanOrEqual(leftDelta, 1.0e-9)
+        XCTAssertGreaterThanOrEqual(rightDelta, -1.0e-9)
     }
 }

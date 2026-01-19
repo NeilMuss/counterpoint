@@ -49,7 +49,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|line] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|twoseg|line] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -83,18 +83,20 @@ func ringBounds(_ ring: [Vec2]) -> AABB {
 
 let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
 
-let bezier: CubicBezier2
+let path: SkeletonPath
 if options.example?.lowercased() == "scurve" {
-    bezier = sCurveFixtureCubic()
+    path = SkeletonPath(segments: [sCurveFixtureCubic()])
+} else if options.example?.lowercased() == "twoseg" {
+    path = twoSegFixturePath()
 } else {
-    bezier = CubicBezier2(
+    let line = CubicBezier2(
         p0: Vec2(0, 0),
         p1: Vec2(0, 33),
         p2: Vec2(0, 66),
         p3: Vec2(0, 100)
     )
+    path = SkeletonPath(segments: [line])
 }
-let path = SkeletonPath(segments: [bezier])
 let sweepSampleCount = 64
 let sweepWidth = 20.0
 let sweepHeight = 10.0
@@ -172,22 +174,19 @@ let height = bounds.height + padding * 2.0
 let pathData = svgPath(for: ring)
 var debugSVG = ""
 if options.debugSVG {
-    let arclen = ArcLengthParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
-    let tableU = arclen.uTable()
-    let tableP = arclen.sampleTable()
     let count = max(2, sweepSampleCount)
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
     right.reserveCapacity(count)
-    let tableCount = max(2, tableU.count)
+    var tableP: [Vec2] = []
+    tableP.reserveCapacity(count)
     for i in 0..<count {
         let t = Double(i) / Double(count - 1)
-        let tableIndex = Int(round(t * Double(tableCount - 1)))
-        let u = tableU[tableIndex]
-        let point = tableP[tableIndex]
-        let tangent = path.tangent(u).normalized()
+        let point = pathParam.position(globalT: t)
+        let tangent = pathParam.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
+        tableP.append(point)
         let halfW = sweepWidth * 0.5
         let halfH = sweepHeight * 0.5
         let corners: [Vec2] = [
@@ -244,10 +243,8 @@ if options.debugSVG {
     normalLines.reserveCapacity(count)
     for i in 0..<count {
         let t = Double(i) / Double(count - 1)
-        let tableIndex = Int(round(t * Double(tableCount - 1)))
-        let u = tableU[tableIndex]
-        let point = tableP[tableIndex]
-        let tangent = path.tangent(u).normalized()
+        let point = pathParam.position(globalT: t)
+        let tangent = pathParam.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
         let end = point + normal * (sweepWidth * 0.5)
         normalLines.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"purple\" stroke-width=\"0.5\"/>", point.x, point.y, end.x, end.y))
