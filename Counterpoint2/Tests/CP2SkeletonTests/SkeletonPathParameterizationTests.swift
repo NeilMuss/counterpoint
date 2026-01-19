@@ -3,6 +3,23 @@ import CP2Geometry
 import CP2Skeleton
 
 final class SkeletonPathParameterizationTests: XCTestCase {
+    func testPositionMatchesArcLengthForLine() {
+        let line = CubicBezier2(
+            p0: Vec2(0, 0),
+            p1: Vec2(0, 33),
+            p2: Vec2(0, 66),
+            p3: Vec2(0, 100)
+        )
+        let path = SkeletonPath(segments: [line])
+        let param = SkeletonPathParameterization(path: path, samplesPerSegment: 256)
+
+        XCTAssertEqual(param.position(globalT: 0.0).y, 0.0, accuracy: 1.0e-6)
+        XCTAssertEqual(param.position(globalT: 1.0).y, 100.0, accuracy: 1.0e-6)
+        XCTAssertEqual(param.position(globalT: 0.25).y, 25.0, accuracy: 1.0e-1)
+        XCTAssertEqual(param.position(globalT: 0.5).y, 50.0, accuracy: 1.0e-1)
+        XCTAssertEqual(param.position(globalT: 0.75).y, 75.0, accuracy: 1.0e-1)
+    }
+
     func testPositionEndpointsAndMidpointMapping() {
         let a = CubicBezier2(
             p0: Vec2(0, 0),

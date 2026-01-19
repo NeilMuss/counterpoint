@@ -4,6 +4,7 @@ import CP2Skeleton
 
 struct CLIOptions {
     var outPath: String = "out/line.svg"
+    var example: String? = nil
     var verbose: Bool = false
     var debugParam: Bool = false
     var debugSweep: Bool = false
@@ -22,6 +23,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             exit(0)
         } else if arg == "--out", index + 1 < args.count {
             options.outPath = args[index + 1]
+            index += 1
+        } else if arg == "--example", index + 1 < args.count {
+            options.example = args[index + 1]
             index += 1
         } else if arg == "--verbose" {
             options.verbose = true
@@ -45,7 +49,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|line] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -79,12 +83,17 @@ func ringBounds(_ ring: [Vec2]) -> AABB {
 
 let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
 
-let bezier = CubicBezier2(
-    p0: Vec2(0, 0),
-    p1: Vec2(0, 33),
-    p2: Vec2(0, 66),
-    p3: Vec2(0, 100)
-)
+let bezier: CubicBezier2
+if options.example?.lowercased() == "scurve" {
+    bezier = sCurveFixtureCubic()
+} else {
+    bezier = CubicBezier2(
+        p0: Vec2(0, 0),
+        p1: Vec2(0, 33),
+        p2: Vec2(0, 66),
+        p3: Vec2(0, 100)
+    )
+}
 let path = SkeletonPath(segments: [bezier])
 let sweepSampleCount = 64
 let sweepWidth = 20.0

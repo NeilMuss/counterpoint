@@ -38,8 +38,8 @@ public struct SkeletonPathParameterization {
         for (index, length) in segmentLengths.enumerated() {
             let next = accumulated + length
             if target <= next || index == segmentLengths.count - 1 {
-                let local = length <= Epsilon.defaultValue ? 0.0 : (target - accumulated) / length
-                let u = max(0.0, min(1.0, local))
+                let localS = max(0.0, min(length, target - accumulated))
+                let u = perSegment[index].u(atDistance: localS)
                 return Mapping(segmentIndex: index, localU: u)
             }
             accumulated = next
