@@ -17,6 +17,10 @@ struct CLIOptions {
     var widthStart: Double = 16.0
     var widthEnd: Double = 28.0
     var widthRampStartGT: Double = 0.85
+    var adaptiveSampling: Bool = false
+    var flatnessEps: Double = 0.25
+    var maxDepth: Int = 12
+    var maxSamples: Int = 512
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -64,6 +68,17 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--width-ramp-start-gt", index + 1 < args.count {
             options.widthRampStartGT = Double(args[index + 1]) ?? options.widthRampStartGT
             index += 1
+        } else if arg == "--adaptive-sampling" {
+            options.adaptiveSampling = true
+        } else if arg == "--flatness-eps", index + 1 < args.count {
+            options.flatnessEps = Double(args[index + 1]) ?? options.flatnessEps
+            index += 1
+        } else if arg == "--max-depth", index + 1 < args.count {
+            options.maxDepth = max(0, Int(args[index + 1]) ?? options.maxDepth)
+            index += 1
+        } else if arg == "--max-samples", index + 1 < args.count {
+            options.maxSamples = max(2, Int(args[index + 1]) ?? options.maxSamples)
+            index += 1
         }
         index += 1
     }
@@ -87,6 +102,10 @@ Debug flags:
   --width-start N    Line end ramp width start (default: 16)
   --width-end N      Line end ramp width end (default: 28)
   --width-ramp-start-gt N  Line end ramp start gt (default: 0.85)
+  --adaptive-sampling Enable adaptive sampling
+  --flatness-eps N     Adaptive flatness epsilon (default: 0.25)
+  --max-depth N        Adaptive max recursion depth (default: 12)
+  --max-samples N      Adaptive max samples (default: 512)
 """
     print(text)
 }
@@ -318,7 +337,11 @@ let soup = boundarySoup(
     height: sweepHeight,
     effectiveAngle: sweepAngle,
     sampleCount: sweepSampleCount,
-    arcSamplesPerSegment: paramSamplesPerSegment
+    arcSamplesPerSegment: paramSamplesPerSegment,
+    adaptiveSampling: options.adaptiveSampling,
+    flatnessEps: options.flatnessEps,
+    maxDepth: options.maxDepth,
+    maxSamples: options.maxSamples
 )
 let soupJ = boundarySoupVariableWidth(
     path: path,
@@ -326,6 +349,10 @@ let soupJ = boundarySoupVariableWidth(
     effectiveAngle: sweepAngle,
     sampleCount: sweepSampleCount,
     arcSamplesPerSegment: paramSamplesPerSegment,
+    adaptiveSampling: options.adaptiveSampling,
+    flatnessEps: options.flatnessEps,
+    maxDepth: options.maxDepth,
+    maxSamples: options.maxSamples,
     widthAtT: scaledWidthAtT
 )
 let soupJTheta = boundarySoupVariableWidthAngle(
@@ -333,6 +360,10 @@ let soupJTheta = boundarySoupVariableWidthAngle(
     height: sweepHeight,
     sampleCount: sweepSampleCount,
     arcSamplesPerSegment: paramSamplesPerSegment,
+    adaptiveSampling: options.adaptiveSampling,
+    flatnessEps: options.flatnessEps,
+    maxDepth: options.maxDepth,
+    maxSamples: options.maxSamples,
     widthAtT: scaledWidthAtT,
     angleAtT: thetaAtT
 )
@@ -341,6 +372,10 @@ let soupJThetaAlpha = boundarySoupVariableWidthAngleAlpha(
     height: sweepHeight,
     sampleCount: sweepSampleCount,
     arcSamplesPerSegment: paramSamplesPerSegment,
+    adaptiveSampling: options.adaptiveSampling,
+    flatnessEps: options.flatnessEps,
+    maxDepth: options.maxDepth,
+    maxSamples: options.maxSamples,
     widthAtT: { t in scaledWidthAtT(warpT(t)) },
     angleAtT: { t in thetaAtT(warpT(t)) },
     alphaAtT: alphaAtT,
@@ -351,6 +386,10 @@ let soupLineEndRamp = boundarySoupVariableWidthAngleAlpha(
     height: sweepHeight,
     sampleCount: sweepSampleCount,
     arcSamplesPerSegment: paramSamplesPerSegment,
+    adaptiveSampling: options.adaptiveSampling,
+    flatnessEps: options.flatnessEps,
+    maxDepth: options.maxDepth,
+    maxSamples: options.maxSamples,
     widthAtT: { t in scaledWidthAtT(warpT(t)) },
     angleAtT: { t in thetaAtT(warpT(t)) },
     alphaAtT: alphaAtT,
@@ -381,11 +420,18 @@ let ring = rings.first ?? []
     } else {
         winding = "flat"
     }
-        let sweepSegmentsCount = (example == "j" || example == "j_serif_only" || example == "poly3")
-            ? soupJThetaAlpha.count
-            : (example == "line_end_ramp" ? soupLineEndRamp.count : soupUsed.count)
-    print("sweep samples=\(sweepSampleCount) segments=\(sweepSegmentsCount) rings=\(ringCount)")
-        print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
+    let sweepSegments = (example == "j" || example == "j_serif_only" || example == "poly3")
+        ? soupJThetaAlpha
+        : (example == "line_end_ramp" ? soupLineEndRamp : soupUsed)
+    let sweepSegmentsCount = sweepSegments.count
+    let sampleCountUsed = sampleCountFromSoup(sweepSegments)
+    if options.adaptiveSampling {
+        print("sweep samplingMode=adaptive samples=\(sampleCountUsed) flatnessEps=\(String(format: "%.4f", options.flatnessEps)) maxDepth=\(options.maxDepth) maxSamples=\(options.maxSamples)")
+    } else {
+        print("sweep samplingMode=fixed samples=\(sweepSampleCount)")
+    }
+    print("sweep segments=\(sweepSegmentsCount) rings=\(ringCount)")
+    print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
         if !joinGTs.isEmpty {
             let joinList = joinGTs.map { String(format: "%.4f", $0) }.joined(separator: ", ")
             print("sweep joinGTs=[\(joinList)]")
@@ -626,4 +672,9 @@ func distancePointToSegment(_ p: Vec2, _ a: Vec2, _ b: Vec2) -> Double {
     let t = max(0.0, min(1.0, ap.dot(ab) / denom))
     let proj = a + ab * t
     return (p - proj).length
+}
+
+func sampleCountFromSoup(_ segments: [Segment2]) -> Int {
+    guard segments.count >= 2 else { return max(0, segments.count) }
+    return max(2, (segments.count - 2) / 2 + 1)
 }

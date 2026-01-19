@@ -17,17 +17,31 @@ public func boundarySoup(
     height: Double,
     effectiveAngle: Double,
     sampleCount: Int,
-    arcSamplesPerSegment: Int = 256
+    arcSamplesPerSegment: Int = 256,
+    adaptiveSampling: Bool = false,
+    flatnessEps: Double = 0.25,
+    maxDepth: Int = 12,
+    maxSamples: Int = 512
 ) -> [Segment2] {
-    let count = max(2, sampleCount)
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
+    let samples = adaptiveSampling
+        ? mergeWithUniformSamples(
+            AdaptiveSampler.sampleParameter(
+                maxDepth: maxDepth,
+                flatnessEps: flatnessEps,
+                maxSamples: maxSamples,
+                evaluate: { param.position(globalT: $0) }
+            ),
+            minCount: max(2, sampleCount)
+        )
+        : uniformSamples(count: max(2, sampleCount))
+    let count = max(2, samples.count)
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
     right.reserveCapacity(count)
 
-    for i in 0..<count {
-        let t = Double(i) / Double(count - 1)
+    for t in samples {
         let point = param.position(globalT: t)
         let tangent = param.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
@@ -77,17 +91,31 @@ public func boundarySoupVariableWidth(
     effectiveAngle: Double,
     sampleCount: Int,
     arcSamplesPerSegment: Int = 256,
+    adaptiveSampling: Bool = false,
+    flatnessEps: Double = 0.25,
+    maxDepth: Int = 12,
+    maxSamples: Int = 512,
     widthAtT: (Double) -> Double
 ) -> [Segment2] {
-    let count = max(2, sampleCount)
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
+    let samples = adaptiveSampling
+        ? mergeWithUniformSamples(
+            AdaptiveSampler.sampleParameter(
+                maxDepth: maxDepth,
+                flatnessEps: flatnessEps,
+                maxSamples: maxSamples,
+                evaluate: { param.position(globalT: $0) }
+            ),
+            minCount: max(2, sampleCount)
+        )
+        : uniformSamples(count: max(2, sampleCount))
+    let count = max(2, samples.count)
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
     right.reserveCapacity(count)
 
-    for i in 0..<count {
-        let t = Double(i) / Double(count - 1)
+    for t in samples {
         let point = param.position(globalT: t)
         let tangent = param.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
@@ -137,18 +165,32 @@ public func boundarySoupVariableWidthAngle(
     height: Double,
     sampleCount: Int,
     arcSamplesPerSegment: Int = 256,
+    adaptiveSampling: Bool = false,
+    flatnessEps: Double = 0.25,
+    maxDepth: Int = 12,
+    maxSamples: Int = 512,
     widthAtT: (Double) -> Double,
     angleAtT: (Double) -> Double
 ) -> [Segment2] {
-    let count = max(2, sampleCount)
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
+    let samples = adaptiveSampling
+        ? mergeWithUniformSamples(
+            AdaptiveSampler.sampleParameter(
+                maxDepth: maxDepth,
+                flatnessEps: flatnessEps,
+                maxSamples: maxSamples,
+                evaluate: { param.position(globalT: $0) }
+            ),
+            minCount: max(2, sampleCount)
+        )
+        : uniformSamples(count: max(2, sampleCount))
+    let count = max(2, samples.count)
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
     right.reserveCapacity(count)
 
-    for i in 0..<count {
-        let t = Double(i) / Double(count - 1)
+    for t in samples {
         let point = param.position(globalT: t)
         let tangent = param.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
@@ -199,20 +241,34 @@ public func boundarySoupVariableWidthAngleAlpha(
     height: Double,
     sampleCount: Int,
     arcSamplesPerSegment: Int = 256,
+    adaptiveSampling: Bool = false,
+    flatnessEps: Double = 0.25,
+    maxDepth: Int = 12,
+    maxSamples: Int = 512,
     widthAtT: (Double) -> Double,
     angleAtT: (Double) -> Double,
     alphaAtT: (Double) -> Double,
     alphaStart: Double
 ) -> [Segment2] {
-    let count = max(2, sampleCount)
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
+    let samples = adaptiveSampling
+        ? mergeWithUniformSamples(
+            AdaptiveSampler.sampleParameter(
+                maxDepth: maxDepth,
+                flatnessEps: flatnessEps,
+                maxSamples: maxSamples,
+                evaluate: { param.position(globalT: $0) }
+            ),
+            minCount: max(2, sampleCount)
+        )
+        : uniformSamples(count: max(2, sampleCount))
+    let count = max(2, samples.count)
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
     right.reserveCapacity(count)
 
-    for i in 0..<count {
-        let t = Double(i) / Double(count - 1)
+    for t in samples {
         let point = param.position(globalT: t)
         let tangent = param.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
@@ -297,6 +353,30 @@ private func applyAlphaWarp(t: Double, alphaValue: Double, alphaStart: Double) -
     let exponent = max(0.05, 1.0 + alphaValue)
     let biased = pow(phase, exponent)
     return alphaStart + biased * span
+}
+
+private func uniformSamples(count: Int) -> [Double] {
+    let clamped = max(2, count)
+    return (0..<clamped).map { Double($0) / Double(clamped - 1) }
+}
+
+private func mergeWithUniformSamples(_ samples: [Double], minCount: Int) -> [Double] {
+    let minSamples = max(2, minCount)
+    if samples.count >= minSamples {
+        return samples
+    }
+    let combined = (samples + uniformSamples(count: minSamples)).sorted()
+    var result: [Double] = []
+    result.reserveCapacity(combined.count)
+    var last: Double? = nil
+    for t in combined {
+        if let previous = last, abs(t - previous) <= 1.0e-9 {
+            continue
+        }
+        result.append(t)
+        last = t
+    }
+    return result
 }
 
 public func traceLoops(segments: [Segment2], eps: Double) -> [[Vec2]] {

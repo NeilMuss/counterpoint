@@ -169,6 +169,49 @@ final class SweepTraceTests: XCTestCase {
         XCTAssertLessThanOrEqual(metrics.filtered.maxChordDeviation, width * 0.40)
     }
 
+    func testAdaptiveSamplingReducesScallopsForFastCurves() {
+        let width = 20.0
+        let height = 10.0
+        let samples = 64
+        let config = (flatnessEps: 0.05, maxDepth: 14, maxSamples: 2048)
+
+        let fastBase = scallopFilteredRatio(
+            path: SkeletonPath(segments: [fastSCurveFixtureCubic()]),
+            width: width,
+            height: height,
+            sampleCount: samples,
+            adaptive: false,
+            config: config
+        )
+        let fastAdaptive = scallopFilteredRatio(
+            path: SkeletonPath(segments: [fastSCurveFixtureCubic()]),
+            width: width,
+            height: height,
+            sampleCount: samples,
+            adaptive: true,
+            config: config
+        )
+        XCTAssertLessThanOrEqual(fastAdaptive, fastBase * 0.85)
+
+        let fast2Base = scallopFilteredRatio(
+            path: SkeletonPath(segments: [fastSCurve2FixtureCubic()]),
+            width: width,
+            height: height,
+            sampleCount: samples,
+            adaptive: false,
+            config: config
+        )
+        let fast2Adaptive = scallopFilteredRatio(
+            path: SkeletonPath(segments: [fastSCurve2FixtureCubic()]),
+            width: width,
+            height: height,
+            sampleCount: samples,
+            adaptive: true,
+            config: config
+        )
+        XCTAssertLessThanOrEqual(fast2Adaptive, fast2Base * 0.6)
+    }
+
     func testTwoSegSweepProducesDeterministicClosedRing() {
         let path = twoSegFixturePath()
         let width = 20.0
@@ -1009,4 +1052,35 @@ private func poly3JoinGTs() -> [Double] {
         joinGTs.append(accumulated / total)
     }
     return joinGTs
+}
+
+private func scallopFilteredRatio(
+    path: SkeletonPath,
+    width: Double,
+    height: Double,
+    sampleCount: Int,
+    adaptive: Bool,
+    config: (flatnessEps: Double, maxDepth: Int, maxSamples: Int)
+) -> Double {
+    let soup = boundarySoup(
+        path: path,
+        width: width,
+        height: height,
+        effectiveAngle: 0,
+        sampleCount: sampleCount,
+        adaptiveSampling: adaptive,
+        flatnessEps: config.flatnessEps,
+        maxDepth: config.maxDepth,
+        maxSamples: config.maxSamples
+    )
+    let ring = stripDuplicateClosure(traceLoops(segments: soup, eps: 1.0e-6).first ?? [])
+    let metrics = analyzeScallops(
+        points: ring,
+        width: width,
+        halfWindow: 20,
+        epsilon: 1.0e-6,
+        cornerThreshold: 2.5,
+        capTrim: 4
+    )
+    return metrics.filtered.normalizedMaxChordDeviation
 }
