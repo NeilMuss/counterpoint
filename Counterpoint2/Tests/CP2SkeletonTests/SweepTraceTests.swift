@@ -170,6 +170,64 @@ final class SweepTraceTests: XCTestCase {
 
         assertNoRailFlip(path: path)
     }
+
+    func testJHookSweepProducesDeterministicClosedRing() {
+        let path = jFullFixturePath()
+        let width = 20.0
+        let height = 10.0
+        let samples = 64
+        let soupA = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let soupB = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
+
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+
+        let stemPath = jStemFixturePath()
+        let stemRing = traceLoops(
+            segments: boundarySoup(
+                path: stemPath,
+                width: width,
+                height: height,
+                effectiveAngle: 0,
+                sampleCount: samples
+            ),
+            eps: 1.0e-6
+        ).first ?? []
+
+        var stemBounds = AABB.empty
+        for p in stemRing {
+            stemBounds.expand(by: p)
+        }
+        var hookBounds = AABB.empty
+        for p in ringA {
+            hookBounds.expand(by: p)
+        }
+
+        XCTAssertGreaterThan(hookBounds.height, stemBounds.height)
+        XCTAssertGreaterThan(hookBounds.width, stemBounds.width)
+
+        assertNoRailFlip(path: path)
+    }
 }
 
 private func rectangleCorners(
