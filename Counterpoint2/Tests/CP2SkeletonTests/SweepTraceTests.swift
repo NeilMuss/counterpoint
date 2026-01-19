@@ -76,6 +76,67 @@ final class SweepTraceTests: XCTestCase {
         assertNoRailFlip(path: SkeletonPath(segments: [sCurveFixtureCubic()]))
     }
 
+    func testFastSCurveSweepProducesDeterministicClosedRing() {
+        let path = SkeletonPath(segments: [fastSCurveFixtureCubic()])
+        let width = 20.0
+        let height = 10.0
+        let samples = 64
+        let soupA = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let soupB = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
+        let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
+
+        XCTAssertFalse(ringA.isEmpty)
+        XCTAssertEqual(ringA.count, ringB.count)
+        XCTAssertTrue(Epsilon.approxEqual(ringA.first!, ringA.last!))
+        XCTAssertTrue(abs(signedArea(ringA)) > 1.0e-6)
+
+        for (a, b) in zip(ringA, ringB) {
+            XCTAssertTrue(Epsilon.approxEqual(a, b, eps: 1.0e-6))
+        }
+    }
+
+    func testFastSCurveScallopMetricsAreBounded() {
+        let path = SkeletonPath(segments: [fastSCurveFixtureCubic()])
+        let width = 20.0
+        let height = 10.0
+        let samples = 64
+        let soup = boundarySoup(
+            path: path,
+            width: width,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let ring = traceLoops(segments: soup, eps: 1.0e-6).first ?? []
+        XCTAssertFalse(ring.isEmpty)
+
+        let ringPoints = stripDuplicateClosure(ring)
+        let metrics = analyzeScallops(
+            points: ringPoints,
+            width: width,
+            halfWindow: 20,
+            epsilon: 1.0e-6,
+            cornerThreshold: 2.5,
+            capTrim: 4
+        )
+        XCTAssertLessThanOrEqual(metrics.filtered.turnExtremaCount, 8)
+        XCTAssertLessThanOrEqual(metrics.filtered.chordPeakCount, 8)
+        XCTAssertLessThanOrEqual(metrics.filtered.maxChordDeviation, width * 0.40)
+    }
+
     func testTwoSegSweepProducesDeterministicClosedRing() {
         let path = twoSegFixturePath()
         let width = 20.0
@@ -843,6 +904,7 @@ private func stripDuplicateClosure(_ ring: [Vec2]) -> [Vec2] {
     }
     return Array(ring.dropLast())
 }
+
 
 private func nearestIndex(points: [Vec2], to target: Vec2) -> Int {
     var best = 0

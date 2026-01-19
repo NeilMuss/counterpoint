@@ -72,7 +72,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -115,6 +115,8 @@ let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
 let path: SkeletonPath
 if options.example?.lowercased() == "scurve" {
     path = SkeletonPath(segments: [sCurveFixtureCubic()])
+} else if options.example?.lowercased() == "fast_scurve" {
+    path = SkeletonPath(segments: [fastSCurveFixtureCubic()])
 } else if options.example?.lowercased() == "twoseg" {
     path = twoSegFixturePath()
 } else if options.example?.lowercased() == "jstem" {
@@ -293,8 +295,8 @@ let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: para
         }
     }
 
-if options.debugParam {
-    let count = max(1, options.probeCount)
+    if options.debugParam {
+        let count = max(1, options.probeCount)
     var probes: [Double] = []
     if count == 1 {
         probes = [0.0]
@@ -377,9 +379,9 @@ let ring = rings.first ?? []
     } else {
         winding = "flat"
     }
-    let sweepSegmentsCount = (example == "j" || example == "j_serif_only" || example == "poly3")
-        ? soupJThetaAlpha.count
-        : (example == "line_end_ramp" ? soupLineEndRamp.count : soupUsed.count)
+        let sweepSegmentsCount = (example == "j" || example == "j_serif_only" || example == "poly3")
+            ? soupJThetaAlpha.count
+            : (example == "line_end_ramp" ? soupLineEndRamp.count : soupUsed.count)
     print("sweep samples=\(sweepSampleCount) segments=\(sweepSegmentsCount) rings=\(ringCount)")
         print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
         if !joinGTs.isEmpty {
@@ -450,6 +452,21 @@ let ring = rings.first ?? []
     print(String(format: "sweep alphaMin=%.4f alphaMax=%.4f alphaWindow=[%.2f..1.00]", alphaMin, alphaMax, alphaStartGT))
     print("sweep alphaProbes=[\(alphaList)] gt=[0,0.25,0.5,0.75,1]")
     print("sweep warpProbes gt=[0.80,0.85,0.90,0.95,1.00] warped=[\(warpList)]")
+        if ring.count > 3 {
+            let ringPoints = stripDuplicateClosure(ring)
+            let widthMetric = max(Epsilon.defaultValue, scaledWidthAtT(warpT(0.5)))
+            let metrics = analyzeScallops(
+                points: ringPoints,
+                width: widthMetric,
+                halfWindow: 20,
+                epsilon: 1.0e-6,
+                cornerThreshold: 2.5,
+                capTrim: 4
+            )
+            print(String(format: "sweep scallopWindow center=%d window=%d", metrics.centerIndex, metrics.windowSize))
+            print(String(format: "sweep scallopMetricsRaw extrema=%d peaks=%d maxDev=%.6f ratio=%.6f", metrics.raw.turnExtremaCount, metrics.raw.chordPeakCount, metrics.raw.maxChordDeviation, metrics.raw.normalizedMaxChordDeviation))
+            print(String(format: "sweep scallopMetricsFiltered extrema=%d peaks=%d maxDev=%.6f ratio=%.6f", metrics.filtered.turnExtremaCount, metrics.filtered.chordPeakCount, metrics.filtered.maxChordDeviation, metrics.filtered.normalizedMaxChordDeviation))
+        }
 }
 
 let padding = 10.0

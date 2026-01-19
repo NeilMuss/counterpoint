@@ -3,33 +3,15 @@
   "engine": {
     "name": "counterpoint-core",
     "version": "0.1.0",
-    "determinism": {
-      "seed": 0,
-      "stableOrdering": "byIdThenIndex"
-    }
+    "determinism": { "seed": 0, "stableOrdering": "byIdThenIndex" }
   },
-  "glyph": {
-    "id": "J",
-    "unicode": "U+004A",
-    "tags": [
-      "uppercase"
-    ]
-  },
+  "glyph": { "id": "J", "unicode": "U+004A", "tags": ["uppercase"] },
   "frame": {
-    "origin": {
-      "x": 0,
-      "y": 0
-    },
+    "origin": { "x": 0, "y": 0 },
     "baselineY": 0,
     "advanceWidth": 620,
-    "sidebearings": {
-      "left": 40,
-      "right": 30
-    },
-    "guides": {
-      "capHeightY": 700,
-      "descenderY": -200
-    }
+    "sidebearings": { "left": 40, "right": 30 },
+    "guides": { "capHeightY": 700, "descenderY": -200 }
   },
   "inputs": {
     "geometry": {
@@ -39,24 +21,11 @@
           "type": "path",
           "closed": false,
           "segments": [
-            {
-              "type": "cubic",
-              "p0": {
-                "x": 138,
-                "y": 0
-              },
-              "p1": {
-                "x": 138,
-                "y": 0
-              },
-              "p2": {
-                "x": 138,
-                "y": 375
-              },
-              "p3": {
-                "x": 138,
-                "y": 375
-              }
+            { "type": "cubic",
+              "p0": { "x": 138, "y": 0 },
+              "p1": { "x": 138, "y": 0 },
+              "p2": { "x": 138, "y": 375 },
+              "p3": { "x": 138, "y": 375 }
             }
           ]
         },
@@ -65,166 +34,51 @@
           "type": "path",
           "closed": false,
           "segments": [
-            {
-              "type": "cubic",
-              "p0": {
-                "x": 138,
-                "y": 375
-              },
-              "p1": {
-                "x": 138,
-                "y": 500
-              },
-              "p2": {
-                "x": -60,
-                "y": 460
-              },
-              "p3": {
-                "x": 65,
-                "y": 400
-              }
+            { "type": "cubic",
+              "p0": { "x": 138, "y": 375 },
+              "p1": { "x": 138, "y": 500 },
+              "p2": { "x": -60, "y": 460 },
+              "p3": { "x": 65, "y": 400 }
             }
           ]
         },
+
         {
           "id": "stroke:J-main",
           "type": "stroke",
-          "skeletons": [
-            "ink:spine",
-            "ink:hook"
-          ],
+          "skeletons": ["ink:spine", "ink:hook"],
+
           "params": {
             "angleMode": "tangentRelative",
-            "tangentPhaseDegrees": 90,
-            "theta": {
-              "keyframes": [
-                {
-                  "t": 0,
-                  "value": 0
-                },
-                {
-                  "t": 1,
-                  "value": 0
-                }
-              ]
-            },
-            "width": {
-              "keyframes": [
-                {
-                  "t": 0.0,
-                  "value": 1
-                },
-                {
-                  "t": 1.0,
-                  "value": 1
-                }
-              ]
-            },
-            "widthLeft": {
-              "keyframes": [
-                {
-                  "t": 0.0,
-                  "value": 95
-                },
-                {
-                  "t": 0.005,
-                  "value": 95,
-                  "interpolationToNext": {
-                    "alpha": -4.9
-                  }
-                },
-                {
-                  "t": 0.14,
-                  "value": 35
-                },
-                {
-                  "t": 0.68,
-                  "value": 35,
-                  "interpolationToNext": {
-                    "alpha": -0.5
-                  }
-                },
-                {
-                  "t": 0.85,
-                  "value": 5,
-                  "interpolationToNext": {
-                    "alpha": 1.9
-                  }
-                },
-                {
-                  "t": 1.0,
-                  "value": 35
-                }
-              ]
-            },
-            "widthRight": {
-              "keyframes": [
-                {
-                  "t": 0.0,
-                  "value": 100
-                },
-                {
-                  "t": 0.005,
-                  "value": 100,
-                  "interpolationToNext": {
-                    "alpha": -5.9
-                  }
-                },
-                {
-                  "t": 0.12,
-                  "value": 35
-                },
-                {
-                  "t": 0.7,
-                  "value": 35
-                },
-                {
-                  "t": 0.8,
-                  "value": 20,
-                  "interpolationToNext": {
-                    "alpha": -2.9
-                  }
-                },
-                {
-                  "t": 0.99,
-                  "value": 1
-                },
-                {
-                  "t": 1.0,
-                  "value": 30
-                }
-              ]
-            },
-            "samplingPolicy": {
-              "flattenTolerance": 2.0,
-              "envelopeTolerance": 2.0,
-              "maxSamples": 40,
-              "maxRecursionDepth": 6,
-              "minParamStep": 0.05
-            },
-            "joins": {
-              "capStyle": "round",
-              "joinStyle": {
-                "type": "bevel"
-              }
-            }
-          }
-        ],
-        "whitespace": []
-      },
-      "constraints": []
-    },
-    "derived": {
-      "reference": {
-        "id": "ref:big-caslon:J",
-        "source": "big_caslon_J.svg",
-        "transform": {
-          "scale": 1.0,
-          "translate": {
-            "x": 0,
-            "y": 0
+            "relativeAngleOffset": 90,
+            "theta":  { "keyframes": [{ "t": 0, "value": 0 }, { "t": 1, "value": 0 }] },
+            "width":  { "keyframes": [{ "t": 0, "value": 28 }, { "t": 1, "value": 28 }] },
+            "height": { "keyframes": [{ "t": 0, "value": 6  }, { "t": 1, "value": 6  }] }
+          },
+
+          "samplingPolicy": {
+            "flattenTolerance": 2.0,
+            "envelopeTolerance": 2.0,
+            "maxSamples": 40,
+            "maxRecursionDepth": 6,
+            "minParamStep": 0.05
+          },
+
+          "joins": {
+            "capStyle": "round",
+            "joinStyle": { "type": "bevel" }
           }
         }
-      }
+      ],
+      "whitespace": []
+    },
+    "constraints": []
+  },
+  "derived": {
+    "reference": {
+      "id": "ref:big-caslon:J",
+      "source": "big_caslon_J.svg",
+      "transform": { "scale": 1.0, "translate": { "x": 0, "y": 0 } }
     }
   }
+}
