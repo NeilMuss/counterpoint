@@ -106,6 +106,24 @@ let sweepWidth = 20.0
 let sweepHeight = 10.0
 let sweepAngle = 0.0
 let paramSamplesPerSegment = options.arcSamples
+let widthAtT: (Double) -> Double
+if options.example?.lowercased() == "j" {
+    widthAtT = { t in
+        let clamped = max(0.0, min(1.0, t))
+        let midT = 0.45
+        let start = 16.0
+        let mid = 22.0
+        let end = 16.0
+        if clamped <= midT {
+            let u = clamped / midT
+            return start + (mid - start) * u
+        }
+        let u = (clamped - midT) / (1.0 - midT)
+        return mid + (end - mid) * u
+    }
+} else {
+    widthAtT = { _ in sweepWidth }
+}
 
 let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
 if options.verbose || options.debugParam {
@@ -145,7 +163,16 @@ let soup = boundarySoup(
     sampleCount: sweepSampleCount,
     arcSamplesPerSegment: paramSamplesPerSegment
 )
-let rings = traceLoops(segments: soup, eps: 1.0e-6)
+let soupJ = boundarySoupVariableWidth(
+    path: path,
+    height: sweepHeight,
+    effectiveAngle: sweepAngle,
+    sampleCount: sweepSampleCount,
+    arcSamplesPerSegment: paramSamplesPerSegment,
+    widthAtT: widthAtT
+)
+let soupUsed = options.example?.lowercased() == "j" ? soupJ : soup
+let rings = traceLoops(segments: soupUsed, eps: 1.0e-6)
 let ring = rings.first ?? []
 
 if options.debugSweep || options.verbose {
@@ -164,7 +191,7 @@ if options.debugSweep || options.verbose {
     } else {
         winding = "flat"
     }
-    print("sweep samples=\(sweepSampleCount) segments=\(soup.count) rings=\(ringCount)")
+    print("sweep samples=\(sweepSampleCount) segments=\(soupUsed.count) rings=\(ringCount)")
     print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
 }
 
@@ -191,7 +218,7 @@ if options.debugSVG {
         let tangent = pathParam.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
         tableP.append(point)
-        let halfW = sweepWidth * 0.5
+        let halfW = widthAtT(t) * 0.5
         let halfH = sweepHeight * 0.5
         let corners: [Vec2] = [
             Vec2(-halfW, -halfH),

@@ -176,20 +176,22 @@ final class SweepTraceTests: XCTestCase {
         let width = 20.0
         let height = 10.0
         let samples = 64
-        let soupA = boundarySoup(
+        let soupA = boundarySoupVariableWidth(
             path: path,
-            width: width,
             height: height,
             effectiveAngle: 0,
             sampleCount: samples
-        )
-        let soupB = boundarySoup(
+        ) { t in
+            widthRamp(t: t)
+        }
+        let soupB = boundarySoupVariableWidth(
             path: path,
-            width: width,
             height: height,
             effectiveAngle: 0,
             sampleCount: samples
-        )
+        ) { t in
+            widthRamp(t: t)
+        }
         let ringA = traceLoops(segments: soupA, eps: 1.0e-6).first ?? []
         let ringB = traceLoops(segments: soupB, eps: 1.0e-6).first ?? []
 
@@ -227,6 +229,39 @@ final class SweepTraceTests: XCTestCase {
         XCTAssertGreaterThan(hookBounds.width, stemBounds.width)
 
         assertNoRailFlip(path: path)
+    }
+
+    func testJHookRampIsWiderThanConstant() {
+        let path = jFullFixturePath()
+        let height = 10.0
+        let samples = 64
+        let constantSoup = boundarySoup(
+            path: path,
+            width: 16.0,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        )
+        let rampSoup = boundarySoupVariableWidth(
+            path: path,
+            height: height,
+            effectiveAngle: 0,
+            sampleCount: samples
+        ) { t in
+            widthRamp(t: t)
+        }
+        let constantRing = traceLoops(segments: constantSoup, eps: 1.0e-6).first ?? []
+        let rampRing = traceLoops(segments: rampSoup, eps: 1.0e-6).first ?? []
+
+        var constantBounds = AABB.empty
+        for p in constantRing {
+            constantBounds.expand(by: p)
+        }
+        var rampBounds = AABB.empty
+        for p in rampRing {
+            rampBounds.expand(by: p)
+        }
+        XCTAssertGreaterThanOrEqual(rampBounds.width, constantBounds.width - 1.0e-6)
     }
 }
 
@@ -297,4 +332,18 @@ private func assertNoRailFlip(path: SkeletonPath) {
         XCTAssertLessThanOrEqual(leftDelta, 1.0e-9)
         XCTAssertGreaterThanOrEqual(rightDelta, -1.0e-9)
     }
+}
+
+private func widthRamp(t: Double) -> Double {
+    let clamped = max(0.0, min(1.0, t))
+    let midT = 0.45
+    let start = 16.0
+    let mid = 22.0
+    let end = 16.0
+    if clamped <= midT {
+        let u = clamped / midT
+        return start + (mid - start) * u
+    }
+    let u = (clamped - midT) / (1.0 - midT)
+    return mid + (end - mid) * u
 }
