@@ -404,9 +404,9 @@ let rings = traceLoops(
 )
 let ring = rings.first ?? []
 
-    if options.debugSweep || options.verbose {
-        let ringCount = rings.count
-        let vertexCount = ring.count
+if options.debugSweep || options.verbose {
+    let ringCount = rings.count
+    let vertexCount = ring.count
     let firstPoint = ring.first ?? Vec2(0, 0)
     let lastPoint = ring.last ?? Vec2(0, 0)
     let closure = (firstPoint - lastPoint).length
@@ -432,43 +432,57 @@ let ring = rings.first ?? []
     }
     print("sweep segments=\(sweepSegmentsCount) rings=\(ringCount)")
     print(String(format: "sweep ringVertices=%d closure=%.6f area=%.6f absArea=%.6f winding=%@", vertexCount, closure, area, absArea, winding))
-        if !joinGTs.isEmpty {
-            let joinList = joinGTs.map { String(format: "%.4f", $0) }.joined(separator: ", ")
-            print("sweep joinGTs=[\(joinList)]")
-            let joinProbeOffsets: [Double] = [-0.02, -0.01, 0.0, 0.01, 0.02]
-            var joinProbeGT: [Double] = []
-            for join in joinGTs {
-                for offset in joinProbeOffsets {
-                    let gt = max(0.0, min(1.0, join + offset))
-                    joinProbeGT.append(gt)
-                }
-            }
-            let joinWidths = joinProbeGT.map { scaledWidthAtT(warpT($0)) }
-            let joinWidthList = joinWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
-            let joinGTList = joinProbeGT.map { String(format: "%.4f", $0) }.joined(separator: ", ")
-            print("sweep joinWidthProbes=[\(joinWidthList)] gt=[\(joinGTList)]")
-            if abs(alphaEndValue) > Epsilon.defaultValue {
-                let joinWarped = joinProbeGT.map { warpT($0) }
-                let joinWarpedList = joinWarped.map { String(format: "%.4f", $0) }.joined(separator: ", ")
-                print("sweep joinWarpProbes gt=[\(joinGTList)] warped=[\(joinWarpedList)]")
-            }
-            if ring.count > 3 {
-                let ringPoints = stripDuplicateClosure(ring)
-                let halfWindow = 8
-                let param = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
-                for (index, join) in joinGTs.enumerated() {
-                    let center = param.position(globalT: join)
-                    let nearest = nearestIndex(points: ringPoints, to: center)
-                    let deviation = chordDeviation(points: ringPoints, centerIndex: nearest, halfWindow: halfWindow)
-                    let widthAtJoin = scaledWidthAtT(warpT(join))
-                    let ratio = deviation / max(Epsilon.defaultValue, widthAtJoin)
-                    print(String(format: "sweep joinBulge[%d] dev=%.6f ratio=%.6f", index, deviation, ratio))
-                }
+    if !joinGTs.isEmpty {
+        let joinList = joinGTs.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+        print("sweep joinGTs=[\(joinList)]")
+        let joinProbeOffsets: [Double] = [-0.02, -0.01, 0.0, 0.01, 0.02]
+        var joinProbeGT: [Double] = []
+        for join in joinGTs {
+            for offset in joinProbeOffsets {
+                let gt = max(0.0, min(1.0, join + offset))
+                joinProbeGT.append(gt)
             }
         }
-
-        let widthMin = widths.min() ?? baselineWidth
-        let widthMax = widths.max() ?? baselineWidth
+        let joinWidths = joinProbeGT.map { scaledWidthAtT(warpT($0)) }
+        let joinWidthList = joinWidths.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+        let joinGTList = joinProbeGT.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+        print("sweep joinWidthProbes=[\(joinWidthList)] gt=[\(joinGTList)]")
+        if abs(alphaEndValue) > Epsilon.defaultValue {
+            let joinWarped = joinProbeGT.map { warpT($0) }
+            let joinWarpedList = joinWarped.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+            print("sweep joinWarpProbes gt=[\(joinGTList)] warped=[\(joinWarpedList)]")
+        }
+        if ring.count > 3 {
+            let ringPoints = stripDuplicateClosure(ring)
+            let halfWindow = 8
+            let param = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
+            for (index, join) in joinGTs.enumerated() {
+                let center = param.position(globalT: join)
+                let nearest = nearestIndex(points: ringPoints, to: center)
+                let deviation = chordDeviation(points: ringPoints, centerIndex: nearest, halfWindow: halfWindow)
+                let widthAtJoin = scaledWidthAtT(warpT(join))
+                let ratio = deviation / max(Epsilon.defaultValue, widthAtJoin)
+                print(String(format: "sweep joinBulge[%d] dev=%.6f ratio=%.6f", index, deviation, ratio))
+            }
+        }
+    }
+    if ring.count > 3 {
+        let ringPoints = stripDuplicateClosure(ring)
+        let widthMetric = max(Epsilon.defaultValue, scaledWidthAtT(warpT(0.5)))
+        let metrics = analyzeScallops(
+            points: ringPoints,
+            width: widthMetric,
+            halfWindow: 20,
+            epsilon: 1.0e-6,
+            cornerThreshold: 2.5,
+            capTrim: 4
+        )
+        print(String(format: "sweep scallopWindow center=%d window=%d", metrics.centerIndex, metrics.windowSize))
+        print(String(format: "sweep scallopMetricsRaw extrema=%d peaks=%d maxDev=%.6f ratio=%.6f", metrics.raw.turnExtremaCount, metrics.raw.chordPeakCount, metrics.raw.maxChordDeviation, metrics.raw.normalizedMaxChordDeviation))
+        print(String(format: "sweep scallopMetricsFiltered extrema=%d peaks=%d maxDev=%.6f ratio=%.6f", metrics.filtered.turnExtremaCount, metrics.filtered.chordPeakCount, metrics.filtered.maxChordDeviation, metrics.filtered.normalizedMaxChordDeviation))
+    }
+    let widthMin = widths.min() ?? baselineWidth
+    let widthMax = widths.max() ?? baselineWidth
     let heightMin = sweepHeight
     let heightMax = sweepHeight
     let probeGT: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -500,21 +514,6 @@ let ring = rings.first ?? []
     print(String(format: "sweep alphaMin=%.4f alphaMax=%.4f alphaWindow=[%.2f..1.00]", alphaMin, alphaMax, alphaStartGT))
     print("sweep alphaProbes=[\(alphaList)] gt=[0,0.25,0.5,0.75,1]")
     print("sweep warpProbes gt=[0.80,0.85,0.90,0.95,1.00] warped=[\(warpList)]")
-        if ring.count > 3 {
-            let ringPoints = stripDuplicateClosure(ring)
-            let widthMetric = max(Epsilon.defaultValue, scaledWidthAtT(warpT(0.5)))
-            let metrics = analyzeScallops(
-                points: ringPoints,
-                width: widthMetric,
-                halfWindow: 20,
-                epsilon: 1.0e-6,
-                cornerThreshold: 2.5,
-                capTrim: 4
-            )
-            print(String(format: "sweep scallopWindow center=%d window=%d", metrics.centerIndex, metrics.windowSize))
-            print(String(format: "sweep scallopMetricsRaw extrema=%d peaks=%d maxDev=%.6f ratio=%.6f", metrics.raw.turnExtremaCount, metrics.raw.chordPeakCount, metrics.raw.maxChordDeviation, metrics.raw.normalizedMaxChordDeviation))
-            print(String(format: "sweep scallopMetricsFiltered extrema=%d peaks=%d maxDev=%.6f ratio=%.6f", metrics.filtered.turnExtremaCount, metrics.filtered.chordPeakCount, metrics.filtered.maxChordDeviation, metrics.filtered.normalizedMaxChordDeviation))
-        }
 }
 
 let padding = 10.0

@@ -30,6 +30,26 @@ final class AdaptiveSamplingTests: XCTestCase {
         XCTAssertEqual(samplesA, samplesA.sorted())
     }
 
+    func testAdaptiveSamplerStrictlyIncreasingAndDeduped() {
+        let cubic = CubicBezier2(
+            p0: Vec2(0, 0),
+            p1: Vec2(0, 30),
+            p2: Vec2(0, 70),
+            p3: Vec2(0, 100)
+        )
+        let samples = AdaptiveSampler.sampleCubic(
+            cubic: cubic,
+            maxDepth: 12,
+            flatnessEps: 0.25,
+            maxSamples: 512
+        )
+        XCTAssertEqual(samples.first, 0.0)
+        XCTAssertEqual(samples.last, 1.0)
+        for i in 0..<(samples.count - 1) {
+            XCTAssertGreaterThan(samples[i + 1] - samples[i], 1.0e-12)
+        }
+    }
+
     func testAdaptiveSamplerRefinesFastCurvesMoreThanSCurve() {
         let scurve = sCurveFixtureCubic()
         let fast = fastSCurve2FixtureCubic()
