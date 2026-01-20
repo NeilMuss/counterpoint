@@ -24,35 +24,56 @@
   "ink": {
     "stem": {
       "type": "line",
-      "p0": { "x": 137, "y": 5 },
-      "p1": { "x": 137, "y": 375 }
+      "p0": { "x": 160, "y": 5 },
+      "p1": { "x": 160, "y": 350 }
+    },
+
+    "hook": {
+      "type": "cubic",
+      "p0": { "x": 160, "y": 350 },
+      "p1": { "x": 160, "y": 450 },
+      "p2": { "x": -10, "y": 500 },
+      "p3": { "x": 30, "y": 420 }
+    },
+
+    "J_heartline": {
+      "type": "heartline",
+      "parts": ["stem", "hook"]
     }
   },
 
   "strokes": [
     {
-      "id": "J-stem",
+      "id": "J-main",
       "type": "stroke",
-      "skeletons": ["ink:stem"],
+      "ink": "J_heartline",
 
       "params": {
         "angleMode": "absolute",
 
         "theta": {
           "keyframes": [
-            { "t": 0.0, "value": 0 },
+            { "t": 0.0, "value": 50 },
             { "t": 1.0, "value": 0 }
           ]
         },
 
         "width": {
           "keyframes": [
-            { "t": 0.0, "value": 120 },
-            { "t": 1.0, "value": 120 }
+            { "t": 0.0, "value": 110 },
+            { "t": 0.9, "value": 20 },
+            { "t": 1.0, "value": 110 }
+          ]
+        },
+
+        "offset": {
+          "keyframes": [
+            { "t": 0.0, "value": 100 },
+            { "t": 0.55, "value": 0 },
+            { "t": 1.0, "value": 28 }
           ]
         }
       }
     }
   ]
 }
-

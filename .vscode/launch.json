@@ -19,6 +19,26 @@
             "target": "counterpoint-cli",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release counterpoint-cli (counterpoint)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:counterpoint}/Counterpoint2",
+            "name": "Debug cp2-cli (Counterpoint2)",
+            "target": "cp2-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug cp2-cli (Counterpoint2)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:counterpoint}/Counterpoint2",
+            "name": "Release cp2-cli (Counterpoint2)",
+            "target": "cp2-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release cp2-cli (Counterpoint2)"
         }
     ]
 }
