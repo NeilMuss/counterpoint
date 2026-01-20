@@ -2,7 +2,7 @@ import Foundation
 import CP2Geometry
 import CP2Skeleton
 
-struct CLIOptions {
+public struct CLIOptions {
     var outPath: String = "out/line.svg"
     var example: String? = nil
     var specPath: String? = nil
@@ -10,6 +10,7 @@ struct CLIOptions {
     var debugParam: Bool = false
     var debugSweep: Bool = false
     var debugSVG: Bool = false
+    var debugCenterline: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -35,6 +36,8 @@ struct CLIOptions {
     var referenceLockOverride: Bool? = nil
     var refFitToFrame: Bool = false
     var refFitWritePath: String? = nil
+
+    public init() {}
 }
 
 func parseArgs(_ args: [String]) -> CLIOptions {
@@ -62,6 +65,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugSweep = true
         } else if arg == "--debug-svg" {
             options.debugSVG = true
+        } else if arg == "--debug-centerline" {
+            options.debugCenterline = true
         } else if arg == "--probe-count", index + 1 < args.count {
             options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
             index += 1
@@ -157,6 +162,7 @@ Debug flags:
   --debug-param    Print parameterization summary + probe mappings
   --debug-sweep    Print sweep tracing stats
   --debug-svg      Include skeleton/sample overlay in the SVG
+  --debug-centerline  Centerline-only overlay with control points
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --canvas WxH     Output canvas pixel size (default: 1200x1200)
@@ -188,10 +194,21 @@ Debug flags:
     print(text)
 }
 
-struct CP2Spec: Codable {
+public struct InkLine: Codable, Equatable {
+    var type: String
+    var p0: Vec2
+    var p1: Vec2
+}
+
+public struct Ink: Codable, Equatable {
+    var stem: InkLine?
+}
+
+public struct CP2Spec: Codable {
     var example: String?
     var render: RenderSettings?
     var reference: ReferenceLayer?
+    var ink: Ink?
 }
 
 func parseCanvas(_ value: String) -> CanvasSize? {
@@ -222,8 +239,16 @@ func parseWorldFrame(_ value: String) -> WorldRect? {
 
 func loadSpec(path: String) -> CP2Spec? {
     let url = URL(fileURLWithPath: path)
-    guard let data = try? Data(contentsOf: url) else { return nil }
-    return try? JSONDecoder().decode(CP2Spec.self, from: data)
+    guard let data = try? Data(contentsOf: url) else {
+        warn("spec file not found: \(path)")
+        return nil
+    }
+    do {
+        return try JSONDecoder().decode(CP2Spec.self, from: data)
+    } catch {
+        warn("spec decode failed: \(path)")
+        return nil
+    }
 }
 
 func writeSpec(_ spec: CP2Spec, path: String) {
@@ -231,6 +256,10 @@ func writeSpec(_ spec: CP2Spec, path: String) {
     if let data = try? JSONEncoder().encode(spec) {
         try? data.write(to: url)
     }
+}
+
+func warn(_ message: String) {
+    FileHandle.standardError.write(Data("warning: \(message)\n".utf8))
 }
 
 struct DebugOverlay {
@@ -327,196 +356,206 @@ func ringBounds(_ ring: [Vec2]) -> AABB {
     return box
 }
 
-let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
-
-let spec = options.specPath.flatMap(loadSpec(path:))
-
-var renderSettings = spec?.render ?? RenderSettings()
-if let canvas = options.canvasOverride {
-    renderSettings.canvasPx = canvas
-}
-if let fit = options.fitOverride {
-    renderSettings.fitMode = fit
-}
-if let padding = options.paddingOverride {
-    renderSettings.paddingWorld = padding
-}
-if let clip = options.clipOverride {
-    renderSettings.clipToFrame = clip
-}
-if let worldFrame = options.worldFrameOverride {
-    renderSettings.worldFrame = worldFrame
+func lineCubic(from start: Vec2, to end: Vec2) -> CubicBezier2 {
+    let delta = end - start
+    let p1 = start + delta * (1.0 / 3.0)
+    let p2 = start + delta * (2.0 / 3.0)
+    return CubicBezier2(p0: start, p1: p1, p2: p2, p3: end)
 }
 
-var referenceLayer = spec?.reference
-if let refPath = options.referencePath ?? referenceLayer?.path {
-    let base = referenceLayer ?? ReferenceLayer(path: refPath)
-    referenceLayer = ReferenceLayer(
-        path: refPath,
-        translateWorld: options.referenceTranslate ?? base.translateWorld,
-        scale: options.referenceScale ?? base.scale,
-        rotateDeg: options.referenceRotateDeg ?? base.rotateDeg,
-        opacity: options.referenceOpacity ?? base.opacity,
-        lockPlacement: options.referenceLockOverride ?? base.lockPlacement
-    )
-}
-
-let exampleName = options.example ?? spec?.example
-
-let path: SkeletonPath
-if exampleName?.lowercased() == "scurve" {
-    path = SkeletonPath(segments: [sCurveFixtureCubic()])
-} else if exampleName?.lowercased() == "fast_scurve" {
-    path = SkeletonPath(segments: [fastSCurveFixtureCubic()])
-} else if exampleName?.lowercased() == "fast_scurve2" {
-    path = SkeletonPath(segments: [fastSCurve2FixtureCubic()])
-} else if exampleName?.lowercased() == "twoseg" {
-    path = twoSegFixturePath()
-} else if exampleName?.lowercased() == "jstem" {
-    path = jStemFixturePath()
-} else if exampleName?.lowercased() == "j" {
-    path = jFullFixturePath()
-} else if exampleName?.lowercased() == "j_serif_only" {
-    path = jSerifOnlyFixturePath()
-} else if exampleName?.lowercased() == "poly3" {
-    path = poly3FixturePath()
-} else {
-    let line = CubicBezier2(
-        p0: Vec2(0, 0),
-        p1: Vec2(0, 33),
-        p2: Vec2(0, 66),
-        p3: Vec2(0, 100)
-    )
-    path = SkeletonPath(segments: [line])
-}
-let sweepSampleCount = 64
-let sweepWidth = 20.0
-let sweepHeight = 10.0
-let sweepAngle = 0.0
-let paramSamplesPerSegment = options.arcSamples
-let widthAtT: (Double) -> Double
-let thetaAtT: (Double) -> Double
-let alphaAtT: (Double) -> Double
-let alphaStartGT = options.alphaStartGT
-let example = exampleName?.lowercased()
-let alphaEndValue: Double = {
-    if example == "j" {
-        return options.alphaEnd ?? -0.35
+func pathFromInk(_ ink: Ink?) -> SkeletonPath? {
+    guard let stem = ink?.stem,
+          stem.type.lowercased() == "line" else {
+        return nil
     }
-    if example == "line_end_ramp" {
+    let cubic = lineCubic(from: stem.p0, to: stem.p1)
+    return SkeletonPath(segments: [cubic])
+}
+
+public func renderSVGString(options: CLIOptions, spec: CP2Spec?) -> String {
+    var renderSettings = spec?.render ?? RenderSettings()
+    if let canvas = options.canvasOverride {
+        renderSettings.canvasPx = canvas
+    }
+    if let fit = options.fitOverride {
+        renderSettings.fitMode = fit
+    }
+    if let padding = options.paddingOverride {
+        renderSettings.paddingWorld = padding
+    }
+    if let clip = options.clipOverride {
+        renderSettings.clipToFrame = clip
+    }
+    if let worldFrame = options.worldFrameOverride {
+        renderSettings.worldFrame = worldFrame
+    }
+
+    var referenceLayer = spec?.reference
+    if let refPath = options.referencePath ?? referenceLayer?.path {
+        let base = referenceLayer ?? ReferenceLayer(path: refPath)
+        referenceLayer = ReferenceLayer(
+            path: refPath,
+            translateWorld: options.referenceTranslate ?? base.translateWorld,
+            scale: options.referenceScale ?? base.scale,
+            rotateDeg: options.referenceRotateDeg ?? base.rotateDeg,
+            opacity: options.referenceOpacity ?? base.opacity,
+            lockPlacement: options.referenceLockOverride ?? base.lockPlacement
+        )
+    }
+
+    let exampleName = options.example ?? spec?.example
+
+    let path: SkeletonPath
+    if let inkPath = pathFromInk(spec?.ink) {
+        path = inkPath
+    } else if exampleName?.lowercased() == "scurve" {
+        path = SkeletonPath(segments: [sCurveFixtureCubic()])
+    } else if exampleName?.lowercased() == "fast_scurve" {
+        path = SkeletonPath(segments: [fastSCurveFixtureCubic()])
+    } else if exampleName?.lowercased() == "fast_scurve2" {
+        path = SkeletonPath(segments: [fastSCurve2FixtureCubic()])
+    } else if exampleName?.lowercased() == "twoseg" {
+        path = twoSegFixturePath()
+    } else if exampleName?.lowercased() == "jstem" {
+        path = jStemFixturePath()
+    } else if exampleName?.lowercased() == "j" {
+        path = jFullFixturePath()
+    } else if exampleName?.lowercased() == "j_serif_only" {
+        path = jSerifOnlyFixturePath()
+    } else if exampleName?.lowercased() == "poly3" {
+        path = poly3FixturePath()
+    } else {
+        let line = lineCubic(from: Vec2(0, 0), to: Vec2(0, 100))
+        path = SkeletonPath(segments: [line])
+    }
+    let sweepSampleCount = 64
+    let sweepWidth = 20.0
+    let sweepHeight = 10.0
+    let sweepAngle = 0.0
+    let paramSamplesPerSegment = options.arcSamples
+    let widthAtT: (Double) -> Double
+    let thetaAtT: (Double) -> Double
+    let alphaAtT: (Double) -> Double
+    let alphaStartGT = options.alphaStartGT
+    let example = exampleName?.lowercased()
+    let alphaEndValue: Double = {
+        if example == "j" {
+            return options.alphaEnd ?? -0.35
+        }
+        if example == "line_end_ramp" {
+            return options.alphaEnd ?? 0.0
+        }
         return options.alphaEnd ?? 0.0
-    }
-    return options.alphaEnd ?? 0.0
-}()
-if example == "j" || example == "j_serif_only" {
-    widthAtT = { t in
-        let clamped = max(0.0, min(1.0, t))
-        let midT = 0.45
-        let start = 16.0
-        let mid = 22.0
-        let end = 16.0
-        if clamped <= midT {
-            let u = clamped / midT
-            return start + (mid - start) * u
-        }
-        let u = (clamped - midT) / (1.0 - midT)
-        return mid + (end - mid) * u
-    }
-    thetaAtT = { t in
-        let clamped = max(0.0, min(1.0, t))
-        let midT = 0.5
-        let start = 12.0
-        let mid = 4.0
-        let end = 0.0
-        let deg: Double
-        if clamped <= midT {
-            let u = clamped / midT
-            deg = start + (mid - start) * u
-        } else {
+    }()
+    if example == "j" || example == "j_serif_only" {
+        widthAtT = { t in
+            let clamped = max(0.0, min(1.0, t))
+            let midT = 0.45
+            let start = 16.0
+            let mid = 22.0
+            let end = 16.0
+            if clamped <= midT {
+                let u = clamped / midT
+                return start + (mid - start) * u
+            }
             let u = (clamped - midT) / (1.0 - midT)
-            deg = mid + (end - mid) * u
+            return mid + (end - mid) * u
         }
-        return deg * Double.pi / 180.0
-    }
-    alphaAtT = { t in
-        if t < alphaStartGT {
-            return 0.0
+        thetaAtT = { t in
+            let clamped = max(0.0, min(1.0, t))
+            let midT = 0.5
+            let start = 12.0
+            let mid = 4.0
+            let end = 0.0
+            let deg: Double
+            if clamped <= midT {
+                let u = clamped / midT
+                deg = start + (mid - start) * u
+            } else {
+                let u = (clamped - midT) / (1.0 - midT)
+                deg = mid + (end - mid) * u
+            }
+            return deg * Double.pi / 180.0
         }
-        let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
-        return alphaEndValue * max(0.0, min(1.0, phase))
-    }
-} else if options.example?.lowercased() == "line_end_ramp" {
-    let rampStart = options.widthRampStartGT
-    let start = options.widthStart
-    let end = options.widthEnd
-    widthAtT = { t in
-        if t < rampStart {
-            return start
+        alphaAtT = { t in
+            if t < alphaStartGT {
+                return 0.0
+            }
+            let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
+            return alphaEndValue * max(0.0, min(1.0, phase))
         }
-        let phase = (t - rampStart) / max(1.0e-12, 1.0 - rampStart)
-        return start + (end - start) * max(0.0, min(1.0, phase))
-    }
-    thetaAtT = { _ in 0.0 }
-    alphaAtT = { t in
-        if t < alphaStartGT {
-            return 0.0
+    } else if example == "line_end_ramp" {
+        let rampStart = options.widthRampStartGT
+        let start = options.widthStart
+        let end = options.widthEnd
+        widthAtT = { t in
+            if t < rampStart {
+                return start
+            }
+            let phase = (t - rampStart) / max(1.0e-12, 1.0 - rampStart)
+            return start + (end - start) * max(0.0, min(1.0, phase))
         }
-        let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
-        return alphaEndValue * max(0.0, min(1.0, phase))
-    }
-} else if options.example?.lowercased() == "poly3" {
-    widthAtT = { t in
-        let clamped = max(0.0, min(1.0, t))
-        let midT = 0.5
-        let start = 16.0
-        let mid = 28.0
-        let end = 16.0
-        if clamped <= midT {
-            let u = clamped / midT
-            return start + (mid - start) * u
+        thetaAtT = { _ in 0.0 }
+        alphaAtT = { t in
+            if t < alphaStartGT {
+                return 0.0
+            }
+            let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
+            return alphaEndValue * max(0.0, min(1.0, phase))
         }
-        let u = (clamped - midT) / (1.0 - midT)
-        return mid + (end - mid) * u
-    }
-    thetaAtT = { _ in 0.0 }
-    alphaAtT = { t in
-        if t < alphaStartGT {
-            return 0.0
+    } else if example == "poly3" {
+        widthAtT = { t in
+            let clamped = max(0.0, min(1.0, t))
+            let midT = 0.5
+            let start = 16.0
+            let mid = 28.0
+            let end = 16.0
+            if clamped <= midT {
+                let u = clamped / midT
+                return start + (mid - start) * u
+            }
+            let u = (clamped - midT) / (1.0 - midT)
+            return mid + (end - mid) * u
         }
-        let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
-        return alphaEndValue * max(0.0, min(1.0, phase))
+        thetaAtT = { _ in 0.0 }
+        alphaAtT = { t in
+            if t < alphaStartGT {
+                return 0.0
+            }
+            let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
+            return alphaEndValue * max(0.0, min(1.0, phase))
+        }
+    } else {
+        widthAtT = { _ in sweepWidth }
+        thetaAtT = { _ in 0.0 }
+        alphaAtT = { _ in 0.0 }
     }
-} else {
-    widthAtT = { _ in sweepWidth }
-    thetaAtT = { _ in 0.0 }
-    alphaAtT = { _ in 0.0 }
-}
 
-let sweepGT: [Double] = (0..<sweepSampleCount).map {
-    Double($0) / Double(max(1, sweepSampleCount - 1))
-}
-let baselineWidth = sweepWidth
-let warpT: (Double) -> Double = { t in
-    let alphaValue = alphaAtT(t)
-    if t <= alphaStartGT || abs(alphaValue) <= Epsilon.defaultValue {
-        return t
+    let sweepGT: [Double] = (0..<sweepSampleCount).map {
+        Double($0) / Double(max(1, sweepSampleCount - 1))
     }
-    let span = max(Epsilon.defaultValue, 1.0 - alphaStartGT)
-    let phase = max(0.0, min(1.0, (t - alphaStartGT) / span))
-    let exponent = max(0.05, 1.0 + alphaValue)
-    let biased = pow(phase, exponent)
-    return alphaStartGT + biased * span
-}
-let widths = sweepGT.map { widthAtT(warpT($0)) }
-let meanWidth = widths.reduce(0.0, +) / Double(max(1, widths.count))
-let widthScale = (options.normalizeWidth && options.example?.lowercased() == "j" && meanWidth > Epsilon.defaultValue)
-    ? (baselineWidth / meanWidth)
-    : 1.0
-let scaledWidthAtT: (Double) -> Double = { t in
-    widthAtT(t) * widthScale
-}
+    let baselineWidth = sweepWidth
+    let warpT: (Double) -> Double = { t in
+        let alphaValue = alphaAtT(t)
+        if t <= alphaStartGT || abs(alphaValue) <= Epsilon.defaultValue {
+            return t
+        }
+        let span = max(Epsilon.defaultValue, 1.0 - alphaStartGT)
+        let phase = max(0.0, min(1.0, (t - alphaStartGT) / span))
+        let exponent = max(0.05, 1.0 + alphaValue)
+        let biased = pow(phase, exponent)
+        return alphaStartGT + biased * span
+    }
+    let widths = sweepGT.map { widthAtT(warpT($0)) }
+    let meanWidth = widths.reduce(0.0, +) / Double(max(1, widths.count))
+    let widthScale = (options.normalizeWidth && options.example?.lowercased() == "j" && meanWidth > Epsilon.defaultValue)
+        ? (baselineWidth / meanWidth)
+        : 1.0
+    let scaledWidthAtT: (Double) -> Double = { t in
+        widthAtT(t) * widthScale
+    }
 
-let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
+    let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: paramSamplesPerSegment)
     if options.verbose || options.debugParam {
         let segmentCount = path.segments.count
         var lengths: [Double] = []
@@ -751,7 +790,7 @@ if options.debugSweep || options.verbose {
 let padding = 10.0
 let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
 var debugOverlay: DebugOverlay? = nil
-if options.debugSVG {
+if options.debugSVG || options.debugCenterline {
     let count = max(2, sweepSampleCount)
     var left: [Vec2] = []
     var right: [Vec2] = []
@@ -830,10 +869,35 @@ if options.debugSVG {
         normalLines.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"purple\" stroke-width=\"0.5\"/>", point.x, point.y, end.x, end.y))
     }
     var debugBounds = AABB.empty
-    for point in tableP + left + right {
-        debugBounds.expand(by: point)
-    }
-    let svg = """
+    var debugLines: [String] = []
+    if options.debugCenterline {
+        var controlDots: [String] = []
+        controlDots.reserveCapacity(path.segments.count * 2)
+        for segment in path.segments {
+            let controls = [segment.p1, segment.p2]
+            for control in controls {
+                let nearest = tableP[nearestIndex(points: tableP, to: control)]
+                debugLines.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"#cccccc\" stroke-width=\"0.5\"/>", control.x, control.y, nearest.x, nearest.y))
+                controlDots.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"2.0\" fill=\"red\" stroke=\"none\"/>", control.x, control.y))
+                debugBounds.expand(by: control)
+            }
+        }
+        for point in tableP {
+            debugBounds.expand(by: point)
+        }
+        let svg = """
+  <g id="debug">
+    <path d="\(skeletonPath)" fill="none" stroke="orange" stroke-width="0.8" />
+    \(debugLines.joined(separator: "\n    "))
+    \(controlDots.joined(separator: "\n    "))
+  </g>
+"""
+        debugOverlay = DebugOverlay(svg: svg, bounds: debugBounds)
+    } else {
+        for point in tableP + left + right {
+            debugBounds.expand(by: point)
+        }
+        let svg = """
   <g id="debug">
     <path d="\(skeletonPath)" fill="none" stroke="orange" stroke-width="0.6" />
     <path d="\(leftPath)" fill="none" stroke="green" stroke-width="0.6" />
@@ -842,7 +906,8 @@ if options.debugSVG {
     \(sampleDots.joined(separator: "\n    "))
   </g>
 """
-    debugOverlay = DebugOverlay(svg: svg, bounds: debugBounds)
+        debugOverlay = DebugOverlay(svg: svg, bounds: debugBounds)
+    }
 }
 
 var referenceSVG: String? = nil
@@ -853,6 +918,8 @@ if let layer = referenceLayer {
        let svgText = String(data: data, encoding: .utf8) {
         referenceViewBox = parseSVGViewBox(svgText)
         referenceSVG = extractSVGInnerContent(svgText)
+    } else {
+        warn("reference file not found: \(layer.path)")
     }
 }
 
@@ -933,10 +1000,24 @@ let svg = """
 \(debugGroup)
 </svg>
 """
+    return svg
+}
 
-let outURL = URL(fileURLWithPath: options.outPath)
-try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-try? svg.data(using: .utf8)?.write(to: outURL)
+public func runCLI() {
+    let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
+    let spec = options.specPath.flatMap(loadSpec(path:))
+    let svg = renderSVGString(options: options, spec: spec)
+    let outURL = URL(fileURLWithPath: options.outPath)
+    try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? svg.data(using: .utf8)?.write(to: outURL)
+}
+
+@main
+struct CP2CLI {
+    static func main() {
+        runCLI()
+    }
+}
 
 func stripDuplicateClosure(_ ring: [Vec2]) -> [Vec2] {
     guard ring.count > 1, Epsilon.approxEqual(ring.first ?? Vec2(0, 0), ring.last ?? Vec2(0, 0), eps: 1.0e-9) else {

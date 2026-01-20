@@ -29,6 +29,10 @@ let package = Package(
         .testTarget(
             name: "CP2SkeletonTests",
             dependencies: ["CP2Skeleton"]
+        ),
+        .testTarget(
+            name: "CP2CLITests",
+            dependencies: ["cp2-cli"]
         )
     ]
 )
