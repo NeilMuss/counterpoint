@@ -6,6 +6,9 @@ public struct CLIOptions {
     var outPath: String = "out/line.svg"
     var example: String? = nil
     var specPath: String? = nil
+    var inkName: String? = nil
+    var strictInk: Bool = false
+    var strictHeartline: Bool = false
     var verbose: Bool = false
     var debugParam: Bool = false
     var debugSweep: Bool = false
@@ -58,6 +61,13 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--example", index + 1 < args.count {
             options.example = args[index + 1]
             index += 1
+        } else if arg == "--ink", index + 1 < args.count {
+            options.inkName = args[index + 1]
+            index += 1
+        } else if arg == "--strict-ink" {
+            options.strictInk = true
+        } else if arg == "--strict-heartline" {
+            options.strictHeartline = true
         } else if arg == "--verbose" {
             options.verbose = true
         } else if arg == "--debug-param" {
@@ -184,6 +194,9 @@ Debug flags:
   --ref-fit-to-frame  Print suggested ref translate/scale to fit frame
   --ref-fit-write PATH Write suggested ref transform into JSON spec
   --spec PATH      JSON spec with optional render/reference blocks
+  --ink NAME       Select ink entry by name (default: stem)
+  --strict-ink     Error on continuity mismatches
+  --strict-heartline Error on heartline resolution errors
   --normalize-width  Normalize width to match baseline mean (example-only)
   --alpha-end N      Alpha end value (example-only; default: -0.35 for j)
   --alpha-start-gt N Alpha ramp start gt (default: 0.85)
@@ -402,7 +415,9 @@ func debugOverlayForInk(_ ink: InkPrimitive, steps: Int) -> DebugOverlay {
         for point in points.dropFirst() {
             parts.append(String(format: "L %.4f %.4f", point.x, point.y))
         }
-        svgParts.append("<path d=\"\(parts.joined(separator: " "))\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(String(format: "%.1f", width))\" />")
+        let pathData = parts.joined(separator: " ")
+        let strokeWidth = String(format: "%.1f", width)
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
         for point in points {
             bounds.expand(by: point)
         }
@@ -423,12 +438,351 @@ func debugOverlayForInk(_ ink: InkPrimitive, steps: Int) -> DebugOverlay {
         let samples = sampleInkCubicPoints(cubic, steps: steps)
         addLine(p0, p1, stroke: "#cccccc", width: 1.0)
         addLine(p3, p2, stroke: "#cccccc", width: 1.0)
-        addPolyline([p0, p1, p2, p3], stroke: "#bbbbbb", width: 1.0)
         addPolyline(samples, stroke: "orange", width: 2.0)
         addPoint(p0, radius: 4.0, fill: "blue")
         addPoint(p3, radius: 4.0, fill: "blue")
         addPoint(p1, radius: 4.0, fill: "red")
         addPoint(p2, radius: 4.0, fill: "red")
+    case .path(let path):
+        return debugOverlayForInkPath(path, steps: steps)
+    case .heartline:
+        return DebugOverlay(svg: "<g id=\"debug\"></g>", bounds: AABB.empty)
+    }
+
+    let svg = """
+  <g id="debug">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func pickInkPrimitive(_ ink: Ink?, name: String?) -> (name: String, primitive: InkPrimitive)? {
+    guard let ink else {
+        return nil
+    }
+    if let name {
+        if let primitive = ink.entries[name] {
+            return (name, primitive)
+        }
+        return nil
+    }
+    if let heartline = ink.entries["J_heartline"] {
+        return ("J_heartline", heartline)
+    }
+    if let stem = ink.stem {
+        return ("stem", stem)
+    }
+    if let firstKey = ink.entries.keys.sorted().first, let primitive = ink.entries[firstKey] {
+        return (firstKey, primitive)
+    }
+    return nil
+}
+
+enum InkContinuityError: Error, CustomStringConvertible {
+    case discontinuity(name: String, index: Int, dist: Double)
+    case missingPart(name: String, part: String)
+    case cyclicReference(name: String, part: String)
+
+    var description: String {
+        switch self {
+        case .discontinuity(let name, let index, let dist):
+            let distText = String(format: "%.6f", dist)
+            return "ink continuity mismatch: \(name) segments \(index)->\(index + 1) dist=\(distText)"
+        case .missingPart(let name, let part):
+            return "heartline missing part: \(name) -> \(part)"
+        case .cyclicReference(let name, let part):
+            return "heartline cycle detected: \(name) -> \(part)"
+        }
+    }
+
+    var localizedDescription: String {
+        description
+    }
+}
+
+func inkSegmentStart(_ segment: InkSegment) -> Vec2 {
+    switch segment {
+    case .line(let line):
+        return vec(line.p0)
+    case .cubic(let cubic):
+        return vec(cubic.p0)
+    }
+}
+
+func inkSegmentEnd(_ segment: InkSegment) -> Vec2 {
+    switch segment {
+    case .line(let line):
+        return vec(line.p1)
+    case .cubic(let cubic):
+        return vec(cubic.p3)
+    }
+}
+
+func formatVec2(_ point: Vec2) -> String {
+    String(format: "(%.6f,%.6f)", point.x, point.y)
+}
+
+func cubicForSegment(_ segment: InkSegment) -> CubicBezier2 {
+    switch segment {
+    case .line(let line):
+        return lineCubic(from: vec(line.p0), to: vec(line.p1))
+    case .cubic(let cubic):
+        return CubicBezier2(
+            p0: vec(cubic.p0),
+            p1: vec(cubic.p1),
+            p2: vec(cubic.p2),
+            p3: vec(cubic.p3)
+        )
+    }
+}
+
+struct HeartlinePart {
+    var name: String
+    var segments: [InkSegment]
+}
+
+struct ResolvedHeartline {
+    var name: String
+    var subpaths: [[InkSegment]]
+    var parts: [HeartlinePart]
+}
+
+func resolveHeartline(
+    name: String,
+    heartline: Heartline,
+    ink: Ink,
+    strict: Bool,
+    warn: (String) -> Void
+) throws -> ResolvedHeartline {
+    var parts: [HeartlinePart] = []
+    var visited = Set<String>()
+    visited.insert(name)
+    for partName in heartline.parts {
+        guard let primitive = ink.entries[partName] else {
+            if strict {
+                throw InkContinuityError.missingPart(name: name, part: partName)
+            }
+            warn("heartline warning: missing part \(partName) in \(name)")
+            continue
+        }
+        switch primitive {
+        case .line(let line):
+            parts.append(HeartlinePart(name: partName, segments: [.line(line)]))
+        case .cubic(let cubic):
+            parts.append(HeartlinePart(name: partName, segments: [.cubic(cubic)]))
+        case .path(let path):
+            parts.append(HeartlinePart(name: partName, segments: path.segments))
+        case .heartline:
+            if strict {
+                throw InkContinuityError.cyclicReference(name: name, part: partName)
+            }
+            warn("heartline warning: nested heartline \(partName) ignored in \(name)")
+        }
+    }
+    var subpaths: [[InkSegment]] = []
+    var current: [InkSegment] = []
+    let allowGaps = heartline.allowGaps ?? false
+    for (index, part) in parts.enumerated() {
+        for (segmentIndex, segment) in part.segments.enumerated() {
+            if let last = current.last {
+                let dist = (inkSegmentEnd(last) - inkSegmentStart(segment)).length
+                if dist > 1.0e-4 {
+                    let distText = String(format: "%.6f", dist)
+                    let message = "heartline continuity warning: \(name) part \(part.name) seg=\(segmentIndex) dist=\(distText)"
+                    if strict {
+                        throw InkContinuityError.discontinuity(name: name, index: index, dist: dist)
+                    } else {
+                        warn(message)
+                    }
+                    if !allowGaps {
+                        subpaths.append(current)
+                        current = []
+                    }
+                }
+            }
+            current.append(segment)
+        }
+    }
+    if !current.isEmpty {
+        subpaths.append(current)
+    }
+    return ResolvedHeartline(name: name, subpaths: subpaths, parts: parts)
+}
+
+func buildSkeletonPaths(
+    name: String,
+    primitive: InkPrimitive,
+    strict: Bool,
+    epsilon: Double,
+    warn: (String) -> Void
+) throws -> [SkeletonPath] {
+    switch primitive {
+    case .line(let line):
+        let segment = lineCubic(from: vec(line.p0), to: vec(line.p1))
+        return [SkeletonPath(segments: [segment])]
+    case .cubic(let cubic):
+        let segment = CubicBezier2(
+            p0: vec(cubic.p0),
+            p1: vec(cubic.p1),
+            p2: vec(cubic.p2),
+            p3: vec(cubic.p3)
+        )
+        return [SkeletonPath(segments: [segment])]
+    case .path(let path):
+        var paths: [SkeletonPath] = []
+        var currentSegments: [CubicBezier2] = []
+        for (index, segment) in path.segments.enumerated() {
+            if index > 0 {
+                let prev = path.segments[index - 1]
+                let dist = (inkSegmentEnd(prev) - inkSegmentStart(segment)).length
+                if dist > epsilon {
+                    let distText = String(format: "%.6f", dist)
+                    let message = "ink continuity warning: \(name) segments \(index - 1)->\(index) end=\(formatVec2(inkSegmentEnd(prev))) start=\(formatVec2(inkSegmentStart(segment))) dist=\(distText)"
+                    if strict {
+                        throw InkContinuityError.discontinuity(name: name, index: index - 1, dist: dist)
+                    } else {
+                        warn(message)
+                        if !currentSegments.isEmpty {
+                            paths.append(SkeletonPath(segments: currentSegments))
+                            currentSegments = []
+                        }
+                    }
+                }
+            }
+            currentSegments.append(cubicForSegment(segment))
+        }
+        if !currentSegments.isEmpty {
+            paths.append(SkeletonPath(segments: currentSegments))
+        }
+        return paths
+    case .heartline:
+        return []
+    }
+}
+
+func debugOverlayForInkPath(_ path: InkPath, steps: Int) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    func addPoint(_ p: Vec2, radius: Double, fill: String) {
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+        bounds.expand(by: p)
+    }
+    func addLine(_ a: Vec2, _ b: Vec2, stroke: String, width: Double) {
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"%@\" stroke-width=\"%.1f\"/>", a.x, a.y, b.x, b.y, stroke, width))
+        bounds.expand(by: a)
+        bounds.expand(by: b)
+    }
+    func addPolyline(_ points: [Vec2], stroke: String, width: Double) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        let strokeWidth = String(format: "%.1f", width)
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
+        for point in points {
+            bounds.expand(by: point)
+        }
+    }
+
+    for segment in path.segments {
+        switch segment {
+        case .line(let line):
+            let p0 = vec(line.p0)
+            let p1 = vec(line.p1)
+            addLine(p0, p1, stroke: "orange", width: 2.0)
+            addPoint(p0, radius: 4.0, fill: "blue")
+            addPoint(p1, radius: 4.0, fill: "blue")
+        case .cubic(let cubic):
+            let p0 = vec(cubic.p0)
+            let p1 = vec(cubic.p1)
+            let p2 = vec(cubic.p2)
+            let p3 = vec(cubic.p3)
+            let samples = sampleInkCubicPoints(cubic, steps: steps)
+            addLine(p0, p1, stroke: "#cccccc", width: 1.0)
+            addLine(p3, p2, stroke: "#cccccc", width: 1.0)
+            addPolyline(samples, stroke: "orange", width: 2.0)
+            addPoint(p0, radius: 4.0, fill: "blue")
+            addPoint(p3, radius: 4.0, fill: "blue")
+            addPoint(p1, radius: 4.0, fill: "red")
+            addPoint(p2, radius: 4.0, fill: "red")
+        }
+    }
+
+    let svg = """
+  <g id="debug">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForHeartline(_ resolved: ResolvedHeartline, steps: Int) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    func addPoint(_ p: Vec2, radius: Double, fill: String) {
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+        bounds.expand(by: p)
+    }
+    func addLine(_ a: Vec2, _ b: Vec2, stroke: String, width: Double) {
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"%@\" stroke-width=\"%.1f\"/>", a.x, a.y, b.x, b.y, stroke, width))
+        bounds.expand(by: a)
+        bounds.expand(by: b)
+    }
+    func addPolyline(_ points: [Vec2], stroke: String, width: Double) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        let strokeWidth = String(format: "%.1f", width)
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
+        for point in points {
+            bounds.expand(by: point)
+        }
+    }
+    func addLabel(_ text: String, at point: Vec2) {
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#444444\">%@</text>", point.x, point.y, text))
+        bounds.expand(by: point)
+    }
+
+    for part in resolved.parts {
+        var samplePoints: [Vec2] = []
+        for segment in part.segments {
+            switch segment {
+            case .line(let line):
+                let p0 = vec(line.p0)
+                let p1 = vec(line.p1)
+                addLine(p0, p1, stroke: "orange", width: 2.0)
+                addPoint(p0, radius: 4.0, fill: "blue")
+                addPoint(p1, radius: 4.0, fill: "blue")
+                samplePoints.append(p0)
+                samplePoints.append(p1)
+            case .cubic(let cubic):
+                let p0 = vec(cubic.p0)
+                let p1 = vec(cubic.p1)
+                let p2 = vec(cubic.p2)
+                let p3 = vec(cubic.p3)
+                let samples = sampleInkCubicPoints(cubic, steps: steps)
+                addLine(p0, p1, stroke: "#cccccc", width: 1.0)
+                addLine(p3, p2, stroke: "#cccccc", width: 1.0)
+                addPolyline(samples, stroke: "orange", width: 2.0)
+                addPoint(p0, radius: 4.0, fill: "blue")
+                addPoint(p3, radius: 4.0, fill: "blue")
+                addPoint(p1, radius: 4.0, fill: "red")
+                addPoint(p2, radius: 4.0, fill: "red")
+                samplePoints.append(contentsOf: samples)
+            }
+        }
+        if !samplePoints.isEmpty {
+            let mid = samplePoints[samplePoints.count / 2]
+            addLabel(part.name, at: mid + Vec2(4.0, -4.0))
+        }
     }
 
     let svg = """
@@ -455,10 +809,25 @@ func pathFromInk(_ ink: Ink?) -> SkeletonPath? {
             p3: vec(cubic.p3)
         )
         return SkeletonPath(segments: [segment])
+    case .path:
+        return nil
+    case .heartline:
+        return nil
     }
 }
 
-public func renderSVGString(options: CLIOptions, spec: CP2Spec?) -> String {
+public func renderSVGString(
+    options: CLIOptions,
+    spec: CP2Spec?,
+    warnSink: ((String) -> Void)? = nil
+) throws -> String {
+    let warnHandler: (String) -> Void = { message in
+        if let warnSink {
+            warnSink(message)
+        } else {
+            warn(message)
+        }
+    }
     var renderSettings = spec?.render ?? RenderSettings()
     if let canvas = options.canvasOverride {
         renderSettings.canvasPx = canvas
@@ -491,9 +860,45 @@ public func renderSVGString(options: CLIOptions, spec: CP2Spec?) -> String {
 
     let exampleName = options.example ?? spec?.example
 
-    let inkPrimitive = spec?.ink?.stem
+    let inkSelection = pickInkPrimitive(spec?.ink, name: options.inkName)
+    let inkPrimitive = inkSelection?.primitive
     let path: SkeletonPath
-    if let inkPath = pathFromInk(spec?.ink) {
+    var inkPaths: [SkeletonPath] = []
+    var resolvedHeartline: ResolvedHeartline? = nil
+    if let inkSelection, let primitive = inkSelection.primitive as InkPrimitive? {
+        switch primitive {
+        case .heartline(let heartline):
+            let resolved = try resolveHeartline(
+                name: inkSelection.name,
+                heartline: heartline,
+                ink: spec?.ink ?? Ink(stem: nil, entries: [:]),
+                strict: options.strictHeartline,
+                warn: warnHandler
+            )
+            resolvedHeartline = resolved
+            for subpath in resolved.subpaths {
+                let segments = subpath.map { cubicForSegment($0) }
+                if !segments.isEmpty {
+                    inkPaths.append(SkeletonPath(segments: segments))
+                }
+            }
+        default:
+            inkPaths = try buildSkeletonPaths(
+                name: inkSelection.name,
+                primitive: primitive,
+                strict: options.strictInk,
+                epsilon: 1.0e-4,
+                warn: warnHandler
+            )
+        }
+    }
+    if let inkPath = inkPaths.first {
+        if inkPaths.count > 1 {
+            warnHandler("ink continuity warning: multiple subpaths detected; sweeping first only")
+            if options.strictInk || options.strictHeartline {
+                throw InkContinuityError.discontinuity(name: inkSelection?.name ?? "ink", index: 0, dist: 0.0)
+            }
+        }
         path = inkPath
     } else if exampleName?.lowercased() == "scurve" {
         path = SkeletonPath(segments: [sCurveFixtureCubic()])
@@ -878,7 +1283,16 @@ let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
 var debugOverlay: DebugOverlay? = nil
 if options.debugSVG || options.debugCenterline || options.debugInkControls {
     if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
-        debugOverlay = debugOverlayForInk(inkPrimitive, steps: 64)
+        switch inkPrimitive {
+        case .path(let inkPath):
+            debugOverlay = debugOverlayForInkPath(inkPath, steps: 64)
+        case .heartline:
+            if let resolved = resolvedHeartline {
+                debugOverlay = debugOverlayForHeartline(resolved, steps: 64)
+            }
+        default:
+            debugOverlay = debugOverlayForInk(inkPrimitive, steps: 64)
+        }
     } else {
     let count = max(2, sweepSampleCount)
     var left: [Vec2] = []
@@ -1096,10 +1510,15 @@ let svg = """
 public func runCLI() {
     let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
     let spec = options.specPath.flatMap(loadSpec(path:))
-    let svg = renderSVGString(options: options, spec: spec)
-    let outURL = URL(fileURLWithPath: options.outPath)
-    try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try? svg.data(using: .utf8)?.write(to: outURL)
+    do {
+        let svg = try renderSVGString(options: options, spec: spec)
+        let outURL = URL(fileURLWithPath: options.outPath)
+        try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? svg.data(using: .utf8)?.write(to: outURL)
+    } catch {
+        warn(error.localizedDescription)
+        exit(1)
+    }
 }
 
 @main
