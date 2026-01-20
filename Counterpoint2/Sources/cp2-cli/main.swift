@@ -11,6 +11,7 @@ public struct CLIOptions {
     var debugSweep: Bool = false
     var debugSVG: Bool = false
     var debugCenterline: Bool = false
+    var debugInkControls: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -67,6 +68,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugSVG = true
         } else if arg == "--debug-centerline" {
             options.debugCenterline = true
+        } else if arg == "--debug-ink-controls" {
+            options.debugInkControls = true
         } else if arg == "--probe-count", index + 1 < args.count {
             options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
             index += 1
@@ -163,6 +166,7 @@ Debug flags:
   --debug-sweep    Print sweep tracing stats
   --debug-svg      Include skeleton/sample overlay in the SVG
   --debug-centerline  Centerline-only overlay with control points
+  --debug-ink-controls  Ink control geometry + evaluated curve only
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --canvas WxH     Output canvas pixel size (default: 1200x1200)
@@ -192,16 +196,6 @@ Debug flags:
   --max-samples N      Adaptive max samples (default: 512)
 """
     print(text)
-}
-
-public struct InkLine: Codable, Equatable {
-    var type: String
-    var p0: Vec2
-    var p1: Vec2
-}
-
-public struct Ink: Codable, Equatable {
-    var stem: InkLine?
 }
 
 public struct CP2Spec: Codable {
@@ -363,13 +357,105 @@ func lineCubic(from start: Vec2, to end: Vec2) -> CubicBezier2 {
     return CubicBezier2(p0: start, p1: p1, p2: p2, p3: end)
 }
 
+func vec(_ point: InkPoint) -> Vec2 {
+    Vec2(point.x, point.y)
+}
+
+func sampleInkCubicPoints(_ cubic: InkCubic, steps: Int) -> [Vec2] {
+    let count = max(2, steps)
+    var points: [Vec2] = []
+    points.reserveCapacity(count)
+    let p0 = vec(cubic.p0)
+    let p1 = vec(cubic.p1)
+    let p2 = vec(cubic.p2)
+    let p3 = vec(cubic.p3)
+    for i in 0..<count {
+        let t = Double(i) / Double(count - 1)
+        let mt = 1.0 - t
+        let mt2 = mt * mt
+        let t2 = t * t
+        let a = p0 * (mt2 * mt)
+        let b = p1 * (3.0 * mt2 * t)
+        let c = p2 * (3.0 * mt * t2)
+        let d = p3 * (t2 * t)
+        points.append(a + b + c + d)
+    }
+    return points
+}
+
+func debugOverlayForInk(_ ink: InkPrimitive, steps: Int) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    func addPoint(_ p: Vec2, radius: Double, fill: String) {
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+        bounds.expand(by: p)
+    }
+    func addLine(_ a: Vec2, _ b: Vec2, stroke: String, width: Double) {
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"%@\" stroke-width=\"%.1f\"/>", a.x, a.y, b.x, b.y, stroke, width))
+        bounds.expand(by: a)
+        bounds.expand(by: b)
+    }
+    func addPolyline(_ points: [Vec2], stroke: String, width: Double) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        svgParts.append("<path d=\"\(parts.joined(separator: " "))\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(String(format: "%.1f", width))\" />")
+        for point in points {
+            bounds.expand(by: point)
+        }
+    }
+
+    switch ink {
+    case .line(let line):
+        let p0 = vec(line.p0)
+        let p1 = vec(line.p1)
+        addLine(p0, p1, stroke: "orange", width: 2.0)
+        addPoint(p0, radius: 4.0, fill: "blue")
+        addPoint(p1, radius: 4.0, fill: "blue")
+    case .cubic(let cubic):
+        let p0 = vec(cubic.p0)
+        let p1 = vec(cubic.p1)
+        let p2 = vec(cubic.p2)
+        let p3 = vec(cubic.p3)
+        let samples = sampleInkCubicPoints(cubic, steps: steps)
+        addLine(p0, p1, stroke: "#cccccc", width: 1.0)
+        addLine(p3, p2, stroke: "#cccccc", width: 1.0)
+        addPolyline([p0, p1, p2, p3], stroke: "#bbbbbb", width: 1.0)
+        addPolyline(samples, stroke: "orange", width: 2.0)
+        addPoint(p0, radius: 4.0, fill: "blue")
+        addPoint(p3, radius: 4.0, fill: "blue")
+        addPoint(p1, radius: 4.0, fill: "red")
+        addPoint(p2, radius: 4.0, fill: "red")
+    }
+
+    let svg = """
+  <g id="debug">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
 func pathFromInk(_ ink: Ink?) -> SkeletonPath? {
-    guard let stem = ink?.stem,
-          stem.type.lowercased() == "line" else {
+    guard let stem = ink?.stem else {
         return nil
     }
-    let cubic = lineCubic(from: stem.p0, to: stem.p1)
-    return SkeletonPath(segments: [cubic])
+    switch stem {
+    case .line(let line):
+        let cubic = lineCubic(from: vec(line.p0), to: vec(line.p1))
+        return SkeletonPath(segments: [cubic])
+    case .cubic(let cubic):
+        let segment = CubicBezier2(
+            p0: vec(cubic.p0),
+            p1: vec(cubic.p1),
+            p2: vec(cubic.p2),
+            p3: vec(cubic.p3)
+        )
+        return SkeletonPath(segments: [segment])
+    }
 }
 
 public func renderSVGString(options: CLIOptions, spec: CP2Spec?) -> String {
@@ -405,6 +491,7 @@ public func renderSVGString(options: CLIOptions, spec: CP2Spec?) -> String {
 
     let exampleName = options.example ?? spec?.example
 
+    let inkPrimitive = spec?.ink?.stem
     let path: SkeletonPath
     if let inkPath = pathFromInk(spec?.ink) {
         path = inkPath
@@ -787,10 +874,12 @@ if options.debugSweep || options.verbose {
     print("sweep warpProbes gt=[0.80,0.85,0.90,0.95,1.00] warped=[\(warpList)]")
 }
 
-let padding = 10.0
 let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
 var debugOverlay: DebugOverlay? = nil
-if options.debugSVG || options.debugCenterline {
+if options.debugSVG || options.debugCenterline || options.debugInkControls {
+    if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
+        debugOverlay = debugOverlayForInk(inkPrimitive, steps: 64)
+    } else {
     let count = max(2, sweepSampleCount)
     var left: [Vec2] = []
     var right: [Vec2] = []
@@ -907,6 +996,7 @@ if options.debugSVG || options.debugCenterline {
   </g>
 """
         debugOverlay = DebugOverlay(svg: svg, bounds: debugBounds)
+    }
     }
 }
 

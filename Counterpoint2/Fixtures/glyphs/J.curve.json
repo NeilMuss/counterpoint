@@ -1,0 +1,28 @@
+{
+  "render": {
+    "canvasPx": { "width": 1600, "height": 1600 },
+    "fitMode": "none",
+    "paddingWorld": 0,
+    "clipToFrame": false,
+    "worldFrame": { "minX": -250, "minY": -250, "maxX": 1250, "maxY": 1250 }
+  },
+  "reference": {
+    "path": "Fixtures/references/big_caslon_J.svg",
+    "translateWorld": { "x": 0, "y": 0 },
+    "scale": 1.0,
+    "rotateDeg": 0,
+    "opacity": 0.25,
+    "lockPlacement": true
+  },
+"ink": {
+  "stem": {
+    "type": "cubic",
+    "p0": { "x": 137, "y": 5   },
+    "p1": { "x": 40,  "y": 120 },
+    "p2": { "x": 260, "y": 260 },
+    "p3": { "x": 137, "y": 375 }
+  }
+}
+
+}
+
