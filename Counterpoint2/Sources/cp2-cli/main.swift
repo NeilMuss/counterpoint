@@ -1498,13 +1498,6 @@ public func runCLI() {
     }
 }
 
-@main
-struct CP2CLI {
-    static func main() {
-        runCLI()
-    }
-}
-
 func stripDuplicateClosure(_ ring: [Vec2]) -> [Vec2] {
     guard ring.count > 1, Epsilon.approxEqual(ring.first ?? Vec2(0, 0), ring.last ?? Vec2(0, 0), eps: 1.0e-9) else {
         return ring
