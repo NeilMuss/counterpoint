@@ -55,9 +55,12 @@ public func renderSVGString(
         }
     }
 
+    let provider = ExampleParamProvider()
+    let funcs = provider.makeParamFuncs(options: options, exampleName: exampleName, sweepWidth: 20.0)
+    
     let plan = makeSweepPlan(
         options: options,
-        exampleName: exampleName,
+        funcs: funcs,
         baselineWidth: 20.0,
         sweepWidth: 20.0,
         sweepHeight: 10.0,

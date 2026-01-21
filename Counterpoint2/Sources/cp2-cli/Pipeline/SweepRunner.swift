@@ -15,8 +15,7 @@ func runSweep(
     options: CLIOptions
 ) -> SweepResult {
     let segmentsUsed: [Segment2] = {
-        switch plan.mode {
-        case .variableWidthAngleAlpha:
+        if plan.usesVariableWidthAngleAlpha {
             return boundarySoupVariableWidthAngleAlpha(
                 path: path,
                 height: plan.sweepHeight,
@@ -31,7 +30,7 @@ func runSweep(
                 alphaAtT: plan.alphaAtT,
                 alphaStart: plan.alphaStartGT
             )
-        case .constant:
+        } else {
             return boundarySoup(
                 path: path,
                 width: plan.sweepWidth,
