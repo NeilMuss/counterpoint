@@ -673,14 +673,23 @@ public func renderSVGString(
 public func runCLI() {
     let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
     let spec = options.specPath.flatMap(loadSpec(path:))
+    let outURL = URL(fileURLWithPath: options.outPath)
     do {
         let svg = try renderSVGString(options: options, spec: spec)
-        let outURL = URL(fileURLWithPath: options.outPath)
-        try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        print("Writing SVG to: \(outURL.path)")
-        try? svg.data(using: .utf8)?.write(to: outURL)
+        try FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let data = svg.data(using: .utf8) else {
+            warn("Failed to encode SVG to UTF-8")
+            exit(1)
+        }
+        try data.write(to: outURL, options: .atomic)
+        if options.verbose {
+            print("Exported \(data.count) bytes to: \(outURL.path)")
+        }
     } catch {
-        warn(error.localizedDescription)
+        warn("export failed")
+        warn("error: \(error.localizedDescription)")
+        warn("path: \(outURL.path)")
+        warn("cwd: \(FileManager.default.currentDirectoryPath)")
         exit(1)
     }
 }
