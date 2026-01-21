@@ -11,6 +11,110 @@ public struct Segment2: Equatable, Codable {
     }
 }
 
+public struct SweepStyle: Equatable, Codable {
+    public let width: Double
+    public let height: Double
+    public let angle: Double
+    public let offset: Double   // reserved; can be 0 for now
+
+    public init(width: Double, height: Double, angle: Double, offset: Double) {
+        self.width = width
+        self.height = height
+        self.angle = angle
+        self.offset = offset
+    }
+}
+
+public func boundarySoupGeneral(
+    path: SkeletonPath,
+    sampleCount: Int,
+    arcSamplesPerSegment: Int = 256,
+    adaptiveSampling: Bool = false,
+    flatnessEps: Double = 0.25,
+    maxDepth: Int = 12,
+    maxSamples: Int = 512,
+    warpGT: (Double) -> Double = { $0 },
+    styleAtGT: (Double) -> SweepStyle
+) -> [Segment2] {
+    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
+
+    let samples = adaptiveSampling
+        ? mergeWithUniformSamples(
+            AdaptiveSampler.sampleParameter(
+                maxDepth: maxDepth,
+                flatnessEps: flatnessEps,
+                maxSamples: maxSamples,
+                evaluate: { param.position(globalT: $0) }
+            ),
+            minCount: max(2, sampleCount)
+        )
+        : uniformSamples(count: max(2, sampleCount))
+
+    let count = max(2, samples.count)
+
+    var left: [Vec2] = []
+    var right: [Vec2] = []
+    left.reserveCapacity(count)
+    right.reserveCapacity(count)
+
+    for gt in samples {
+        let point = param.position(globalT: gt)
+        let tangent = param.tangent(globalT: gt).normalized()
+        let normal = Vec2(-tangent.y, tangent.x)
+
+        let warped = warpGT(gt)
+        let style = styleAtGT(warped)
+
+        // Offset reserved (0 by default). When you wire offset later,
+        // this will become visible immediately.
+        let center = point + normal * style.offset
+
+        let corners = rectangleCorners(
+            center: center,
+            tangent: tangent,
+            normal: normal,
+            width: style.width,
+            height: style.height,
+            effectiveAngle: style.angle
+        )
+
+        var minDot = Double.greatestFiniteMagnitude
+        var maxDot = -Double.greatestFiniteMagnitude
+        var leftPoint = center
+        var rightPoint = center
+
+        for corner in corners {
+            let d = corner.dot(normal)
+            if d < minDot {
+                minDot = d
+                leftPoint = corner
+            }
+            if d > maxDot {
+                maxDot = d
+                rightPoint = corner
+            }
+        }
+
+        left.append(leftPoint)
+        right.append(rightPoint)
+    }
+
+    var segments: [Segment2] = []
+    segments.reserveCapacity(count * 2 + 2)
+
+    for i in 0..<(count - 1) {
+        segments.append(Segment2(left[i], left[i + 1]))
+    }
+    for i in stride(from: count - 1, to: 0, by: -1) {
+        segments.append(Segment2(right[i], right[i - 1]))
+    }
+    segments.append(Segment2(left[0], right[0]))
+    segments.append(Segment2(right[count - 1], left[count - 1]))
+
+    return segments
+}
+
+
 public func boundarySoup(
     path: SkeletonPath,
     width: Double,
@@ -23,67 +127,18 @@ public func boundarySoup(
     maxDepth: Int = 12,
     maxSamples: Int = 512
 ) -> [Segment2] {
-    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
-    let samples = adaptiveSampling
-        ? mergeWithUniformSamples(
-            AdaptiveSampler.sampleParameter(
-                maxDepth: maxDepth,
-                flatnessEps: flatnessEps,
-                maxSamples: maxSamples,
-                evaluate: { param.position(globalT: $0) }
-            ),
-            minCount: max(2, sampleCount)
-        )
-        : uniformSamples(count: max(2, sampleCount))
-    let count = max(2, samples.count)
-    var left: [Vec2] = []
-    var right: [Vec2] = []
-    left.reserveCapacity(count)
-    right.reserveCapacity(count)
-
-    for t in samples {
-        let point = param.position(globalT: t)
-        let tangent = param.tangent(globalT: t).normalized()
-        let normal = Vec2(-tangent.y, tangent.x)
-        let corners = rectangleCorners(
-            center: point,
-            tangent: tangent,
-            normal: normal,
-            width: width,
-            height: height,
-            effectiveAngle: effectiveAngle
-        )
-        var minDot = Double.greatestFiniteMagnitude
-        var maxDot = -Double.greatestFiniteMagnitude
-        var leftPoint = point
-        var rightPoint = point
-        for corner in corners {
-            let d = corner.dot(normal)
-            if d < minDot {
-                minDot = d
-                leftPoint = corner
-            }
-            if d > maxDot {
-                maxDot = d
-                rightPoint = corner
-            }
-        }
-        left.append(leftPoint)
-        right.append(rightPoint)
-    }
-
-    var segments: [Segment2] = []
-    segments.reserveCapacity(count * 2 + 2)
-    for i in 0..<(count - 1) {
-        segments.append(Segment2(left[i], left[i + 1]))
-    }
-    for i in stride(from: count - 1, to: 0, by: -1) {
-        segments.append(Segment2(right[i], right[i - 1]))
-    }
-    segments.append(Segment2(left[0], right[0]))
-    segments.append(Segment2(right[count - 1], left[count - 1]))
-    return segments
+    boundarySoupGeneral(
+        path: path,
+        sampleCount: sampleCount,
+        arcSamplesPerSegment: arcSamplesPerSegment,
+        adaptiveSampling: adaptiveSampling,
+        flatnessEps: flatnessEps,
+        maxDepth: maxDepth,
+        maxSamples: maxSamples,
+        styleAtGT: { _ in SweepStyle(width: width, height: height, angle: effectiveAngle, offset: 0.0) }
+    )
 }
+
 
 public func boundarySoupVariableWidth(
     path: SkeletonPath,
@@ -97,68 +152,18 @@ public func boundarySoupVariableWidth(
     maxSamples: Int = 512,
     widthAtT: (Double) -> Double
 ) -> [Segment2] {
-    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
-    let samples = adaptiveSampling
-        ? mergeWithUniformSamples(
-            AdaptiveSampler.sampleParameter(
-                maxDepth: maxDepth,
-                flatnessEps: flatnessEps,
-                maxSamples: maxSamples,
-                evaluate: { param.position(globalT: $0) }
-            ),
-            minCount: max(2, sampleCount)
-        )
-        : uniformSamples(count: max(2, sampleCount))
-    let count = max(2, samples.count)
-    var left: [Vec2] = []
-    var right: [Vec2] = []
-    left.reserveCapacity(count)
-    right.reserveCapacity(count)
-
-    for t in samples {
-        let point = param.position(globalT: t)
-        let tangent = param.tangent(globalT: t).normalized()
-        let normal = Vec2(-tangent.y, tangent.x)
-        let width = widthAtT(t)
-        let corners = rectangleCorners(
-            center: point,
-            tangent: tangent,
-            normal: normal,
-            width: width,
-            height: height,
-            effectiveAngle: effectiveAngle
-        )
-        var minDot = Double.greatestFiniteMagnitude
-        var maxDot = -Double.greatestFiniteMagnitude
-        var leftPoint = point
-        var rightPoint = point
-        for corner in corners {
-            let d = corner.dot(normal)
-            if d < minDot {
-                minDot = d
-                leftPoint = corner
-            }
-            if d > maxDot {
-                maxDot = d
-                rightPoint = corner
-            }
-        }
-        left.append(leftPoint)
-        right.append(rightPoint)
-    }
-
-    var segments: [Segment2] = []
-    segments.reserveCapacity(count * 2 + 2)
-    for i in 0..<(count - 1) {
-        segments.append(Segment2(left[i], left[i + 1]))
-    }
-    for i in stride(from: count - 1, to: 0, by: -1) {
-        segments.append(Segment2(right[i], right[i - 1]))
-    }
-    segments.append(Segment2(left[0], right[0]))
-    segments.append(Segment2(right[count - 1], left[count - 1]))
-    return segments
+    boundarySoupGeneral(
+        path: path,
+        sampleCount: sampleCount,
+        arcSamplesPerSegment: arcSamplesPerSegment,
+        adaptiveSampling: adaptiveSampling,
+        flatnessEps: flatnessEps,
+        maxDepth: maxDepth,
+        maxSamples: maxSamples,
+        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: effectiveAngle, offset: 0.0) }
+    )
 }
+
 
 public func boundarySoupVariableWidthAngle(
     path: SkeletonPath,
@@ -172,69 +177,18 @@ public func boundarySoupVariableWidthAngle(
     widthAtT: (Double) -> Double,
     angleAtT: (Double) -> Double
 ) -> [Segment2] {
-    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
-    let samples = adaptiveSampling
-        ? mergeWithUniformSamples(
-            AdaptiveSampler.sampleParameter(
-                maxDepth: maxDepth,
-                flatnessEps: flatnessEps,
-                maxSamples: maxSamples,
-                evaluate: { param.position(globalT: $0) }
-            ),
-            minCount: max(2, sampleCount)
-        )
-        : uniformSamples(count: max(2, sampleCount))
-    let count = max(2, samples.count)
-    var left: [Vec2] = []
-    var right: [Vec2] = []
-    left.reserveCapacity(count)
-    right.reserveCapacity(count)
-
-    for t in samples {
-        let point = param.position(globalT: t)
-        let tangent = param.tangent(globalT: t).normalized()
-        let normal = Vec2(-tangent.y, tangent.x)
-        let width = widthAtT(t)
-        let angle = angleAtT(t)
-        let corners = rectangleCorners(
-            center: point,
-            tangent: tangent,
-            normal: normal,
-            width: width,
-            height: height,
-            effectiveAngle: angle
-        )
-        var minDot = Double.greatestFiniteMagnitude
-        var maxDot = -Double.greatestFiniteMagnitude
-        var leftPoint = point
-        var rightPoint = point
-        for corner in corners {
-            let d = corner.dot(normal)
-            if d < minDot {
-                minDot = d
-                leftPoint = corner
-            }
-            if d > maxDot {
-                maxDot = d
-                rightPoint = corner
-            }
-        }
-        left.append(leftPoint)
-        right.append(rightPoint)
-    }
-
-    var segments: [Segment2] = []
-    segments.reserveCapacity(count * 2 + 2)
-    for i in 0..<(count - 1) {
-        segments.append(Segment2(left[i], left[i + 1]))
-    }
-    for i in stride(from: count - 1, to: 0, by: -1) {
-        segments.append(Segment2(right[i], right[i - 1]))
-    }
-    segments.append(Segment2(left[0], right[0]))
-    segments.append(Segment2(right[count - 1], left[count - 1]))
-    return segments
+    boundarySoupGeneral(
+        path: path,
+        sampleCount: sampleCount,
+        arcSamplesPerSegment: arcSamplesPerSegment,
+        adaptiveSampling: adaptiveSampling,
+        flatnessEps: flatnessEps,
+        maxDepth: maxDepth,
+        maxSamples: maxSamples,
+        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) }
+    )
 }
+
 
 public func boundarySoupVariableWidthAngleAlpha(
     path: SkeletonPath,
@@ -250,71 +204,19 @@ public func boundarySoupVariableWidthAngleAlpha(
     alphaAtT: (Double) -> Double,
     alphaStart: Double
 ) -> [Segment2] {
-    let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
-    let samples = adaptiveSampling
-        ? mergeWithUniformSamples(
-            AdaptiveSampler.sampleParameter(
-                maxDepth: maxDepth,
-                flatnessEps: flatnessEps,
-                maxSamples: maxSamples,
-                evaluate: { param.position(globalT: $0) }
-            ),
-            minCount: max(2, sampleCount)
-        )
-        : uniformSamples(count: max(2, sampleCount))
-    let count = max(2, samples.count)
-    var left: [Vec2] = []
-    var right: [Vec2] = []
-    left.reserveCapacity(count)
-    right.reserveCapacity(count)
-
-    for t in samples {
-        let point = param.position(globalT: t)
-        let tangent = param.tangent(globalT: t).normalized()
-        let normal = Vec2(-tangent.y, tangent.x)
-        let alphaValue = alphaAtT(t)
-        let tWarped = applyAlphaWarp(t: t, alphaValue: alphaValue, alphaStart: alphaStart)
-        let width = widthAtT(tWarped)
-        let angle = angleAtT(tWarped)
-        let corners = rectangleCorners(
-            center: point,
-            tangent: tangent,
-            normal: normal,
-            width: width,
-            height: height,
-            effectiveAngle: angle
-        )
-        var minDot = Double.greatestFiniteMagnitude
-        var maxDot = -Double.greatestFiniteMagnitude
-        var leftPoint = point
-        var rightPoint = point
-        for corner in corners {
-            let d = corner.dot(normal)
-            if d < minDot {
-                minDot = d
-                leftPoint = corner
-            }
-            if d > maxDot {
-                maxDot = d
-                rightPoint = corner
-            }
-        }
-        left.append(leftPoint)
-        right.append(rightPoint)
-    }
-
-    var segments: [Segment2] = []
-    segments.reserveCapacity(count * 2 + 2)
-    for i in 0..<(count - 1) {
-        segments.append(Segment2(left[i], left[i + 1]))
-    }
-    for i in stride(from: count - 1, to: 0, by: -1) {
-        segments.append(Segment2(right[i], right[i - 1]))
-    }
-    segments.append(Segment2(left[0], right[0]))
-    segments.append(Segment2(right[count - 1], left[count - 1]))
-    return segments
+    boundarySoupGeneral(
+        path: path,
+        sampleCount: sampleCount,
+        arcSamplesPerSegment: arcSamplesPerSegment,
+        adaptiveSampling: adaptiveSampling,
+        flatnessEps: flatnessEps,
+        maxDepth: maxDepth,
+        maxSamples: maxSamples,
+        warpGT: { gt in applyAlphaWarp(t: gt, alphaValue: alphaAtT(gt), alphaStart: alphaStart) },
+        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) }
+    )
 }
+
 
 private func rectangleCorners(
     center: Vec2,
