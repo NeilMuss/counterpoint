@@ -2,6 +2,9 @@ import Foundation
 import CP2Geometry
 import CP2Skeleton
 
+runCLI()
+
+
 public struct CLIOptions {
     var outPath: String = "out/line.svg"
     var example: String? = nil
@@ -260,6 +263,7 @@ func loadSpec(path: String) -> CP2Spec? {
 
 func writeSpec(_ spec: CP2Spec, path: String) {
     let url = URL(fileURLWithPath: path)
+    print("writeSpec to: \(path)")
     if let data = try? JSONEncoder().encode(spec) {
         try? data.write(to: url)
     }
@@ -1491,6 +1495,7 @@ public func runCLI() {
         let svg = try renderSVGString(options: options, spec: spec)
         let outURL = URL(fileURLWithPath: options.outPath)
         try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        print("Writing SVG to: \(outURL.path)")
         try? svg.data(using: .utf8)?.write(to: outURL)
     } catch {
         warn(error.localizedDescription)
