@@ -12,12 +12,11 @@ struct SweepResult {
 func runSweep(
     path: SkeletonPath,
     plan: SweepPlan,
-    options: CLIOptions,
-    exampleName: String?
+    options: CLIOptions
 ) -> SweepResult {
-    let example = exampleName?.lowercased()
     let segmentsUsed: [Segment2] = {
-        if example == "j" || example == "j_serif_only" || example == "poly3" {
+        switch plan.mode {
+        case .variableWidthAngleAlpha:
             return boundarySoupVariableWidthAngleAlpha(
                 path: path,
                 height: plan.sweepHeight,
@@ -32,22 +31,7 @@ func runSweep(
                 alphaAtT: plan.alphaAtT,
                 alphaStart: plan.alphaStartGT
             )
-        } else if example == "line_end_ramp" {
-            return boundarySoupVariableWidthAngleAlpha(
-                path: path,
-                height: plan.sweepHeight,
-                sampleCount: plan.sweepSampleCount,
-                arcSamplesPerSegment: plan.paramSamplesPerSegment,
-                adaptiveSampling: options.adaptiveSampling,
-                flatnessEps: options.flatnessEps,
-                maxDepth: options.maxDepth,
-                maxSamples: options.maxSamples,
-                widthAtT: { t in plan.scaledWidthAtT(plan.warpT(t)) },
-                angleAtT: { t in plan.thetaAtT(plan.warpT(t)) },
-                alphaAtT: plan.alphaAtT,
-                alphaStart: plan.alphaStartGT
-            )
-        } else {
+        case .constant:
             return boundarySoup(
                 path: path,
                 width: plan.sweepWidth,

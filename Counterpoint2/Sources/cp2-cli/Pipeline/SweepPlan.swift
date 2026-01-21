@@ -2,11 +2,17 @@ import Foundation
 import CP2Geometry
 import CP2Skeleton
 
+enum SweepMode {
+    case constant
+    case variableWidthAngleAlpha
+}
+
 struct SweepPlan {
     var sweepSampleCount: Int
     var sweepWidth: Double
     var sweepHeight: Double
     var sweepAngle: Double
+    var mode: SweepMode
     var paramSamplesPerSegment: Int
     var alphaStartGT: Double
     var alphaEndValue: Double
@@ -180,11 +186,20 @@ func makeSweepPlan(
         funcs.widthAtT(t) * widthScale
     }
 
+    let mode: SweepMode = {
+        let example = exampleName?.lowercased()
+        if example == "j" || example == "j_serif_only" || example == "poly3" || example == "line_end_ramp" {
+            return .variableWidthAngleAlpha
+        }
+        return .constant
+    }()
+
     return SweepPlan(
         sweepSampleCount: sweepSampleCount,
         sweepWidth: sweepWidth,
         sweepHeight: sweepHeight,
         sweepAngle: 0.0,
+        mode: mode,
         paramSamplesPerSegment: options.arcSamples,
         alphaStartGT: funcs.alphaStartGT,
         alphaEndValue: funcs.alphaEndValue,

@@ -65,7 +65,7 @@ public func renderSVGString(
     )
 
     // 4. Run Sweep
-    let result = runSweep(path: path, plan: plan, options: options, exampleName: exampleName)
+    let result = runSweep(path: path, plan: plan, options: options)
 
     // 5. Diagnostics
     emitSweepDiagnostics(
