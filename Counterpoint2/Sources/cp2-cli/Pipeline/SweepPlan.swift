@@ -21,15 +21,19 @@ struct SweepPlan {
     var widths: [Double]
 }
 
-func makeSweepPlan(
+struct StrokeParamFuncs {
+    var widthAtT: (Double) -> Double
+    var thetaAtT: (Double) -> Double
+    var alphaAtT: (Double) -> Double
+    var alphaStartGT: Double
+    var alphaEndValue: Double
+}
+
+func makeExampleStrokeParamFuncs(
     options: CLIOptions,
     exampleName: String?,
-    baselineWidth: Double,
-    sweepWidth: Double,
-    sweepHeight: Double,
-    sweepSampleCount: Int
-) -> SweepPlan {
-    let paramSamplesPerSegment = options.arcSamples
+    sweepWidth: Double
+) -> StrokeParamFuncs {
     let alphaStartGT = options.alphaStartGT
     let example = exampleName?.lowercased()
     
@@ -131,30 +135,49 @@ func makeSweepPlan(
         alphaAtT = { _ in 0.0 }
     }
 
+    return StrokeParamFuncs(
+        widthAtT: widthAtT,
+        thetaAtT: thetaAtT,
+        alphaAtT: alphaAtT,
+        alphaStartGT: alphaStartGT,
+        alphaEndValue: alphaEndValue
+    )
+}
+
+func makeSweepPlan(
+    options: CLIOptions,
+    exampleName: String?,
+    baselineWidth: Double,
+    sweepWidth: Double,
+    sweepHeight: Double,
+    sweepSampleCount: Int
+) -> SweepPlan {
+    let funcs = makeExampleStrokeParamFuncs(options: options, exampleName: exampleName, sweepWidth: sweepWidth)
+    
     let sweepGT: [Double] = (0..<sweepSampleCount).map {
         Double($0) / Double(max(1, sweepSampleCount - 1))
     }
     
     let warpT: (Double) -> Double = { t in
-        let alphaValue = alphaAtT(t)
-        if t <= alphaStartGT || abs(alphaValue) <= Epsilon.defaultValue {
+        let alphaValue = funcs.alphaAtT(t)
+        if t <= funcs.alphaStartGT || abs(alphaValue) <= Epsilon.defaultValue {
             return t
         }
-        let span = max(Epsilon.defaultValue, 1.0 - alphaStartGT)
-        let phase = max(0.0, min(1.0, (t - alphaStartGT) / span))
+        let span = max(Epsilon.defaultValue, 1.0 - funcs.alphaStartGT)
+        let phase = max(0.0, min(1.0, (t - funcs.alphaStartGT) / span))
         let exponent = max(0.05, 1.0 + alphaValue)
         let biased = pow(phase, exponent)
-        return alphaStartGT + biased * span
+        return funcs.alphaStartGT + biased * span
     }
     
-    let widths = sweepGT.map { widthAtT(warpT($0)) }
+    let widths = sweepGT.map { funcs.widthAtT(warpT($0)) }
     let meanWidth = widths.reduce(0.0, +) / Double(max(1, widths.count))
     let widthScale = (options.normalizeWidth && options.example?.lowercased() == "j" && meanWidth > Epsilon.defaultValue)
         ? (baselineWidth / meanWidth)
         : 1.0
         
     let scaledWidthAtT: (Double) -> Double = { t in
-        widthAtT(t) * widthScale
+        funcs.widthAtT(t) * widthScale
     }
 
     return SweepPlan(
@@ -162,14 +185,14 @@ func makeSweepPlan(
         sweepWidth: sweepWidth,
         sweepHeight: sweepHeight,
         sweepAngle: 0.0,
-        paramSamplesPerSegment: paramSamplesPerSegment,
-        alphaStartGT: alphaStartGT,
-        alphaEndValue: alphaEndValue,
+        paramSamplesPerSegment: options.arcSamples,
+        alphaStartGT: funcs.alphaStartGT,
+        alphaEndValue: funcs.alphaEndValue,
         baselineWidth: baselineWidth,
         widthScale: widthScale,
-        widthAtT: widthAtT,
-        thetaAtT: thetaAtT,
-        alphaAtT: alphaAtT,
+        widthAtT: funcs.widthAtT,
+        thetaAtT: funcs.thetaAtT,
+        alphaAtT: funcs.alphaAtT,
         warpT: warpT,
         scaledWidthAtT: scaledWidthAtT,
         sweepGT: sweepGT,
