@@ -7,6 +7,7 @@ public struct CP2Spec: Codable {
     var render: RenderSettings?
     var reference: ReferenceLayer?
     var ink: Ink?
+    var strokes: [StrokeSpec]?
 }
 
 func loadSpec(path: String) -> CP2Spec? {
