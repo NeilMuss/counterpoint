@@ -1,4 +1,4 @@
-public struct Vec2: Equatable, Codable {
+public struct Vec2: Equatable, Codable, Sendable {
     public var x: Double
     public var y: Double
 
