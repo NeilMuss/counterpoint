@@ -10,17 +10,31 @@ public struct CP2Spec: Codable {
     var strokes: [StrokeSpec]?
 }
 
-func loadSpec(path: String) -> CP2Spec? {
-    let url = URL(fileURLWithPath: path)
-    guard let data = try? Data(contentsOf: url) else {
-        warn("spec file not found: \(path)")
-        return nil
+enum SpecIOError: Error, CustomStringConvertible {
+    case readFailed(path: String, underlying: Error)
+    case decodeFailed(path: String, underlying: Error)
+
+    var description: String {
+        switch self {
+        case .readFailed(let path, let underlying):
+            return "spec read failed: \(path)\n\(underlying)"
+        case .decodeFailed(let path, let underlying):
+            return "spec decode failed: \(path)\n\(underlying)"
+        }
     }
+}
+
+func loadSpecOrThrow(path: String) throws -> CP2Spec {
     do {
-        return try JSONDecoder().decode(CP2Spec.self, from: data)
+        let url = URL(fileURLWithPath: path)
+        let data = try Data(contentsOf: url)
+        do {
+            return try JSONDecoder().decode(CP2Spec.self, from: data)
+        } catch {
+            throw SpecIOError.decodeFailed(path: path, underlying: error)
+        }
     } catch {
-        warn("spec decode failed: \(path)")
-        return nil
+        throw SpecIOError.readFailed(path: path, underlying: error)
     }
 }
 

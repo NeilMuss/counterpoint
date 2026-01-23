@@ -170,28 +170,52 @@ public func renderSVGString(
 }
 
 public func runCLI() {
-    let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
-    let spec = options.specPath.flatMap(loadSpec(path:))
+    // NOTE: CLIOptions.parse currently understands --spec and --example.
+    // We also support positional *.json as specPath here to avoid silent fallback.
+    var options = parseArgs(Array(CommandLine.arguments.dropFirst()))
+    if options.specPath == nil {
+        if let positional = CommandLine.arguments.dropFirst().first(where: { $0.hasSuffix(".json") && !$0.hasPrefix("--") }) {
+            options.specPath = positional
+        }
+    }
+
     let outURL = URL(fileURLWithPath: options.outPath)
+
     do {
+        let spec: CP2Spec?
+        if let path = options.specPath {
+            spec = try loadSpecOrThrow(path: path)
+        } else {
+            spec = nil
+        }
+
         let svg = try renderSVGString(options: options, spec: spec)
-        try FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        try FileManager.default.createDirectory(
+            at: outURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
         guard let data = svg.data(using: .utf8) else {
             warn("Failed to encode SVG to UTF-8")
             exit(1)
         }
+
         try data.write(to: outURL, options: .atomic)
+
         if options.verbose {
             print("Exported \(data.count) bytes to: \(outURL.path)")
         }
     } catch {
         warn("export failed")
-        warn("error: \(error.localizedDescription)")
+        warn("error: \(error)")
         warn("path: \(outURL.path)")
         warn("cwd: \(FileManager.default.currentDirectoryPath)")
         exit(1)
     }
 }
+
+// MARK: - Settings / Path resolution
 
 private func resolveEffectiveSettings(
     options: CLIOptions,
