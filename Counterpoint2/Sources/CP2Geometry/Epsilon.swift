@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SnapKey: Hashable, Codable {
+public struct SnapKey: Hashable, Codable, Sendable {
     public let x: Int
     public let y: Int
 }

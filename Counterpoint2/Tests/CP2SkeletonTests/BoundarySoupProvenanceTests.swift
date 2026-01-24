@@ -118,4 +118,47 @@ final class BoundarySoupProvenanceTests: XCTestCase {
         XCTAssertEqual(hits[0].len, (d - a).length)
         XCTAssertEqual(hits[1].len, (b - a).length)
     }
+
+    func testCapStartJoinConnectsCorrespondingEndpoints() {
+        let left = [Vec2(0, 1), Vec2(10, 1)]
+        let right = [Vec2(0, -1), Vec2(10, -1)]
+
+        let caps = buildCaps(leftRail: left, rightRail: right, capIndexBase: 0)
+        let join = caps.first { $0.source == .capStartEdge(role: .joinLR, detail: "capIndex=0") }
+
+        XCTAssertNotNil(join)
+        let endpoints = [join!.a, join!.b]
+        XCTAssertTrue(endpoints.contains(where: { Epsilon.approxEqual($0, left[0]) }))
+        XCTAssertTrue(endpoints.contains(where: { Epsilon.approxEqual($0, right[0]) }))
+        XCTAssertEqual((join!.b - join!.a).length, (left[0] - right[0]).length, accuracy: 1.0e-6)
+    }
+
+    func testCapEndJoinConnectsCorrespondingEndpoints() {
+        let left = [Vec2(0, 1), Vec2(10, 1)]
+        let right = [Vec2(0, -1), Vec2(10, -1)]
+
+        let caps = buildCaps(leftRail: left, rightRail: right, capIndexBase: 0)
+        let join = caps.first { $0.source == .capEndEdge(role: .joinLR, detail: "capIndex=0") }
+
+        XCTAssertNotNil(join)
+        let endpoints = [join!.a, join!.b]
+        XCTAssertTrue(endpoints.contains(where: { Epsilon.approxEqual($0, left[1]) }))
+        XCTAssertTrue(endpoints.contains(where: { Epsilon.approxEqual($0, right[1]) }))
+        XCTAssertEqual((join!.b - join!.a).length, (left[1] - right[1]).length, accuracy: 1.0e-6)
+    }
+
+    func testCapJoinUnaffectedByRightRailOrder() {
+        let left = [Vec2(0, 1), Vec2(10, 1)]
+        let right = [Vec2(0, -1), Vec2(10, -1)]
+        let rightReversed = right.reversed()
+
+        let caps = buildCaps(leftRail: left, rightRail: Array(rightReversed), capIndexBase: 0)
+        let startJoin = caps.first { $0.source == .capStartEdge(role: .joinLR, detail: "capIndex=0") }
+        let endJoin = caps.first { $0.source == .capEndEdge(role: .joinLR, detail: "capIndex=0") }
+
+        XCTAssertNotNil(startJoin)
+        XCTAssertNotNil(endJoin)
+        XCTAssertEqual((startJoin!.b - startJoin!.a).length, (left[0] - right[0]).length, accuracy: 1.0e-6)
+        XCTAssertEqual((endJoin!.b - endJoin!.a).length, (left[1] - right[1]).length, accuracy: 1.0e-6)
+    }
 }

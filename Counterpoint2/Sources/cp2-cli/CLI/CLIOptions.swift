@@ -23,6 +23,9 @@ public struct CLIOptions {
     var debugSoupPreRepair: Bool = false
     var debugDumpCapSegments: Bool = false
     var debugDumpCapSegmentsTop: Int = 10
+    var debugDumpCapEndpoints: Bool = false
+    var debugDumpRailEndpoints: Bool = false
+    var debugDumpRailEndpointsPrefix: Int = 5
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -102,6 +105,13 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugSoupPreRepair = true
         } else if arg == "--debug-dump-cap-segments" {
             options.debugDumpCapSegments = true
+        } else if arg == "--debug-dump-cap-endpoints" {
+            options.debugDumpCapEndpoints = true
+        } else if arg == "--debug-dump-rail-endpoints" {
+            options.debugDumpRailEndpoints = true
+        } else if arg == "--debug-dump-rail-endpoints-prefix", index + 1 < args.count {
+            options.debugDumpRailEndpointsPrefix = max(1, Int(args[index + 1]) ?? options.debugDumpRailEndpointsPrefix)
+            index += 1
         } else if arg == "--debug-dump-cap-segments-top", index + 1 < args.count {
             options.debugDumpCapSegmentsTop = max(1, Int(args[index + 1]) ?? options.debugDumpCapSegmentsTop)
             index += 1
@@ -221,7 +231,10 @@ Debug flags:
   --debug-trace-jump-step  Dump trace decision for max jump segment
   --debug-soup-pre-repair  Dump soup degree stats before any repair
   --debug-dump-cap-segments  Dump cap segments (matches jump if present)
+  --debug-dump-cap-endpoints  Dump cap endpoint selection (intended vs emitted)
   --debug-dump-cap-segments-top N  Limit cap segment dump (default: 10)
+  --debug-dump-rail-endpoints  Dump rail endpoints (start/end/prefix)
+  --debug-dump-rail-endpoints-prefix N  Rail prefix count (default: 5)
   --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)

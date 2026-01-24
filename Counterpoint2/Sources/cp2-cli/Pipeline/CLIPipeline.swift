@@ -211,6 +211,44 @@ public func renderSVGString(
                 }
             }
         }
+        if options.debugDumpCapEndpoints {
+            if let capInfo = result.capEndpointsDebug {
+                let s = capInfo.intendedStart
+                let e = capInfo.intendedEnd
+                print(String(format: "capEndpoints capIndex=0 eps=%.6g", capInfo.eps))
+                print(String(format: "  intended start: L0=(%.6f,%.6f) key=(%d,%d) R0=(%.6f,%.6f) key=(%d,%d) dist=%.6f", s.left.x, s.left.y, s.leftKey.x, s.leftKey.y, s.right.x, s.right.y, s.rightKey.x, s.rightKey.y, s.distance))
+                print(String(format: "  intended end:   L1=(%.6f,%.6f) key=(%d,%d) R1=(%.6f,%.6f) key=(%d,%d) dist=%.6f", e.left.x, e.left.y, e.leftKey.x, e.leftKey.y, e.right.x, e.right.y, e.rightKey.x, e.rightKey.y, e.distance))
+                if let startJoin = capInfo.emittedStartJoin {
+                    print(String(format: "  emitted capStart.joinLR: src=%@ A=(%.6f,%.6f) key=(%d,%d) B=(%.6f,%.6f) key=(%d,%d) len=%.6f", startJoin.source.description, startJoin.a.x, startJoin.a.y, startJoin.aKey.x, startJoin.aKey.y, startJoin.b.x, startJoin.b.y, startJoin.bKey.x, startJoin.bKey.y, startJoin.length))
+                } else {
+                    print("  emitted capStart.joinLR: <none>")
+                }
+                if let endJoin = capInfo.emittedEndJoin {
+                    print(String(format: "  emitted capEnd.joinLR:   src=%@ A=(%.6f,%.6f) key=(%d,%d) B=(%.6f,%.6f) key=(%d,%d) len=%.6f", endJoin.source.description, endJoin.a.x, endJoin.a.y, endJoin.aKey.x, endJoin.aKey.y, endJoin.b.x, endJoin.b.y, endJoin.bKey.x, endJoin.bKey.y, endJoin.length))
+                } else {
+                    print("  emitted capEnd.joinLR:   <none>")
+                }
+            } else {
+                print("capEndpoints <none>")
+            }
+        }
+        if options.debugDumpRailEndpoints {
+            if let railSummary = result.railDebugSummary {
+                let prefixCount = max(1, min(options.debugDumpRailEndpointsPrefix, railSummary.prefix.count))
+                let start = railSummary.start
+                let end = railSummary.end
+                print(String(format: "railDebug count=%d", railSummary.count))
+                print(String(format: "railDebug start idx=%d L=(%.6f,%.6f) key=(%d,%d) R=(%.6f,%.6f) key=(%d,%d) dist=%.6f", start.index, start.left.x, start.left.y, start.leftKey.x, start.leftKey.y, start.right.x, start.right.y, start.rightKey.x, start.rightKey.y, start.distance))
+                print(String(format: "railDebug end idx=%d L=(%.6f,%.6f) key=(%d,%d) R=(%.6f,%.6f) key=(%d,%d) dist=%.6f", end.index, end.left.x, end.left.y, end.leftKey.x, end.leftKey.y, end.right.x, end.right.y, end.rightKey.x, end.rightKey.y, end.distance))
+                print(String(format: "railDebug prefix count=%d", prefixCount))
+                for i in 0..<prefixCount {
+                    let item = railSummary.prefix[i]
+                    print(String(format: "  [%d] L=(%.6f,%.6f) key=(%d,%d) R=(%.6f,%.6f) key=(%d,%d) dist=%.6f", item.index, item.left.x, item.left.y, item.leftKey.x, item.leftKey.y, item.right.x, item.right.y, item.rightKey.x, item.rightKey.y, item.distance))
+                }
+            } else {
+                print("railDebug <none>")
+            }
+        }
         if options.debugRingSpine {
             overlays.append(makeRingSpineOverlay(rings: result.rings))
         }

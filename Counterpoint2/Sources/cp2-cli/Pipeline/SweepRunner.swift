@@ -9,6 +9,8 @@ struct SweepResult {
     var glyphBounds: AABB?
     var sampling: SamplingResult?
     var traceSteps: [TraceStepInfo]
+    var capEndpointsDebug: CapEndpointsDebug?
+    var railDebugSummary: RailDebugSummary?
 }
 
 func runSweep(
@@ -18,6 +20,8 @@ func runSweep(
 ) -> SweepResult {
     var capturedSampling: SamplingResult? = nil
     var traceSteps: [TraceStepInfo] = []
+    var capEndpointsDebug: CapEndpointsDebug? = nil
+    var railDebugSummary: RailDebugSummary? = nil
 
     let segmentsUsed: [Segment2] = {
         if plan.usesVariableWidthAngleAlpha {
@@ -35,7 +39,9 @@ func runSweep(
                 angleAtT: { t in plan.thetaAtT(plan.warpT(t)) },
                 alphaAtT: plan.alphaAtT,
                 alphaStart: plan.alphaStartGT,
-                debugSampling: { capturedSampling = $0 }
+                debugSampling: { capturedSampling = $0 },
+                debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
+                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil
             )
         } else {
             return boundarySoup(
@@ -50,7 +56,9 @@ func runSweep(
                 railEps: options.flatnessEps,
                 maxDepth: options.maxDepth,
                 maxSamples: options.maxSamples,
-                debugSampling: { capturedSampling = $0 }
+                debugSampling: { capturedSampling = $0 },
+                debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
+                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil
             )
         }
     }()
@@ -69,6 +77,8 @@ func runSweep(
         ring: ring,
         glyphBounds: glyphBounds,
         sampling: capturedSampling,
-        traceSteps: traceSteps
+        traceSteps: traceSteps,
+        capEndpointsDebug: capEndpointsDebug,
+        railDebugSummary: railDebugSummary
     )
 }

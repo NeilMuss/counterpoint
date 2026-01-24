@@ -71,6 +71,94 @@ public struct Segment2: Equatable, Codable, Sendable {
     }
 }
 
+public struct CapEndpointPair: Equatable, Sendable {
+    public let left: Vec2
+    public let right: Vec2
+    public let leftKey: SnapKey
+    public let rightKey: SnapKey
+    public let distance: Double
+
+    public init(left: Vec2, right: Vec2, leftKey: SnapKey, rightKey: SnapKey, distance: Double) {
+        self.left = left
+        self.right = right
+        self.leftKey = leftKey
+        self.rightKey = rightKey
+        self.distance = distance
+    }
+}
+
+public struct CapJoinDebug: Equatable, Sendable {
+    public let a: Vec2
+    public let b: Vec2
+    public let aKey: SnapKey
+    public let bKey: SnapKey
+    public let length: Double
+    public let source: EdgeSource
+
+    public init(a: Vec2, b: Vec2, aKey: SnapKey, bKey: SnapKey, length: Double, source: EdgeSource) {
+        self.a = a
+        self.b = b
+        self.aKey = aKey
+        self.bKey = bKey
+        self.length = length
+        self.source = source
+    }
+}
+
+public struct CapEndpointsDebug: Equatable, Sendable {
+    public let eps: Double
+    public let intendedStart: CapEndpointPair
+    public let intendedEnd: CapEndpointPair
+    public let emittedStartJoin: CapJoinDebug?
+    public let emittedEndJoin: CapJoinDebug?
+
+    public init(
+        eps: Double,
+        intendedStart: CapEndpointPair,
+        intendedEnd: CapEndpointPair,
+        emittedStartJoin: CapJoinDebug?,
+        emittedEndJoin: CapJoinDebug?
+    ) {
+        self.eps = eps
+        self.intendedStart = intendedStart
+        self.intendedEnd = intendedEnd
+        self.emittedStartJoin = emittedStartJoin
+        self.emittedEndJoin = emittedEndJoin
+    }
+}
+
+public struct RailEndpointDebug: Equatable, Sendable {
+    public let index: Int
+    public let left: Vec2
+    public let right: Vec2
+    public let leftKey: SnapKey
+    public let rightKey: SnapKey
+    public let distance: Double
+
+    public init(index: Int, left: Vec2, right: Vec2, leftKey: SnapKey, rightKey: SnapKey, distance: Double) {
+        self.index = index
+        self.left = left
+        self.right = right
+        self.leftKey = leftKey
+        self.rightKey = rightKey
+        self.distance = distance
+    }
+}
+
+public struct RailDebugSummary: Equatable, Sendable {
+    public let count: Int
+    public let start: RailEndpointDebug
+    public let end: RailEndpointDebug
+    public let prefix: [RailEndpointDebug]
+
+    public init(count: Int, start: RailEndpointDebug, end: RailEndpointDebug, prefix: [RailEndpointDebug]) {
+        self.count = count
+        self.start = start
+        self.end = end
+        self.prefix = prefix
+    }
+}
+
 public struct SweepStyle: Equatable, Codable {
     public let width: Double
     public let height: Double
@@ -83,6 +171,32 @@ public struct SweepStyle: Equatable, Codable {
         self.angle = angle
         self.offset = offset
     }
+}
+
+public func buildCaps(
+    leftRail: [Vec2],
+    rightRail: [Vec2],
+    capIndexBase: Int = 0
+) -> [Segment2] {
+    guard let leftStart = leftRail.first, let leftEnd = leftRail.last else {
+        return []
+    }
+    guard let rightStart = rightRail.first, let rightEnd = rightRail.last else {
+        return []
+    }
+
+    let startDistance = (leftStart - rightStart).length
+    let startAltDistance = (leftStart - rightEnd).length
+    let useReversedRight = startAltDistance + Epsilon.defaultValue < startDistance
+
+    let rightForStart = useReversedRight ? rightEnd : rightStart
+    let rightForEnd = useReversedRight ? rightStart : rightEnd
+
+    let detail = "capIndex=\(capIndexBase)"
+    return [
+        Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: detail)),
+        Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: detail))
+    ]
 }
 
 /// General boundary soup generator that supports:
@@ -101,7 +215,9 @@ public func boundarySoupGeneral(
     maxSamples: Int = 512,
     warpGT: @escaping (Double) -> Double = { $0 },
     styleAtGT: @escaping (Double) -> SweepStyle,
-    debugSampling: ((SamplingResult) -> Void)? = nil
+    debugSampling: ((SamplingResult) -> Void)? = nil,
+    debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -157,6 +273,15 @@ public func boundarySoupGeneral(
         left.append(rail.left)
         right.append(rail.right)
     }
+    if let debugRailSummary {
+        let rails = zip(left, right).map { RailSample(left: $0.0, right: $0.1) }
+        let summary = computeRailDebugSummary(
+            rails: rails,
+            keyOf: { Epsilon.snapKey($0, eps: Epsilon.defaultValue) },
+            prefixCount: rails.count
+        )
+        debugRailSummary(summary)
+    }
 
     // MARK: EDGE CREATION SITES
     // - boundarySoupGeneral: left forward (railLeft), right backward (railRight), caps (capStart/capEnd)
@@ -172,8 +297,16 @@ public func boundarySoupGeneral(
     for i in stride(from: count - 1, to: 0, by: -1) {
         segments.append(Segment2(right[i], right[i - 1], source: .railRight))
     }
-    segments.append(Segment2(left[0], right[0], source: .capStartEdge(role: .joinLR, detail: "capIndex=0")))
-    segments.append(Segment2(right[count - 1], left[count - 1], source: .capEndEdge(role: .joinLR, detail: "capIndex=0")))
+    let caps = buildCaps(leftRail: left, rightRail: right, capIndexBase: 0)
+    segments.append(contentsOf: caps)
+    if let debugCapEndpoints, let capInfo = computeCapEndpointsDebug(
+        leftRail: left,
+        rightRail: right,
+        capSegments: caps,
+        eps: Epsilon.defaultValue
+    ) {
+        debugCapEndpoints(capInfo)
+    }
 
     return segments
 }
@@ -190,7 +323,9 @@ public func boundarySoup(
     railEps: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
-    debugSampling: ((SamplingResult) -> Void)? = nil
+    debugSampling: ((SamplingResult) -> Void)? = nil,
+    debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -202,7 +337,9 @@ public func boundarySoup(
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         styleAtGT: { _ in SweepStyle(width: width, height: height, angle: effectiveAngle, offset: 0.0) },
-        debugSampling: debugSampling
+        debugSampling: debugSampling,
+        debugCapEndpoints: debugCapEndpoints,
+        debugRailSummary: debugRailSummary
     )
 }
 
@@ -218,7 +355,9 @@ public func boundarySoupVariableWidth(
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
-    debugSampling: ((SamplingResult) -> Void)? = nil
+    debugSampling: ((SamplingResult) -> Void)? = nil,
+    debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -230,7 +369,9 @@ public func boundarySoupVariableWidth(
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: effectiveAngle, offset: 0.0) },
-        debugSampling: debugSampling
+        debugSampling: debugSampling,
+        debugCapEndpoints: debugCapEndpoints,
+        debugRailSummary: debugRailSummary
     )
 }
 
@@ -246,7 +387,9 @@ public func boundarySoupVariableWidthAngle(
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
     angleAtT: @escaping (Double) -> Double,
-    debugSampling: ((SamplingResult) -> Void)? = nil
+    debugSampling: ((SamplingResult) -> Void)? = nil,
+    debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -258,7 +401,9 @@ public func boundarySoupVariableWidthAngle(
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) },
-        debugSampling: debugSampling
+        debugSampling: debugSampling,
+        debugCapEndpoints: debugCapEndpoints,
+        debugRailSummary: debugRailSummary
     )
 }
 
@@ -276,7 +421,9 @@ public func boundarySoupVariableWidthAngleAlpha(
     angleAtT: @escaping (Double) -> Double,
     alphaAtT: @escaping (Double) -> Double,
     alphaStart: Double,
-    debugSampling: ((SamplingResult) -> Void)? = nil
+    debugSampling: ((SamplingResult) -> Void)? = nil,
+    debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -289,7 +436,9 @@ public func boundarySoupVariableWidthAngleAlpha(
         maxSamples: maxSamples,
         warpGT: { gt in applyAlphaWarp(t: gt, alphaValue: alphaAtT(gt), alphaStart: alphaStart) },
         styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) },
-        debugSampling: debugSampling
+        debugSampling: debugSampling,
+        debugCapEndpoints: debugCapEndpoints,
+        debugRailSummary: debugRailSummary
     )
 }
 
@@ -642,6 +791,120 @@ public struct SoupDegreeStats: Equatable {
         self.degreeHistogram = degreeHistogram
         self.anomalies = anomalies
     }
+}
+
+public func computeCapEndpointsDebug(
+    leftRail: [Vec2],
+    rightRail: [Vec2],
+    capSegments: [Segment2],
+    eps: Double
+) -> CapEndpointsDebug? {
+    guard let leftStart = leftRail.first, let leftEnd = leftRail.last else {
+        return nil
+    }
+    guard let rightStart = rightRail.first, let rightEnd = rightRail.last else {
+        return nil
+    }
+
+    let intendedStart = CapEndpointPair(
+        left: leftStart,
+        right: rightStart,
+        leftKey: Epsilon.snapKey(leftStart, eps: eps),
+        rightKey: Epsilon.snapKey(rightStart, eps: eps),
+        distance: (leftStart - rightStart).length
+    )
+    let intendedEnd = CapEndpointPair(
+        left: leftEnd,
+        right: rightEnd,
+        leftKey: Epsilon.snapKey(leftEnd, eps: eps),
+        rightKey: Epsilon.snapKey(rightEnd, eps: eps),
+        distance: (leftEnd - rightEnd).length
+    )
+
+    let startJoin = capSegments.first { seg in
+        switch seg.source {
+        case .capStartEdge(let role, _):
+            return role == .joinLR
+        case .capStart:
+            return true
+        default:
+            return false
+        }
+    }
+    let endJoin = capSegments.first { seg in
+        switch seg.source {
+        case .capEndEdge(let role, _):
+            return role == .joinLR
+        case .capEnd:
+            return true
+        default:
+            return false
+        }
+    }
+
+    let startDebug: CapJoinDebug?
+    if let seg = startJoin {
+        startDebug = CapJoinDebug(
+            a: seg.a,
+            b: seg.b,
+            aKey: Epsilon.snapKey(seg.a, eps: eps),
+            bKey: Epsilon.snapKey(seg.b, eps: eps),
+            length: (seg.b - seg.a).length,
+            source: seg.source
+        )
+    } else {
+        startDebug = nil
+    }
+
+    let endDebug: CapJoinDebug?
+    if let seg = endJoin {
+        endDebug = CapJoinDebug(
+            a: seg.a,
+            b: seg.b,
+            aKey: Epsilon.snapKey(seg.a, eps: eps),
+            bKey: Epsilon.snapKey(seg.b, eps: eps),
+            length: (seg.b - seg.a).length,
+            source: seg.source
+        )
+    } else {
+        endDebug = nil
+    }
+
+    return CapEndpointsDebug(
+        eps: eps,
+        intendedStart: intendedStart,
+        intendedEnd: intendedEnd,
+        emittedStartJoin: startDebug,
+        emittedEndJoin: endDebug
+    )
+}
+
+public func computeRailDebugSummary(
+    rails: [RailSample],
+    keyOf: (Vec2) -> SnapKey,
+    prefixCount: Int
+) -> RailDebugSummary {
+    let clampedCount = max(1, min(prefixCount, rails.count))
+
+    func makeDebug(_ index: Int, _ rail: RailSample) -> RailEndpointDebug {
+        let leftKey = keyOf(rail.left)
+        let rightKey = keyOf(rail.right)
+        let distance = (rail.right - rail.left).length
+        return RailEndpointDebug(
+            index: index,
+            left: rail.left,
+            right: rail.right,
+            leftKey: leftKey,
+            rightKey: rightKey,
+            distance: distance
+        )
+    }
+
+    let start = makeDebug(0, rails[0])
+    let end = makeDebug(rails.count - 1, rails[rails.count - 1])
+    let prefix = (0..<clampedCount).map { makeDebug($0, rails[$0]) }
+
+    return RailDebugSummary(count: rails.count, start: start, end: end, prefix: prefix)
 }
 
 public struct SegmentSpotlight: Equatable {
