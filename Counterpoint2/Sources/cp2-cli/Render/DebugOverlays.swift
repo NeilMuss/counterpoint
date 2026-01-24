@@ -231,3 +231,58 @@ func debugOverlayForHeartline(_ resolved: ResolvedHeartline, steps: Int) -> Debu
 """
     return DebugOverlay(svg: svg, bounds: bounds)
 }
+
+func makeRingSpineOverlay(
+    rings: [[Vec2]],
+    breadcrumbStep: Int = 50,
+    closureEps: Double = Epsilon.defaultValue
+) -> DebugOverlay {
+    guard !rings.isEmpty else {
+        return DebugOverlay(svg: "<g id=\"debug-ring-spine\"></g>", bounds: AABB.empty)
+    }
+
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+
+    for (ringIndex, ring) in rings.enumerated() {
+        guard let first = ring.first else { continue }
+        var pathParts: [String] = []
+        pathParts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in ring.dropFirst() {
+            pathParts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = pathParts.joined(separator: " ")
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"#00c853\" stroke-width=\"1.5\" stroke-linejoin=\"round\" stroke-linecap=\"round\" />")
+
+        for (i, point) in ring.enumerated() {
+            bounds.expand(by: point)
+            if i % max(1, breadcrumbStep) == 0 {
+                svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"1.8\" fill=\"#00c853\" stroke=\"none\"/>", point.x, point.y))
+                svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">%d</text>", point.x + 4.0, point.y - 4.0, i))
+            }
+        }
+
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"4.0\" fill=\"#2962ff\" stroke=\"none\"/>", first.x, first.y))
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">start</text>", first.x + 4.0, first.y - 4.0))
+
+        if let last = ring.last {
+            let closure = (last - first).length
+            if closure > closureEps {
+                svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"4.0\" fill=\"#d50000\" stroke=\"none\"/>", last.x, last.y))
+                svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">end d=%.4f</text>", last.x + 4.0, last.y - 4.0, closure))
+            }
+        }
+
+        if ringIndex < rings.count - 1 {
+            svgParts.append("<!-- ring \(ringIndex) end -->")
+        }
+    }
+
+    let svg = """
+  <g id="debug-ring-spine">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+
+    return DebugOverlay(svg: svg, bounds: bounds)
+}

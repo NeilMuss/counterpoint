@@ -97,6 +97,13 @@ public func renderSVGString(
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
         }
     }
+    if !soloWhy && options.debugRingSpine {
+        for (index, ring) in result.rings.enumerated() {
+            let closure = ring.count > 1 ? (ring.last! - ring.first!).length : 0.0
+            print(String(format: "ringSpine ring=%d verts=%d closure=%.6f", index, ring.count, closure))
+        }
+        overlays.append(makeRingSpineOverlay(rings: result.rings))
+    }
     if wantsSamplingWhy {
         if let sampling = result.sampling {
             let dotsAll = samplingWhyDots(

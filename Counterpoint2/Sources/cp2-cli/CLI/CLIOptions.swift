@@ -17,6 +17,7 @@ public struct CLIOptions {
     var debugInkControls: Bool = false
     var debugSamplingWhy: Bool = false
     var debugSoloWhy: Bool = false
+    var debugRingSpine: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -86,6 +87,17 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugSamplingWhy = true
         } else if arg == "--debug-solo-why" {
             options.debugSoloWhy = true
+        } else if arg == "--debug-ring-spine" {
+            options.debugRingSpine = true
+        } else if arg == "--view", index + 1 < args.count {
+            let tokens = args[index + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            if tokens.contains("ringSpine") {
+                options.debugRingSpine = true
+            }
+            if tokens.contains("samplingWhy") {
+                options.debugSamplingWhy = true
+            }
+            index += 1
         } else if arg == "--probe-count", index + 1 < args.count {
             options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
             index += 1
@@ -185,6 +197,8 @@ Debug flags:
   --debug-ink-controls  Ink control geometry + evaluated curve only
   --debug-sampling-why  Sampling “why dots” overlay (adaptive sampling only)
   --debug-solo-why  Render only outline + sampling why dots
+  --debug-ring-spine Render traced ring polyline with index breadcrumbs
+  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --canvas WxH     Output canvas pixel size (default: 1200x1200)
