@@ -21,7 +21,7 @@ public struct GlobalTSampler {
         case .adaptive:
             // STEP 2: geometry-only adaptive sampling (path flatness only).
             // railProbe/paramsAt are intentionally ignored in Step 2.
-            return adaptiveSamplesGeometryOnly(config: config, positionAt: positionAt)
+            return adaptiveSamples(config: config, positionAt: positionAt, railProbe: railProbe)
         }
     }
 
@@ -53,9 +53,10 @@ public struct GlobalTSampler {
     /// Boundaries:
     /// - always include s=0 and s=1
     /// - respect maxDepth and maxSamples; when hit, we "forcedStop" and accept the segment
-    private func adaptiveSamplesGeometryOnly(
+    private func adaptiveSamples(
         config: SamplingConfig,
-        positionAt: PositionAtS
+        positionAt: PositionAtS,
+        railProbe: (any RailProbe)?
     ) -> SamplingResult {
 
         // Accumulate accepted endpoints; we'll sort+dedup at the end.
@@ -119,12 +120,43 @@ public struct GlobalTSampler {
             let err = flatnessError(s0: s0, sm: sm, s1: s1)
             recordWorst(flatnessErr: err)
 
-            // If within tolerance: accept.
-            if err <= config.flatnessEps {
+            var needsSubdivision = false
+            var reasons: [SampleReason] = []
+            var errors = SampleErrors()
+
+            // Rule 1: path flatness
+            if err > config.flatnessEps {
+                needsSubdivision = true
+                reasons.append(.subdividePathFlatness(err: err))
+                errors.flatnessErr = err
+            }
+
+            // Rule 2: rail deviation
+            if let railProbe = railProbe {
+                let rails0 = railProbe.rails(atGlobalT: s0)
+                let railsM = railProbe.rails(atGlobalT: sm)
+                let rails1 = railProbe.rails(atGlobalT: s1)
+
+                let railErr = ErrorMetrics.railDeviation(
+                    l0: rails0.left, lm: railsM.left, l1: rails1.left,
+                    r0: rails0.right, rm: railsM.right, r1: rails1.right
+                )
+
+                stats.worstRailErr = max(stats.worstRailErr, railErr)
+
+                if railErr > config.railEps {
+                    needsSubdivision = true
+                    reasons.append(.subdivideRailDeviation(err: railErr))
+                    errors.railErr = railErr
+                }
+            }
+
+            // ✅ Accept ONLY if all rules passed
+            if !needsSubdivision {
                 acceptSegment(
                     s0: s0, s1: s1, depth: depth,
-                    reasons: [.forcedEndpoint], // accepted due to flatness pass; keep reason simple in Step 2
-                    errors: SampleErrors(flatnessErr: err),
+                    reasons: [.forcedEndpoint],
+                    errors: errors,
                     action: .accepted
                 )
                 return
@@ -135,8 +167,8 @@ public struct GlobalTSampler {
             trace.append(SampleDecision(
                 t0: s0, t1: s1, tm: sm, depth: depth,
                 action: .subdivided,
-                reasons: [.subdividePathFlatness(err: err)],
-                errors: SampleErrors(flatnessErr: err)
+                reasons: reasons,
+                errors: errors
             ))
 
             // Guardrails: maxDepth
@@ -165,9 +197,11 @@ public struct GlobalTSampler {
                 return
             }
 
-            // Deterministic recursion order: left then right.
+            // Deterministic recursion
             recurse(s0: s0, s1: sm, depth: depth + 1)
             recurse(s0: sm, s1: s1, depth: depth + 1)
+            return
+
         }
 
         // Kick it off.
