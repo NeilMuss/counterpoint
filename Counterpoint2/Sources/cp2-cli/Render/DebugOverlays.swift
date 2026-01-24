@@ -286,3 +286,90 @@ func makeRingSpineOverlay(
 
     return DebugOverlay(svg: svg, bounds: bounds)
 }
+
+struct RingJumpInfo {
+    let ringIndex: Int
+    let verts: Int
+    let maxSegIndex: Int
+    let aIndex: Int
+    let bIndex: Int
+    let a: Vec2
+    let b: Vec2
+    let length: Double
+}
+
+func computeRingJumps(
+    rings: [[Vec2]],
+    topK: Int = 1
+) -> [RingJumpInfo] {
+    var jumps: [RingJumpInfo] = []
+    for (ringIndex, ring) in rings.enumerated() {
+        guard ring.count > 1 else { continue }
+        var maxLen = -Double.greatestFiniteMagnitude
+        var maxIndex = 0
+        var maxA = ring[0]
+        var maxB = ring[0]
+        for i in 0..<ring.count {
+            let a = ring[i]
+            let b = ring[(i + 1) % ring.count]
+            let len = (b - a).length
+            if len > maxLen {
+                maxLen = len
+                maxIndex = i
+                maxA = a
+                maxB = b
+            }
+        }
+        jumps.append(RingJumpInfo(
+            ringIndex: ringIndex,
+            verts: ring.count,
+            maxSegIndex: maxIndex,
+            aIndex: maxIndex,
+            bIndex: (maxIndex + 1) % ring.count,
+            a: maxA,
+            b: maxB,
+            length: maxLen
+        ))
+    }
+
+    let sorted = jumps.sorted {
+        if $0.length == $1.length {
+            if $0.ringIndex == $1.ringIndex { return $0.maxSegIndex < $1.maxSegIndex }
+            return $0.ringIndex < $1.ringIndex
+        }
+        return $0.length > $1.length
+    }
+    return Array(sorted.prefix(max(1, topK)))
+}
+
+func makeRingJumpOverlay(
+    jumps: [RingJumpInfo]
+) -> DebugOverlay {
+    guard !jumps.isEmpty else {
+        return DebugOverlay(svg: "<g id=\"debug-ring-jump\"></g>", bounds: AABB.empty)
+    }
+
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    for jump in jumps {
+        let mid = (jump.a + jump.b) * 0.5
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"#ff1744\" stroke-width=\"6\" stroke-linecap=\"round\" opacity=\"0.9\"/>", jump.a.x, jump.a.y, jump.b.x, jump.b.y))
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"5\" fill=\"#ff1744\" stroke=\"none\"/>", jump.a.x, jump.a.y))
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"5\" fill=\"#ff1744\" stroke=\"none\"/>", jump.b.x, jump.b.y))
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">a=%d</text>", jump.a.x + 4.0, jump.a.y - 4.0, jump.aIndex))
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">b=%d</text>", jump.b.x + 4.0, jump.b.y - 4.0, jump.bIndex))
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">k=%d len=%.4f</text>", mid.x + 4.0, mid.y - 4.0, jump.maxSegIndex, jump.length))
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#111111\">ringJump verts=%d maxK=%d len=%.4f</text>", mid.x + 4.0, mid.y + 12.0, jump.verts, jump.maxSegIndex, jump.length))
+        bounds.expand(by: jump.a)
+        bounds.expand(by: jump.b)
+        bounds.expand(by: mid)
+    }
+
+    let svg = """
+  <g id="debug-ring-jump">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+
+    return DebugOverlay(svg: svg, bounds: bounds)
+}

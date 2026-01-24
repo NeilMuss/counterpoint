@@ -18,6 +18,11 @@ public struct CLIOptions {
     var debugSamplingWhy: Bool = false
     var debugSoloWhy: Bool = false
     var debugRingSpine: Bool = false
+    var debugRingJump: Bool = false
+    var debugTraceJumpStep: Bool = false
+    var debugSoupPreRepair: Bool = false
+    var debugDumpCapSegments: Bool = false
+    var debugDumpCapSegmentsTop: Int = 10
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -89,10 +94,24 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugSoloWhy = true
         } else if arg == "--debug-ring-spine" {
             options.debugRingSpine = true
+        } else if arg == "--debug-ring-jump" {
+            options.debugRingJump = true
+        } else if arg == "--debug-trace-jump-step" {
+            options.debugTraceJumpStep = true
+        } else if arg == "--debug-soup-pre-repair" {
+            options.debugSoupPreRepair = true
+        } else if arg == "--debug-dump-cap-segments" {
+            options.debugDumpCapSegments = true
+        } else if arg == "--debug-dump-cap-segments-top", index + 1 < args.count {
+            options.debugDumpCapSegmentsTop = max(1, Int(args[index + 1]) ?? options.debugDumpCapSegmentsTop)
+            index += 1
         } else if arg == "--view", index + 1 < args.count {
             let tokens = args[index + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             if tokens.contains("ringSpine") {
                 options.debugRingSpine = true
+            }
+            if tokens.contains("ringJump") || tokens.contains("ringJumps") {
+                options.debugRingJump = true
             }
             if tokens.contains("samplingWhy") {
                 options.debugSamplingWhy = true
@@ -198,6 +217,11 @@ Debug flags:
   --debug-sampling-why  Sampling “why dots” overlay (adaptive sampling only)
   --debug-solo-why  Render only outline + sampling why dots
   --debug-ring-spine Render traced ring polyline with index breadcrumbs
+  --debug-ring-jump  Highlight longest ring segment (teleport diagnostic)
+  --debug-trace-jump-step  Dump trace decision for max jump segment
+  --debug-soup-pre-repair  Dump soup degree stats before any repair
+  --debug-dump-cap-segments  Dump cap segments (matches jump if present)
+  --debug-dump-cap-segments-top N  Limit cap segment dump (default: 10)
   --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)

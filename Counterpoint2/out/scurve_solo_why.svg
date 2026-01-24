@@ -51,4 +51,10 @@
     <circle cx="-5.0000" cy="-10.0000" r="4.0" fill="#2962ff" stroke="none"/>
     <text x="-1.0000" y="-14.0000" font-size="10" fill="#111111">start</text>
   </g>
+  <g id="debug-ring-jump">
+    <line x1="4.5496" y1="6.7459" x2="-5.0000" y2="110.0000" stroke="#ff1744" stroke-width="6" stroke-linecap="round" opacity="0.9"/>
+    <circle cx="4.5496" cy="6.7459" r="5" fill="#ff1744" stroke="none"/>
+    <circle cx="-5.0000" cy="110.0000" r="5" fill="#ff1744" stroke="none"/>
+    <text x="3.7748" y="54.3729" font-size="10" fill="#111111">jump i=512 len=103.6948</text>
+  </g>
 </svg>

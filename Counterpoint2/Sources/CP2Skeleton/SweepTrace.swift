@@ -15,13 +15,59 @@ import CP2Geometry
 //   - RailProbe, RailSample
 // - CP2Geometry defines Vec2, AABB, Epsilon, SnapKey, etc.
 
+public enum CapEdgeRole: String, Codable, Equatable, Sendable {
+    case joinLR
+    case walkL
+    case walkR
+    case unknown
+}
+
+public enum EdgeSource: Equatable, Codable, CustomStringConvertible, Sendable {
+    case railLeft
+    case railRight
+    case capStart
+    case capEnd
+    case capStartEdge(role: CapEdgeRole, detail: String)
+    case capEndEdge(role: CapEdgeRole, detail: String)
+    case join
+    case sanitizeRemoveShort
+    case sanitizeDedupe
+    case repairStitch
+    case repairCloseLoop
+    case unknown(String)
+
+    public var description: String {
+        switch self {
+        case .railLeft: return "railLeft"
+        case .railRight: return "railRight"
+        case .capStart: return "capStart"
+        case .capEnd: return "capEnd"
+        case .capStartEdge(let role, let detail): return "capStart.\(role.rawValue)(\(detail))"
+        case .capEndEdge(let role, let detail): return "capEnd.\(role.rawValue)(\(detail))"
+        case .join: return "join"
+        case .sanitizeRemoveShort: return "sanitizeRemoveShort"
+        case .sanitizeDedupe: return "sanitizeDedupe"
+        case .repairStitch: return "repairStitch"
+        case .repairCloseLoop: return "repairCloseLoop"
+        case .unknown(let tag): return "unknown(\(tag))"
+        }
+    }
+
+    public var isUnknown: Bool {
+        if case .unknown = self { return true }
+        return false
+    }
+}
+
 public struct Segment2: Equatable, Codable, Sendable {
     public let a: Vec2
     public let b: Vec2
+    public let source: EdgeSource
 
-    public init(_ a: Vec2, _ b: Vec2) {
+    public init(_ a: Vec2, _ b: Vec2, source: EdgeSource = .unknown("unspecified")) {
         self.a = a
         self.b = b
+        self.source = source
     }
 }
 
@@ -112,18 +158,22 @@ public func boundarySoupGeneral(
         right.append(rail.right)
     }
 
+    // MARK: EDGE CREATION SITES
+    // - boundarySoupGeneral: left forward (railLeft), right backward (railRight), caps (capStart/capEnd)
+    // - traceLoops: consumes segments; no creation
+    //
     // ---- Stitch boundary soup segments (left forward, right backward, caps) ----
     var segments: [Segment2] = []
     segments.reserveCapacity(count * 2 + 2)
 
     for i in 0..<(count - 1) {
-        segments.append(Segment2(left[i], left[i + 1]))
+        segments.append(Segment2(left[i], left[i + 1], source: .railLeft))
     }
     for i in stride(from: count - 1, to: 0, by: -1) {
-        segments.append(Segment2(right[i], right[i - 1]))
+        segments.append(Segment2(right[i], right[i - 1], source: .railRight))
     }
-    segments.append(Segment2(left[0], right[0]))
-    segments.append(Segment2(right[count - 1], left[count - 1]))
+    segments.append(Segment2(left[0], right[0], source: .capStartEdge(role: .joinLR, detail: "capIndex=0")))
+    segments.append(Segment2(right[count - 1], left[count - 1], source: .capEndEdge(role: .joinLR, detail: "capIndex=0")))
 
     return segments
 }
@@ -369,28 +419,102 @@ private func mergeWithUniformSamples(_ samples: [Double], minCount: Int) -> [Dou
 
 // MARK: - Loop tracing (unchanged from your pasted file)
 
-public func traceLoops(segments: [Segment2], eps: Double) -> [[Vec2]] {
+public struct TraceStepCandidate: Equatable {
+    public let toKey: SnapKey
+    public let to: Vec2
+    public let length: Double
+    public let angle: Double
+    public let scoreKey: SnapKey
+    public let isChosen: Bool
+    public let source: EdgeSource
+
+    public init(
+        toKey: SnapKey,
+        to: Vec2,
+        length: Double,
+        angle: Double,
+        scoreKey: SnapKey,
+        isChosen: Bool,
+        source: EdgeSource
+    ) {
+        self.toKey = toKey
+        self.to = to
+        self.length = length
+        self.angle = angle
+        self.scoreKey = scoreKey
+        self.isChosen = isChosen
+        self.source = source
+    }
+}
+
+public struct TraceStepNeighbor: Equatable {
+    public let key: SnapKey
+    public let pos: Vec2
+    public let length: Double
+    public let dir: Vec2
+    public let source: EdgeSource
+
+    public init(key: SnapKey, pos: Vec2, length: Double, dir: Vec2, source: EdgeSource) {
+        self.key = key
+        self.pos = pos
+        self.length = length
+        self.dir = dir
+        self.source = source
+    }
+}
+
+public struct TraceStepInfo: Equatable {
+    public let ringIndex: Int
+    public let stepIndex: Int
+    public let fromKey: SnapKey
+    public let toKey: SnapKey
+    public let from: Vec2
+    public let to: Vec2
+    public let incoming: Vec2
+    public let candidates: [TraceStepCandidate]
+    public let fromNeighbors: [TraceStepNeighbor]
+    public let toNeighbors: [TraceStepNeighbor]
+
+    public init(
+        ringIndex: Int,
+        stepIndex: Int,
+        fromKey: SnapKey,
+        toKey: SnapKey,
+        from: Vec2,
+        to: Vec2,
+        incoming: Vec2,
+        candidates: [TraceStepCandidate],
+        fromNeighbors: [TraceStepNeighbor],
+        toNeighbors: [TraceStepNeighbor]
+    ) {
+        self.ringIndex = ringIndex
+        self.stepIndex = stepIndex
+        self.fromKey = fromKey
+        self.toKey = toKey
+        self.from = from
+        self.to = to
+        self.incoming = incoming
+        self.candidates = candidates
+        self.fromNeighbors = fromNeighbors
+        self.toNeighbors = toNeighbors
+    }
+}
+
+public func traceLoops(
+    segments: [Segment2],
+    eps: Double,
+    debugStep: ((TraceStepInfo) -> Void)? = nil
+) -> [[Vec2]] {
     guard !segments.isEmpty else { return [] }
 
-    var pointForKey: [SnapKey: Vec2] = [:]
-    var adjacency: [SnapKey: [SnapKey]] = [:]
-    var edges: Set<EdgeKey> = []
-
-    for seg in segments {
-        let aKey = Epsilon.snapKey(seg.a, eps: eps)
-        let bKey = Epsilon.snapKey(seg.b, eps: eps)
-        pointForKey[aKey] = pointForKey[aKey] ?? seg.a
-        pointForKey[bKey] = pointForKey[bKey] ?? seg.b
-        adjacency[aKey, default: []].append(bKey)
-        adjacency[bKey, default: []].append(aKey)
-        edges.insert(EdgeKey(aKey, bKey))
-    }
-
-    for (key, list) in adjacency {
-        adjacency[key] = list.sorted(by: snapKeyLess)
-    }
+    let graph = buildSoupGraph(segments: segments, eps: eps)
+    var adjacency = graph.adjacency
+    var edges = graph.edges
+    let pointForKey = graph.pointForKey
+    let edgeSources = graph.edgeSources
 
     var rings: [[SnapKey]] = []
+    var ringIndex = 0
     while let startEdge = edges.sorted(by: edgeLess).first {
         edges.remove(startEdge)
         let start = startEdge.a
@@ -398,6 +522,27 @@ public func traceLoops(segments: [Segment2], eps: Double) -> [[Vec2]] {
         var ring: [SnapKey] = [start, next]
         var prev = start
         var curr = next
+        var stepIndex = 0
+
+        if let debugStep {
+            let candidates = adjacency[start] ?? []
+            let info = makeTraceStepInfo(
+                ringIndex: ringIndex,
+                stepIndex: stepIndex,
+                fromKey: start,
+                toKey: next,
+                candidates: candidates,
+                chosen: next,
+                incomingFrom: start,
+                incomingTo: next,
+                pointForKey: pointForKey,
+                adjacency: adjacency,
+                edgeSources: edgeSources
+            )
+            debugStep(info)
+            stepIndex += 1
+        }
+
         while curr != start {
             guard let neighbors = adjacency[curr] else { break }
             var candidates = neighbors.filter { edges.contains(EdgeKey(curr, $0)) }
@@ -406,6 +551,23 @@ public func traceLoops(segments: [Segment2], eps: Double) -> [[Vec2]] {
                 candidates = nonPrev.isEmpty ? candidates : nonPrev
             }
             guard let chosen = candidates.sorted(by: snapKeyLess).first else { break }
+            if let debugStep {
+                let info = makeTraceStepInfo(
+                    ringIndex: ringIndex,
+                    stepIndex: stepIndex,
+                    fromKey: curr,
+                    toKey: chosen,
+                    candidates: candidates,
+                    chosen: chosen,
+                    incomingFrom: prev,
+                    incomingTo: curr,
+                    pointForKey: pointForKey,
+                    adjacency: adjacency,
+                    edgeSources: edgeSources
+                )
+                debugStep(info)
+                stepIndex += 1
+            }
             edges.remove(EdgeKey(curr, chosen))
             ring.append(chosen)
             prev = curr
@@ -415,12 +577,312 @@ public func traceLoops(segments: [Segment2], eps: Double) -> [[Vec2]] {
             ring.append(ring.first!)
         }
         rings.append(ring)
+        ringIndex += 1
     }
 
     let worldRings = rings.map { ringKeys in
         ringKeys.compactMap { pointForKey[$0] }
     }.map(dedupRing)
     return worldRings.filter { $0.count >= 4 }
+}
+
+public struct SoupNeighborEdge: Equatable {
+    public let to: SnapKey
+    public let toPos: Vec2
+    public let len: Double
+    public let source: EdgeSource
+
+    public init(to: SnapKey, toPos: Vec2, len: Double, source: EdgeSource) {
+        self.to = to
+        self.toPos = toPos
+        self.len = len
+        self.source = source
+    }
+}
+
+public struct SoupNodeAnomaly: Equatable {
+    public let key: SnapKey
+    public let pos: Vec2
+    public let outCount: Int
+    public let inCount: Int
+    public let outNeighbors: [SoupNeighborEdge]
+    public let inNeighbors: [SoupNeighborEdge]
+
+    public init(
+        key: SnapKey,
+        pos: Vec2,
+        outCount: Int,
+        inCount: Int,
+        outNeighbors: [SoupNeighborEdge],
+        inNeighbors: [SoupNeighborEdge]
+    ) {
+        self.key = key
+        self.pos = pos
+        self.outCount = outCount
+        self.inCount = inCount
+        self.outNeighbors = outNeighbors
+        self.inNeighbors = inNeighbors
+    }
+}
+
+public struct SoupDegreeStats: Equatable {
+    public let nodeCount: Int
+    public let edgeCount: Int
+    public let degreeHistogram: [Int: Int]
+    public let anomalies: [SoupNodeAnomaly]
+
+    public init(
+        nodeCount: Int,
+        edgeCount: Int,
+        degreeHistogram: [Int: Int],
+        anomalies: [SoupNodeAnomaly]
+    ) {
+        self.nodeCount = nodeCount
+        self.edgeCount = edgeCount
+        self.degreeHistogram = degreeHistogram
+        self.anomalies = anomalies
+    }
+}
+
+public struct SegmentSpotlight: Equatable {
+    public let label: String
+    public let seg: Segment2
+    public let aKey: SnapKey
+    public let bKey: SnapKey
+    public let len: Double
+
+    public init(label: String, seg: Segment2, aKey: SnapKey, bKey: SnapKey, len: Double) {
+        self.label = label
+        self.seg = seg
+        self.aKey = aKey
+        self.bKey = bKey
+        self.len = len
+    }
+}
+
+public func spotlightCapSegments(
+    segments: [Segment2],
+    keyQuant: (Vec2) -> SnapKey,
+    matchA: SnapKey?,
+    matchB: SnapKey?,
+    sources: (EdgeSource) -> Bool,
+    topN: Int
+) -> [SegmentSpotlight] {
+    let filtered = segments.filter { sources($0.source) }
+    let ranked = filtered.map { seg -> SegmentSpotlight in
+        let aKey = keyQuant(seg.a)
+        let bKey = keyQuant(seg.b)
+        let len = (seg.b - seg.a).length
+        return SegmentSpotlight(label: seg.source.description, seg: seg, aKey: aKey, bKey: bKey, len: len)
+    }
+    if let matchA, let matchB {
+        return ranked.filter {
+            ($0.aKey == matchA && $0.bKey == matchB) || ($0.aKey == matchB && $0.bKey == matchA)
+        }
+    }
+    let sorted = ranked.sorted {
+        if $0.len == $1.len {
+            if $0.aKey == $1.aKey {
+                if $0.bKey == $1.bKey {
+                    return $0.label < $1.label
+                }
+                return snapKeyLess($0.bKey, $1.bKey)
+            }
+            return snapKeyLess($0.aKey, $1.aKey)
+        }
+        return $0.len > $1.len
+    }
+    return Array(sorted.prefix(max(0, topN)))
+}
+
+public func computeSoupDegreeStats(
+    segments: [Segment2],
+    eps: Double,
+    limitAnomalies: Int = 200,
+    includeDegrees: (Int) -> Bool = { $0 != 2 }
+) -> SoupDegreeStats {
+    let graph = buildSoupGraph(segments: segments, eps: eps)
+    var histogram: [Int: Int] = [:]
+    var anomalies: [SoupNodeAnomaly] = []
+    for (key, list) in graph.adjacency {
+        let degree = list.count
+        histogram[degree, default: 0] += 1
+        if includeDegrees(degree) && anomalies.count < limitAnomalies {
+            let pos = graph.pointForKey[key] ?? Vec2(0, 0)
+            let neighbors = list.sorted(by: snapKeyLess).map { neighbor in
+                let toPos = graph.pointForKey[neighbor] ?? Vec2(0, 0)
+                let len = (toPos - pos).length
+                let source = graph.edgeSources[EdgeKey(key, neighbor)] ?? .unknown("missing")
+                return SoupNeighborEdge(to: neighbor, toPos: toPos, len: len, source: source)
+            }
+            anomalies.append(
+                SoupNodeAnomaly(
+                    key: key,
+                    pos: pos,
+                    outCount: degree,
+                    inCount: degree,
+                    outNeighbors: neighbors,
+                    inNeighbors: neighbors
+                )
+            )
+        }
+    }
+    return SoupDegreeStats(
+        nodeCount: graph.pointForKey.count,
+        edgeCount: graph.edges.count,
+        degreeHistogram: histogram,
+        anomalies: anomalies
+    )
+}
+
+private func makeTraceStepInfo(
+    ringIndex: Int,
+    stepIndex: Int,
+    fromKey: SnapKey,
+    toKey: SnapKey,
+    candidates: [SnapKey],
+    chosen: SnapKey,
+    incomingFrom: SnapKey,
+    incomingTo: SnapKey,
+    pointForKey: [SnapKey: Vec2],
+    adjacency: [SnapKey: [SnapKey]],
+    edgeSources: [EdgeKey: EdgeSource]
+) -> TraceStepInfo {
+    let from = pointForKey[fromKey] ?? Vec2(0, 0)
+    let to = pointForKey[toKey] ?? Vec2(0, 0)
+    let incomingStart = pointForKey[incomingFrom] ?? from
+    let incomingEnd = pointForKey[incomingTo] ?? from
+    let incomingVec = incomingEnd - incomingStart
+    let incomingDir = incomingVec.normalized()
+
+    let sorted = candidates.sorted(by: snapKeyLess)
+    let candidateInfos: [TraceStepCandidate] = sorted.map { candidate in
+        let candidatePos = pointForKey[candidate] ?? Vec2(0, 0)
+        let vector = candidatePos - from
+        let length = vector.length
+        let angle = angleBetween(incomingDir, vector.normalized())
+        let source = edgeSources[EdgeKey(fromKey, candidate)] ?? .unknown("missing")
+        return TraceStepCandidate(
+            toKey: candidate,
+            to: candidatePos,
+            length: length,
+            angle: angle,
+            scoreKey: candidate,
+            isChosen: candidate == chosen,
+            source: source
+        )
+    }
+
+    let fromNeighbors = buildNeighborList(
+        key: fromKey,
+        origin: from,
+        pointForKey: pointForKey,
+        adjacency: adjacency,
+        edgeSources: edgeSources
+    )
+    let toPos = pointForKey[toKey] ?? Vec2(0, 0)
+    let toNeighbors = buildNeighborList(
+        key: toKey,
+        origin: toPos,
+        pointForKey: pointForKey,
+        adjacency: adjacency,
+        edgeSources: edgeSources
+    )
+
+    return TraceStepInfo(
+        ringIndex: ringIndex,
+        stepIndex: stepIndex,
+        fromKey: fromKey,
+        toKey: toKey,
+        from: from,
+        to: to,
+        incoming: incomingVec,
+        candidates: candidateInfos,
+        fromNeighbors: fromNeighbors,
+        toNeighbors: toNeighbors
+    )
+}
+
+private func buildNeighborList(
+    key: SnapKey,
+    origin: Vec2,
+    pointForKey: [SnapKey: Vec2],
+    adjacency: [SnapKey: [SnapKey]],
+    edgeSources: [EdgeKey: EdgeSource]
+) -> [TraceStepNeighbor] {
+    let neighbors = adjacency[key] ?? []
+    return neighbors.sorted(by: snapKeyLess).map { neighbor in
+        let pos = pointForKey[neighbor] ?? Vec2(0, 0)
+        let vector = pos - origin
+        let len = vector.length
+        let dir = vector.normalized()
+        let source = edgeSources[EdgeKey(key, neighbor)] ?? .unknown("missing")
+        return TraceStepNeighbor(key: neighbor, pos: pos, length: len, dir: dir, source: source)
+    }
+}
+
+private func angleBetween(_ a: Vec2, _ b: Vec2) -> Double {
+    let aLen = a.length
+    let bLen = b.length
+    if aLen <= Epsilon.defaultValue || bLen <= Epsilon.defaultValue { return 0.0 }
+    let cross = a.x * b.y - a.y * b.x
+    let dot = a.x * b.x + a.y * b.y
+    return atan2(cross, dot)
+}
+
+private struct SoupGraph {
+    let pointForKey: [SnapKey: Vec2]
+    let adjacency: [SnapKey: [SnapKey]]
+    let edges: Set<EdgeKey>
+    let edgeSources: [EdgeKey: EdgeSource]
+}
+
+private func buildSoupGraph(segments: [Segment2], eps: Double) -> SoupGraph {
+    var pointForKey: [SnapKey: Vec2] = [:]
+    var adjacency: [SnapKey: [SnapKey]] = [:]
+    var edges: Set<EdgeKey> = []
+    var edgeSources: [EdgeKey: EdgeSource] = [:]
+
+    for seg in segments {
+        let aKey = Epsilon.snapKey(seg.a, eps: eps)
+        let bKey = Epsilon.snapKey(seg.b, eps: eps)
+        pointForKey[aKey] = pointForKey[aKey] ?? seg.a
+        pointForKey[bKey] = pointForKey[bKey] ?? seg.b
+        adjacency[aKey, default: []].append(bKey)
+        adjacency[bKey, default: []].append(aKey)
+        let edge = EdgeKey(aKey, bKey)
+        edges.insert(edge)
+        if let existing = edgeSources[edge] {
+            edgeSources[edge] = mergeEdgeSource(existing: existing, new: seg.source)
+        } else {
+            edgeSources[edge] = seg.source
+        }
+    }
+
+    for (key, list) in adjacency {
+        let sorted = list.sorted(by: snapKeyLess)
+        var unique: [SnapKey] = []
+        unique.reserveCapacity(sorted.count)
+        var last: SnapKey? = nil
+        for item in sorted {
+            if let last, last == item { continue }
+            unique.append(item)
+            last = item
+        }
+        adjacency[key] = unique
+    }
+
+    return SoupGraph(
+        pointForKey: pointForKey,
+        adjacency: adjacency,
+        edges: edges,
+        edgeSources: edgeSources
+    )
+}
+
+private func mergeEdgeSource(existing: EdgeSource, new: EdgeSource) -> EdgeSource {
+    if existing.isUnknown && !new.isUnknown { return new }
+    return existing
 }
 
 public func signedArea(_ ring: [Vec2]) -> Double {

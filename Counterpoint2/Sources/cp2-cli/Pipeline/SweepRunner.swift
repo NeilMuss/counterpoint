@@ -8,6 +8,7 @@ struct SweepResult {
     var ring: [Vec2]
     var glyphBounds: AABB?
     var sampling: SamplingResult?
+    var traceSteps: [TraceStepInfo]
 }
 
 func runSweep(
@@ -16,6 +17,7 @@ func runSweep(
     options: CLIOptions
 ) -> SweepResult {
     var capturedSampling: SamplingResult? = nil
+    var traceSteps: [TraceStepInfo] = []
 
     let segmentsUsed: [Segment2] = {
         if plan.usesVariableWidthAngleAlpha {
@@ -53,7 +55,11 @@ func runSweep(
         }
     }()
 
-    let rings = traceLoops(segments: segmentsUsed, eps: 1.0e-6)
+    let rings = traceLoops(
+        segments: segmentsUsed,
+        eps: 1.0e-6,
+        debugStep: options.debugTraceJumpStep ? { traceSteps.append($0) } : nil
+    )
     let ring = rings.first ?? []
     let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
 
@@ -62,6 +68,7 @@ func runSweep(
         rings: rings,
         ring: ring,
         glyphBounds: glyphBounds,
-        sampling: capturedSampling
+        sampling: capturedSampling,
+        traceSteps: traceSteps
     )
 }

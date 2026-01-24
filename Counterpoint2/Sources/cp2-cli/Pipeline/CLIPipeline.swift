@@ -2,6 +2,28 @@ import Foundation
 import CP2Geometry
 import CP2Skeleton
 
+private func dumpSoupNode(
+    label: String,
+    key: SnapKey,
+    pos: Vec2,
+    neighbors: [TraceStepNeighbor],
+    emit: (String) -> Void
+) {
+    emit(String(format: "soupNode %@ key=(%d,%d) pos=(%.6f,%.6f) degree=%d", label, key.x, key.y, pos.x, pos.y, neighbors.count))
+    for (index, neighbor) in neighbors.enumerated() {
+        emit(String(format: "  out[%d] -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f dir=(%.6f,%.6f)", index, neighbor.key.x, neighbor.key.y, neighbor.pos.x, neighbor.pos.y, neighbor.length, neighbor.dir.x, neighbor.dir.y))
+    }
+}
+
+private func formatDegreeHistogram(_ histogram: [Int: Int]) -> String {
+    let deg0 = histogram[0, default: 0]
+    let deg1 = histogram[1, default: 0]
+    let deg2 = histogram[2, default: 0]
+    let deg3 = histogram[3, default: 0]
+    let deg4plus = histogram.filter { $0.key >= 4 }.map { $0.value }.reduce(0, +)
+    return String(format: "deg0=%d deg1=%d deg2=%d deg3=%d deg4+=%d", deg0, deg1, deg2, deg3, deg4plus)
+}
+
 public func renderSVGString(
     options: CLIOptions,
     spec: CP2Spec?,
@@ -80,6 +102,23 @@ public func renderSVGString(
         joinGTs: joinGTs
     )
 
+    if options.debugSoupPreRepair {
+        let stats = computeSoupDegreeStats(segments: result.segmentsUsed, eps: 1.0e-6)
+        print(String(format: "soupPreRepair nodes=%d edges=%d", stats.nodeCount, stats.edgeCount))
+        print("soupPreRepair degreeHistogram \(formatDegreeHistogram(stats.degreeHistogram))")
+        print(String(format: "soupPreRepair anomalies count=%d (showing up to 200)", stats.anomalies.count))
+        for anomaly in stats.anomalies {
+            let deg = anomaly.outCount
+            print(String(format: "  node key=(%d,%d) pos=(%.6f,%.6f) out=%d in=%d deg=%d", anomaly.key.x, anomaly.key.y, anomaly.pos.x, anomaly.pos.y, anomaly.outCount, anomaly.inCount, deg))
+            for (index, edge) in anomaly.outNeighbors.enumerated() {
+                print(String(format: "    out[%d] -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f src=%@", index, edge.to.x, edge.to.y, edge.toPos.x, edge.toPos.y, edge.len, edge.source.description))
+            }
+            for (index, edge) in anomaly.inNeighbors.enumerated() {
+                print(String(format: "    in[%d]  -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f src=%@", index, edge.to.x, edge.to.y, edge.toPos.x, edge.toPos.y, edge.len, edge.source.description))
+            }
+        }
+    }
+
     // 6. Debug Overlay
     let soloWhy = options.debugSoloWhy
     let wantsSamplingWhy = soloWhy || options.debugSamplingWhy
@@ -97,12 +136,87 @@ public func renderSVGString(
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
         }
     }
-    if !soloWhy && options.debugRingSpine {
+    if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) {
+        let ringJumps = (options.debugRingJump || options.debugTraceJumpStep) ? computeRingJumps(rings: result.rings) : []
         for (index, ring) in result.rings.enumerated() {
             let closure = ring.count > 1 ? (ring.last! - ring.first!).length : 0.0
-            print(String(format: "ringSpine ring=%d verts=%d closure=%.6f", index, ring.count, closure))
+            if options.debugRingSpine {
+                print(String(format: "ringSpine ring=%d verts=%d closure=%.6f", index, ring.count, closure))
+            }
         }
-        overlays.append(makeRingSpineOverlay(rings: result.rings))
+        if options.debugRingJump {
+            for jump in ringJumps {
+                print(String(format: "ringJump ring=%d verts=%d maxSegIndex=%d len=%.6f a=%d b=%d ax=%.6f ay=%.6f bx=%.6f by=%.6f", jump.ringIndex, jump.verts, jump.maxSegIndex, jump.length, jump.aIndex, jump.bIndex, jump.a.x, jump.a.y, jump.b.x, jump.b.y))
+            }
+        }
+        if options.debugTraceJumpStep {
+            print(String(format: "keyQuant eps=%.6g method=round", 1.0e-6))
+            for jump in ringJumps {
+                let steps = result.traceSteps.filter { $0.ringIndex == jump.ringIndex }
+                if let step = steps.first(where: { $0.stepIndex == jump.maxSegIndex }) {
+                    print(String(format: "traceJumpStep ring=%d k=%d len=%.6f candidates=%d", jump.ringIndex, jump.maxSegIndex, jump.length, step.candidates.count))
+                    let incoming = step.incoming.normalized()
+                    print(String(format: "traceJumpStep P=(%.6f,%.6f) Q=(%.6f,%.6f) incoming=(%.6f,%.6f) fromKey=(%d,%d) toKey=(%d,%d)", step.from.x, step.from.y, step.to.x, step.to.y, incoming.x, incoming.y, step.fromKey.x, step.fromKey.y, step.toKey.x, step.toKey.y))
+                    for (index, candidate) in step.candidates.enumerated() {
+                        let dir = (candidate.to - step.from).normalized()
+                        let mark = candidate.isChosen ? "*" : " "
+                        print(String(format: "traceJumpStep cand%@ idx=%d key=(%d,%d) pos=(%.6f,%.6f) dir=(%.6f,%.6f) len=%.6f angle=%.6f src=%@ scoreKey=(%d,%d)", mark, index, candidate.toKey.x, candidate.toKey.y, candidate.to.x, candidate.to.y, dir.x, dir.y, candidate.length, candidate.angle, candidate.source.description, candidate.scoreKey.x, candidate.scoreKey.y))
+                    }
+                    dumpSoupNode(label: "from", key: step.fromKey, pos: step.from, neighbors: step.fromNeighbors) { print($0) }
+                    dumpSoupNode(label: "to", key: step.toKey, pos: step.to, neighbors: step.toNeighbors) { print($0) }
+                } else {
+                    print(String(format: "traceJumpStep ring=%d k=%d len=%.6f candidates=0 (no step info)", jump.ringIndex, jump.maxSegIndex, jump.length))
+                }
+            }
+        }
+        if options.debugDumpCapSegments {
+            let keyQuant: (Vec2) -> SnapKey = { Epsilon.snapKey($0, eps: 1.0e-6) }
+            let capFilter: (EdgeSource) -> Bool = { source in
+                switch source {
+                case .capStart, .capEnd, .capStartEdge, .capEndEdge:
+                    return true
+                default:
+                    return false
+                }
+            }
+            if options.debugTraceJumpStep || options.debugRingJump {
+                for jump in ringJumps {
+                    let matchA = keyQuant(jump.a)
+                    let matchB = keyQuant(jump.b)
+                    let hits = spotlightCapSegments(
+                        segments: result.segmentsUsed,
+                        keyQuant: keyQuant,
+                        matchA: matchA,
+                        matchB: matchB,
+                        sources: capFilter,
+                        topN: options.debugDumpCapSegmentsTop
+                    )
+                    print(String(format: "capDump label=matchJump ring=%d aKey=(%d,%d) bKey=(%d,%d) count=%d", jump.ringIndex, matchA.x, matchA.y, matchB.x, matchB.y, hits.count))
+                    for (index, spot) in hits.enumerated() {
+                        print(String(format: "  [%d] src=%@ len=%.6f aKey=(%d,%d) bKey=(%d,%d) a=(%.6f,%.6f) b=(%.6f,%.6f)", index, spot.seg.source.description, spot.len, spot.aKey.x, spot.aKey.y, spot.bKey.x, spot.bKey.y, spot.seg.a.x, spot.seg.a.y, spot.seg.b.x, spot.seg.b.y))
+                    }
+                }
+            } else {
+                let hits = spotlightCapSegments(
+                    segments: result.segmentsUsed,
+                    keyQuant: keyQuant,
+                    matchA: nil,
+                    matchB: nil,
+                    sources: capFilter,
+                    topN: options.debugDumpCapSegmentsTop
+                )
+                print(String(format: "capDump label=topN count=%d", hits.count))
+                for (index, spot) in hits.enumerated() {
+                    print(String(format: "  [%d] src=%@ len=%.6f aKey=(%d,%d) bKey=(%d,%d) a=(%.6f,%.6f) b=(%.6f,%.6f)", index, spot.seg.source.description, spot.len, spot.aKey.x, spot.aKey.y, spot.bKey.x, spot.bKey.y, spot.seg.a.x, spot.seg.a.y, spot.seg.b.x, spot.seg.b.y))
+                }
+            }
+        }
+        if options.debugRingSpine {
+            overlays.append(makeRingSpineOverlay(rings: result.rings))
+        }
+        if options.debugRingJump {
+            overlays.append(makeRingJumpOverlay(jumps: ringJumps))
+        }
     }
     if wantsSamplingWhy {
         if let sampling = result.sampling {
@@ -198,11 +312,11 @@ public func renderSVGString(
     let debugSVG = debugOverlay?.svg ?? ""
     let glyphGroup = renderSettings.clipToFrame ? """
   <g id="glyph" clip-path="url(#\(clipId))">
-    <path d="\(pathData)" fill="none" stroke="black" stroke-width="1" />
+    <path d="\(pathData)" fill="black" stroke="none" />
   </g>
 """ : """
   <g id="glyph">
-    <path d="\(pathData)" fill="none" stroke="black" stroke-width="1" />
+    <path d="\(pathData)" fill="black" stroke="none" />
   </g>
 """
     let debugGroup = renderSettings.clipToFrame ? """
@@ -211,12 +325,30 @@ public func renderSVGString(
   </g>
 """ : debugSVG
 
+    let viewTokens: [String] = {
+        var tokens: [String] = []
+        if options.debugRingSpine { tokens.append("ringSpine") }
+        if options.debugRingJump { tokens.append("ringJump") }
+        if options.debugSamplingWhy { tokens.append("samplingWhy") }
+        if options.debugCenterline { tokens.append("centerline") }
+        if options.debugInkControls { tokens.append("inkControls") }
+        if options.debugSVG { tokens.append("debugSVG") }
+        if options.debugSoloWhy { tokens.append("soloWhy") }
+        return tokens
+    }()
+    let viewLabel = viewTokens.isEmpty ? "none" : viewTokens.joined(separator: ",")
+    let exampleLabel = exampleName ?? "none"
+    let infoLabel = """
+  <text x="20" y="20" font-size="14" fill="#111">example=\(exampleLabel) view=\(viewLabel) solo=\(options.debugSoloWhy)</text>
+"""
+
     return """
 <svg xmlns="http://www.w3.org/2000/svg" width="\(renderSettings.canvasPx.width)" height="\(renderSettings.canvasPx.height)" viewBox="\(String(format: "%.4f", viewMinX)) \(String(format: "%.4f", viewMinY)) \(String(format: "%.4f", viewWidth)) \(String(format: "%.4f", viewHeight))">
 \(clipPath)
 \(referenceGroup)
 \(glyphGroup)
 \(debugGroup)
+\(infoLabel)
 </svg>
 """
 }
