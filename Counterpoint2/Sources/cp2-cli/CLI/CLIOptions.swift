@@ -16,6 +16,7 @@ public struct CLIOptions {
     var debugCenterline: Bool = false
     var debugInkControls: Bool = false
     var debugSamplingWhy: Bool = false
+    var debugSoloWhy: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -83,6 +84,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugInkControls = true
         } else if arg == "--debug-sampling-why" {
             options.debugSamplingWhy = true
+        } else if arg == "--debug-solo-why" {
+            options.debugSoloWhy = true
         } else if arg == "--probe-count", index + 1 < args.count {
             options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
             index += 1
@@ -171,7 +174,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -181,6 +184,7 @@ Debug flags:
   --debug-centerline  Centerline-only overlay with control points
   --debug-ink-controls  Ink control geometry + evaluated curve only
   --debug-sampling-why  Sampling “why dots” overlay (adaptive sampling only)
+  --debug-solo-why  Render only outline + sampling why dots
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --canvas WxH     Output canvas pixel size (default: 1200x1200)

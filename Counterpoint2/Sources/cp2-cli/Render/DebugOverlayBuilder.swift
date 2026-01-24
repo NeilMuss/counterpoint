@@ -133,7 +133,15 @@ func makeCenterlineDebugOverlay(
 
 func makeSamplingWhyOverlay(
     dots: [SamplingWhyDot],
-    labelCount: Int = 5
+    labelCount: Int = 5,
+    minRadius: Double = 1.5,
+    maxRadius: Double = 7.5,
+    useLogRadius: Bool = false,
+    fillOpacity: Double? = nil,
+    renderAsRings: Bool = false,
+    ringStrokeWidth: Double = 1.0,
+    ringOpacity: Double? = nil,
+    addLabelCenters: Bool = false
 ) -> DebugOverlay {
     guard !dots.isEmpty else {
         return DebugOverlay(svg: "<g id=\"debug-sampling-why\"></g>", bounds: AABB.empty)
@@ -153,12 +161,37 @@ func makeSamplingWhyOverlay(
     }
 
     for dot in dots {
-        let radius = 1.5 + min(6.0, dot.severity * 1.5)
+        let radius: Double
+        if useLogRadius {
+            let mapped = minRadius + 3.0 * log10(1.0 + max(0.0, dot.severity))
+            radius = max(minRadius, min(maxRadius, mapped))
+        } else {
+            radius = minRadius + min(6.0, dot.severity * 1.5)
+        }
         let fill = color(for: dot.reason)
-        dotParts.append(String(
-            format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.2f\" fill=\"%@\" stroke=\"none\"/>",
-            dot.position.x, dot.position.y, radius, fill
-        ))
+        if renderAsRings {
+            let opacityAttr: String
+            if let ringOpacity {
+                opacityAttr = String(format: " stroke-opacity=\"%.3f\"", ringOpacity)
+            } else {
+                opacityAttr = ""
+            }
+            dotParts.append(String(
+                format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.2f\" fill=\"none\" stroke=\"%@\" stroke-width=\"%.2f\"%@/>",
+                dot.position.x, dot.position.y, radius, fill, ringStrokeWidth, opacityAttr
+            ))
+        } else {
+            let opacityAttr: String
+            if let fillOpacity {
+                opacityAttr = String(format: " fill-opacity=\"%.3f\"", fillOpacity)
+            } else {
+                opacityAttr = ""
+            }
+            dotParts.append(String(
+                format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.2f\" fill=\"%@\"%@ stroke=\"none\"/>",
+                dot.position.x, dot.position.y, radius, fill, opacityAttr
+            ))
+        }
         bounds.expand(by: dot.position)
     }
 
@@ -187,6 +220,16 @@ func makeSamplingWhyOverlay(
             dot.position.x + 3.0, dot.position.y - 3.0, text
         ))
         rank += 1
+    }
+
+    if renderAsRings && addLabelCenters && !worst.isEmpty {
+        for dot in worst {
+            let fill = color(for: dot.reason)
+            dotParts.append(String(
+                format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.2f\" fill=\"%@\" stroke=\"none\"/>",
+                dot.position.x, dot.position.y, 1.5, fill
+            ))
+        }
     }
 
     let svg = """

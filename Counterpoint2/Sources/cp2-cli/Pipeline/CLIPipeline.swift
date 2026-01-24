@@ -81,8 +81,12 @@ public func renderSVGString(
     )
 
     // 6. Debug Overlay
+    let soloWhy = options.debugSoloWhy
+    let wantsSamplingWhy = soloWhy || options.debugSamplingWhy
+    let soloMaxDots = 200
+    let soloLabelDots = 12
     var overlays: [DebugOverlay] = []
-    if options.debugSVG || options.debugCenterline || options.debugInkControls {
+    if !soloWhy && (options.debugSVG || options.debugCenterline || options.debugInkControls) {
         if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
             switch inkPrimitive {
             case .path(let inkPath): overlays.append(debugOverlayForInkPath(inkPath, steps: 64))
@@ -93,16 +97,45 @@ public func renderSVGString(
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
         }
     }
-    if options.debugSamplingWhy, let sampling = result.sampling {
-        let dots = samplingWhyDots(
-            result: sampling,
-            flatnessEps: options.flatnessEps,
-            railEps: options.flatnessEps,
-            positionAtS: { pathParam.position(globalT: $0) }
-        )
-        let worst = dots.max { $0.severity < $1.severity }?.severity ?? 0.0
-        print(String(format: "samplingWhy count=%d worst=%.3f", dots.count, worst))
-        overlays.append(makeSamplingWhyOverlay(dots: dots))
+    if wantsSamplingWhy {
+        if let sampling = result.sampling {
+            let dotsAll = samplingWhyDots(
+                result: sampling,
+                flatnessEps: options.flatnessEps,
+                railEps: options.flatnessEps,
+                positionAtS: { pathParam.position(globalT: $0) }
+            )
+            let worst = dotsAll.max { $0.severity < $1.severity }?.severity ?? 0.0
+            let dots: [SamplingWhyDot]
+            let labelCount: Int
+            if soloWhy {
+                let sorted = dotsAll.sorted {
+                    if $0.severity == $1.severity { return $0.s < $1.s }
+                    return $0.severity > $1.severity
+                }
+                dots = Array(sorted.prefix(soloMaxDots))
+                labelCount = min(soloLabelDots, dots.count)
+                print(String(format: "samplingWhy total=%d drawn=%d labeled=%d worst=%.3f", dotsAll.count, dots.count, labelCount, worst))
+                overlays.append(makeSamplingWhyOverlay(
+                    dots: dots,
+                    labelCount: labelCount,
+                    minRadius: 2.0,
+                    maxRadius: 10.0,
+                    useLogRadius: true,
+                    renderAsRings: true,
+                    ringStrokeWidth: 0.7,
+                    ringOpacity: 0.85,
+                    addLabelCenters: false
+                ))
+            } else {
+                print(String(format: "samplingWhy count=%d worst=%.3f", dotsAll.count, worst))
+                overlays.append(makeSamplingWhyOverlay(dots: dotsAll))
+            }
+        } else {
+            let countLine = soloWhy ? "samplingWhy total=0 drawn=0 labeled=0 worst=0.000 (no sampling result)" : "samplingWhy count=0 (no sampling result)"
+            print(countLine)
+            overlays.append(makeSamplingWhyOverlay(dots: []))
+        }
     }
     let debugOverlay = mergeDebugOverlays(overlays)
 

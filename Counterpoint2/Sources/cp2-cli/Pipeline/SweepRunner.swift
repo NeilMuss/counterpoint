@@ -45,8 +45,10 @@ func runSweep(
                 arcSamplesPerSegment: plan.paramSamplesPerSegment,
                 adaptiveSampling: options.adaptiveSampling,
                 flatnessEps: options.flatnessEps,
+                railEps: options.flatnessEps,
                 maxDepth: options.maxDepth,
-                maxSamples: options.maxSamples
+                maxSamples: options.maxSamples,
+                debugSampling: { capturedSampling = $0 }
             )
         }
     }()
