@@ -11,7 +11,7 @@ public struct RailSample: Sendable, Equatable {
 /// A tiny adapter the sampler can call.
 /// - In geometry-only tests, use a probe that throws or returns dummy rails.
 /// - In real rendering, this uses your skeleton frame + stroke params to compute L/R rails at global-t.
-public protocol RailProbe: Sendable {
+public protocol RailProbe {
     func rails(atGlobalT t: Double) -> RailSample
 }
 

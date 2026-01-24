@@ -7,6 +7,7 @@ struct SweepResult {
     var rings: [[Vec2]]
     var ring: [Vec2]
     var glyphBounds: AABB?
+    var sampling: SamplingResult?
 }
 
 func runSweep(
@@ -14,6 +15,8 @@ func runSweep(
     plan: SweepPlan,
     options: CLIOptions
 ) -> SweepResult {
+    var capturedSampling: SamplingResult? = nil
+
     let segmentsUsed: [Segment2] = {
         if plan.usesVariableWidthAngleAlpha {
             return boundarySoupVariableWidthAngleAlpha(
@@ -23,12 +26,14 @@ func runSweep(
                 arcSamplesPerSegment: plan.paramSamplesPerSegment,
                 adaptiveSampling: options.adaptiveSampling,
                 flatnessEps: options.flatnessEps,
+                railEps: options.flatnessEps,
                 maxDepth: options.maxDepth,
                 maxSamples: options.maxSamples,
                 widthAtT: { t in plan.scaledWidthAtT(plan.warpT(t)) },
                 angleAtT: { t in plan.thetaAtT(plan.warpT(t)) },
                 alphaAtT: plan.alphaAtT,
-                alphaStart: plan.alphaStartGT
+                alphaStart: plan.alphaStartGT,
+                debugSampling: { capturedSampling = $0 }
             )
         } else {
             return boundarySoup(
@@ -54,6 +59,7 @@ func runSweep(
         segmentsUsed: segmentsUsed,
         rings: rings,
         ring: ring,
-        glyphBounds: glyphBounds
+        glyphBounds: glyphBounds,
+        sampling: capturedSampling
     )
 }
