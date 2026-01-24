@@ -81,18 +81,30 @@ public func renderSVGString(
     )
 
     // 6. Debug Overlay
-    var debugOverlay: DebugOverlay? = nil
+    var overlays: [DebugOverlay] = []
     if options.debugSVG || options.debugCenterline || options.debugInkControls {
         if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
             switch inkPrimitive {
-            case .path(let inkPath): debugOverlay = debugOverlayForInkPath(inkPath, steps: 64)
-            case .heartline: if let resolved = resolvedHeartline { debugOverlay = debugOverlayForHeartline(resolved, steps: 64) }
-            default: debugOverlay = debugOverlayForInk(inkPrimitive, steps: 64)
+            case .path(let inkPath): overlays.append(debugOverlayForInkPath(inkPath, steps: 64))
+            case .heartline: if let resolved = resolvedHeartline { overlays.append(debugOverlayForHeartline(resolved, steps: 64)) }
+            default: overlays.append(debugOverlayForInk(inkPrimitive, steps: 64))
             }
         } else {
-            debugOverlay = makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan)
+            overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
         }
     }
+    if options.debugSamplingWhy, let sampling = result.sampling {
+        let dots = samplingWhyDots(
+            result: sampling,
+            flatnessEps: options.flatnessEps,
+            railEps: options.flatnessEps,
+            positionAtS: { pathParam.position(globalT: $0) }
+        )
+        let worst = dots.max { $0.severity < $1.severity }?.severity ?? 0.0
+        print(String(format: "samplingWhy count=%d worst=%.3f", dots.count, worst))
+        overlays.append(makeSamplingWhyOverlay(dots: dots))
+    }
+    let debugOverlay = mergeDebugOverlays(overlays)
 
     // 7. Reference Asset
     var referenceSVG: String? = nil

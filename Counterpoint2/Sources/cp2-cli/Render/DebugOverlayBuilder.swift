@@ -130,3 +130,71 @@ func makeCenterlineDebugOverlay(
         return DebugOverlay(svg: svg, bounds: debugBounds)
     }
 }
+
+func makeSamplingWhyOverlay(
+    dots: [SamplingWhyDot],
+    labelCount: Int = 5
+) -> DebugOverlay {
+    guard !dots.isEmpty else {
+        return DebugOverlay(svg: "<g id=\"debug-sampling-why\"></g>", bounds: AABB.empty)
+    }
+
+    var bounds = AABB.empty
+    var dotParts: [String] = []
+    dotParts.reserveCapacity(dots.count)
+
+    func color(for reason: SamplingWhyReason) -> String {
+        switch reason {
+        case .flatness: return "#ff3333"
+        case .railDeviation: return "#3377ff"
+        case .both: return "#9932cc"
+        case .forcedStop: return "#888888"
+        }
+    }
+
+    for dot in dots {
+        let radius = 1.5 + min(6.0, dot.severity * 1.5)
+        let fill = color(for: dot.reason)
+        dotParts.append(String(
+            format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.2f\" fill=\"%@\" stroke=\"none\"/>",
+            dot.position.x, dot.position.y, radius, fill
+        ))
+        bounds.expand(by: dot.position)
+    }
+
+    let worst = dots.sorted {
+        if $0.severity == $1.severity {
+            return $0.s < $1.s
+        }
+        return $0.severity > $1.severity
+    }.prefix(labelCount)
+
+    var labelParts: [String] = []
+    labelParts.reserveCapacity(worst.count)
+    var rank = 1
+    for dot in worst {
+        let reasonLabel: String = {
+            switch dot.reason {
+            case .flatness: return "F"
+            case .railDeviation: return "R"
+            case .both: return "B"
+            case .forcedStop: return "S"
+            }
+        }()
+        let text = String(format: "%d:%@ %.2f", rank, reasonLabel, dot.severity)
+        labelParts.append(String(
+            format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#333333\">%@</text>",
+            dot.position.x + 3.0, dot.position.y - 3.0, text
+        ))
+        rank += 1
+    }
+
+    let svg = """
+  <g id="debug-sampling-why">
+    \(dotParts.joined(separator: "\n    "))
+    \(labelParts.joined(separator: "\n    "))
+  </g>
+"""
+
+    return DebugOverlay(svg: svg, bounds: bounds)
+}

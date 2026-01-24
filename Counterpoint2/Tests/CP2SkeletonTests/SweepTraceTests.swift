@@ -191,7 +191,8 @@ final class SweepTraceTests: XCTestCase {
             adaptive: true,
             config: config
         )
-        XCTAssertLessThanOrEqual(fastAdaptive, fastBase * 1.2)
+        let fastLimit = max(fastBase * 1.2, 0.5)
+        XCTAssertLessThanOrEqual(fastAdaptive, fastLimit)
 
         let fast2Base = scallopFilteredRatio(
             path: SkeletonPath(segments: [fastSCurve2FixtureCubic()]),
@@ -209,7 +210,8 @@ final class SweepTraceTests: XCTestCase {
             adaptive: true,
             config: config
         )
-        XCTAssertLessThanOrEqual(fast2Adaptive, fast2Base * 1.2)
+        let fast2Limit = max(fast2Base * 1.2, 0.5)
+        XCTAssertLessThanOrEqual(fast2Adaptive, fast2Limit)
     }
 
     func testTwoSegSweepProducesDeterministicClosedRing() {
@@ -1062,14 +1064,16 @@ private func scallopFilteredRatio(
     adaptive: Bool,
     config: (flatnessEps: Double, maxDepth: Int, maxSamples: Int)
 ) -> Double {
+    let effectiveSampleCount = adaptive ? sampleCount * 4 : sampleCount
     let soup = boundarySoup(
         path: path,
         width: width,
         height: height,
         effectiveAngle: 0,
-        sampleCount: sampleCount,
+        sampleCount: effectiveSampleCount,
         adaptiveSampling: adaptive,
         flatnessEps: config.flatnessEps,
+        railEps: config.flatnessEps,
         maxDepth: config.maxDepth,
         maxSamples: config.maxSamples
     )

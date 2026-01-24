@@ -7,6 +7,16 @@ struct DebugOverlay {
     var bounds: AABB
 }
 
+func mergeDebugOverlays(_ overlays: [DebugOverlay]) -> DebugOverlay? {
+    guard let first = overlays.first else { return nil }
+    var bounds = first.bounds
+    for overlay in overlays.dropFirst() {
+        bounds = bounds.union(overlay.bounds)
+    }
+    let svg = overlays.map { $0.svg }.joined(separator: "\n")
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
 func sampleInkCubicPoints(_ cubic: InkCubic, steps: Int) -> [Vec2] {
     let count = max(2, steps)
     var points: [Vec2] = []
