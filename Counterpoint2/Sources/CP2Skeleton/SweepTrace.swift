@@ -159,6 +159,75 @@ public struct RailDebugSummary: Equatable, Sendable {
     }
 }
 
+public struct RailSampleFrame: Equatable, Sendable {
+    public let index: Int
+    public let center: Vec2
+    public let tangent: Vec2
+    public let normal: Vec2
+    public let widthLeft: Double
+    public let widthRight: Double
+    public let widthTotal: Double
+    public let left: Vec2
+    public let right: Vec2
+
+    public init(
+        index: Int,
+        center: Vec2,
+        tangent: Vec2,
+        normal: Vec2,
+        widthLeft: Double,
+        widthRight: Double,
+        widthTotal: Double,
+        left: Vec2,
+        right: Vec2
+    ) {
+        self.index = index
+        self.center = center
+        self.tangent = tangent
+        self.normal = normal
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
+        self.widthTotal = widthTotal
+        self.left = left
+        self.right = right
+    }
+}
+
+public struct RailInvariantCheck: Equatable, Sendable {
+    public let index: Int
+    public let distLR: Double
+    public let expectedWidth: Double
+    public let widthErr: Double
+    public let dotTR: Double
+    public let normalLen: Double
+
+    public init(
+        index: Int,
+        distLR: Double,
+        expectedWidth: Double,
+        widthErr: Double,
+        dotTR: Double,
+        normalLen: Double
+    ) {
+        self.index = index
+        self.distLR = distLR
+        self.expectedWidth = expectedWidth
+        self.widthErr = widthErr
+        self.dotTR = dotTR
+        self.normalLen = normalLen
+    }
+}
+
+public struct RailFrameDiagnostics: Equatable, Sendable {
+    public let frames: [RailSampleFrame]
+    public let checks: [RailInvariantCheck]
+
+    public init(frames: [RailSampleFrame], checks: [RailInvariantCheck]) {
+        self.frames = frames
+        self.checks = checks
+    }
+}
+
 public struct SweepStyle: Equatable, Codable {
     public let width: Double
     public let height: Double
@@ -217,7 +286,8 @@ public func boundarySoupGeneral(
     styleAtGT: @escaping (Double) -> SweepStyle,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
-    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -267,11 +337,33 @@ public func boundarySoupGeneral(
     left.reserveCapacity(count)
     right.reserveCapacity(count)
 
+    let wantsFrames = debugRailFrames != nil || debugRailSummary != nil
+    var frames: [RailSampleFrame] = []
+    if wantsFrames {
+        frames.reserveCapacity(count)
+    }
+
     // ---- Compute left/right rails at each sample ----
-    for gt in samples {
-        let rail = probe.rails(atGlobalT: gt)
-        left.append(rail.left)
-        right.append(rail.right)
+    for (index, gt) in samples.enumerated() {
+        if wantsFrames {
+            let (rail, frame) = computeRailSampleFrame(
+                param: param,
+                warpGT: warpGT,
+                styleAtGT: styleAtGT,
+                gt: gt,
+                index: index
+            )
+            left.append(rail.left)
+            right.append(rail.right)
+            frames.append(frame)
+        } else {
+            let rail = probe.rails(atGlobalT: gt)
+            left.append(rail.left)
+            right.append(rail.right)
+        }
+    }
+    if let debugRailFrames {
+        debugRailFrames(frames)
     }
     if let debugRailSummary {
         let rails = zip(left, right).map { RailSample(left: $0.0, right: $0.1) }
@@ -325,7 +417,8 @@ public func boundarySoup(
     maxSamples: Int = 512,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
-    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -339,7 +432,8 @@ public func boundarySoup(
         styleAtGT: { _ in SweepStyle(width: width, height: height, angle: effectiveAngle, offset: 0.0) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
-        debugRailSummary: debugRailSummary
+        debugRailSummary: debugRailSummary,
+        debugRailFrames: debugRailFrames
     )
 }
 
@@ -357,7 +451,8 @@ public func boundarySoupVariableWidth(
     widthAtT: @escaping (Double) -> Double,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
-    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -371,7 +466,8 @@ public func boundarySoupVariableWidth(
         styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: effectiveAngle, offset: 0.0) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
-        debugRailSummary: debugRailSummary
+        debugRailSummary: debugRailSummary,
+        debugRailFrames: debugRailFrames
     )
 }
 
@@ -389,7 +485,8 @@ public func boundarySoupVariableWidthAngle(
     angleAtT: @escaping (Double) -> Double,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
-    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -403,7 +500,8 @@ public func boundarySoupVariableWidthAngle(
         styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
-        debugRailSummary: debugRailSummary
+        debugRailSummary: debugRailSummary,
+        debugRailFrames: debugRailFrames
     )
 }
 
@@ -423,7 +521,8 @@ public func boundarySoupVariableWidthAngleAlpha(
     alphaStart: Double,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
-    debugRailSummary: ((RailDebugSummary) -> Void)? = nil
+    debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -438,7 +537,8 @@ public func boundarySoupVariableWidthAngleAlpha(
         styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
-        debugRailSummary: debugRailSummary
+        debugRailSummary: debugRailSummary,
+        debugRailFrames: debugRailFrames
     )
 }
 
@@ -460,46 +560,75 @@ private struct BoundarySoupRailProbe: RailProbe {
     let styleAtGT: (Double) -> SweepStyle
 
     func rails(atGlobalT gt: Double) -> RailSample {
-        let point = param.position(globalT: gt)
-        let tangent = param.tangent(globalT: gt).normalized()
-        let normal = Vec2(-tangent.y, tangent.x)
-
-        let warped = warpGT(gt)
-        let style = styleAtGT(warped)
-
-        let center = point + normal * style.offset
-
-        let corners = rectangleCorners(
-            center: center,
-            tangent: tangent,
-            normal: normal,
-            width: style.width,
-            height: style.height,
-            effectiveAngle: style.angle
-        )
-
-        var minDot = Double.greatestFiniteMagnitude
-        var maxDot = -Double.greatestFiniteMagnitude
-        var leftPoint = center
-        var rightPoint = center
-
-        for corner in corners {
-            let d = corner.dot(normal)
-            if d < minDot {
-                minDot = d
-                leftPoint = corner
-            }
-            if d > maxDot {
-                maxDot = d
-                rightPoint = corner
-            }
-        }
-
-        return RailSample(left: leftPoint, right: rightPoint)
+        computeRailSampleFrame(
+            param: param,
+            warpGT: warpGT,
+            styleAtGT: styleAtGT,
+            gt: gt,
+            index: -1
+        ).sample
     }
 }
 
 // MARK: - Geometry helpers
+
+private func computeRailSampleFrame(
+    param: SkeletonPathParameterization,
+    warpGT: (Double) -> Double,
+    styleAtGT: (Double) -> SweepStyle,
+    gt: Double,
+    index: Int
+) -> (sample: RailSample, frame: RailSampleFrame) {
+    let point = param.position(globalT: gt)
+    let tangent = param.tangent(globalT: gt).normalized()
+    let normal = Vec2(-tangent.y, tangent.x)
+
+    let warped = warpGT(gt)
+    let style = styleAtGT(warped)
+
+    let center = point + normal * style.offset
+
+    let corners = rectangleCorners(
+        center: center,
+        tangent: tangent,
+        normal: normal,
+        width: style.width,
+        height: style.height,
+        effectiveAngle: style.angle
+    )
+
+    var minDot = Double.greatestFiniteMagnitude
+    var maxDot = -Double.greatestFiniteMagnitude
+    var leftPoint = center
+    var rightPoint = center
+
+    for corner in corners {
+        let d = corner.dot(normal)
+        if d < minDot {
+            minDot = d
+            leftPoint = corner
+        }
+        if d > maxDot {
+            maxDot = d
+            rightPoint = corner
+        }
+    }
+
+    let sample = RailSample(left: leftPoint, right: rightPoint)
+    let halfWidth = 0.5 * style.width
+    let frame = RailSampleFrame(
+        index: index,
+        center: center,
+        tangent: tangent,
+        normal: normal,
+        widthLeft: halfWidth,
+        widthRight: halfWidth,
+        widthTotal: style.width,
+        left: leftPoint,
+        right: rightPoint
+    )
+    return (sample, frame)
+}
 
 private func rectangleCorners(
     center: Vec2,
@@ -905,6 +1034,33 @@ public func computeRailDebugSummary(
     let prefix = (0..<clampedCount).map { makeDebug($0, rails[$0]) }
 
     return RailDebugSummary(count: rails.count, start: start, end: end, prefix: prefix)
+}
+
+public func computeRailFrameDiagnostics(
+    frames: [RailSampleFrame],
+    widthEps: Double,
+    perpEps: Double,
+    unitEps: Double
+) -> RailFrameDiagnostics {
+    let checks = frames.map { frame -> RailInvariantCheck in
+        let delta = frame.right - frame.left
+        let distLR = delta.length
+        let expectedWidth = (frame.widthLeft > 0.0 || frame.widthRight > 0.0)
+            ? (frame.widthLeft + frame.widthRight)
+            : frame.widthTotal
+        let widthErr = distLR - expectedWidth
+        let dotTR = delta.dot(frame.tangent)
+        let normalLen = frame.normal.length
+        return RailInvariantCheck(
+            index: frame.index,
+            distLR: distLR,
+            expectedWidth: expectedWidth,
+            widthErr: widthErr,
+            dotTR: dotTR,
+            normalLen: normalLen
+        )
+    }
+    return RailFrameDiagnostics(frames: frames, checks: checks)
 }
 
 public struct SegmentSpotlight: Equatable {

@@ -249,6 +249,53 @@ public func renderSVGString(
                 print("railDebug <none>")
             }
         }
+        if options.debugDumpRailFrames || options.debugRailInvariants {
+            let frames = result.railFrames ?? []
+            if frames.isEmpty {
+                print("railFrames <none>")
+            } else {
+                let prefixCount = max(1, min(options.debugDumpRailFramesPrefix, frames.count))
+                if options.debugDumpRailFrames {
+                    print(String(format: "railFrames count=%d (showing first %d)", frames.count, prefixCount))
+                    for i in 0..<prefixCount {
+                        let f = frames[i]
+                        let dist = (f.right - f.left).length
+                        let dotTR = (f.right - f.left).dot(f.tangent)
+                        let widthExpected = (f.widthLeft > 0.0 || f.widthRight > 0.0) ? (f.widthLeft + f.widthRight) : f.widthTotal
+                        let widthErr = dist - widthExpected
+                        print(String(format: "  [%d] C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) wL=%.6f wR=%.6f wTot=%.6f", f.index, f.center.x, f.center.y, f.tangent.x, f.tangent.y, f.normal.x, f.normal.y, f.widthLeft, f.widthRight, f.widthTotal))
+                        print(String(format: "      L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f dotTR=%.6f widthErr=%.6f |N|=%.6f", f.left.x, f.left.y, f.right.x, f.right.y, dist, dotTR, widthErr, f.normal.length))
+                    }
+                }
+                if options.debugRailInvariants {
+                    let diag = computeRailFrameDiagnostics(
+                        frames: frames,
+                        widthEps: options.debugRailWidthEps,
+                        perpEps: options.debugRailPerpEps,
+                        unitEps: options.debugRailUnitEps
+                    )
+                    var widthFails = 0
+                    var perpFails = 0
+                    var unitFails = 0
+                    for check in diag.checks {
+                        if abs(check.widthErr) > options.debugRailWidthEps { widthFails += 1 }
+                        if abs(check.dotTR) > options.debugRailPerpEps { perpFails += 1 }
+                        if abs(check.normalLen - 1.0) > options.debugRailUnitEps { unitFails += 1 }
+                    }
+                    print(String(format: "railInvSummary frames=%d widthFails=%d perpFails=%d unitFails=%d", diag.frames.count, widthFails, perpFails, unitFails))
+                    let onlyFails = options.debugRailInvariantsOnlyFails
+                    for check in diag.checks {
+                        let widthFail = abs(check.widthErr) > options.debugRailWidthEps
+                        let perpFail = abs(check.dotTR) > options.debugRailPerpEps
+                        let unitFail = abs(check.normalLen - 1.0) > options.debugRailUnitEps
+                        if onlyFails && !(widthFail || perpFail || unitFail) {
+                            continue
+                        }
+                        print(String(format: "  [%d] dist=%.6f expected=%.6f widthErr=%.6f dotTR=%.6f |N|=%.6f", check.index, check.distLR, check.expectedWidth, check.widthErr, check.dotTR, check.normalLen))
+                    }
+                }
+            }
+        }
         if options.debugRingSpine {
             overlays.append(makeRingSpineOverlay(rings: result.rings))
         }

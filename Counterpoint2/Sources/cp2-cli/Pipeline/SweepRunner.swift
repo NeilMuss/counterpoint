@@ -11,6 +11,7 @@ struct SweepResult {
     var traceSteps: [TraceStepInfo]
     var capEndpointsDebug: CapEndpointsDebug?
     var railDebugSummary: RailDebugSummary?
+    var railFrames: [RailSampleFrame]?
 }
 
 func runSweep(
@@ -22,6 +23,8 @@ func runSweep(
     var traceSteps: [TraceStepInfo] = []
     var capEndpointsDebug: CapEndpointsDebug? = nil
     var railDebugSummary: RailDebugSummary? = nil
+    var railFrames: [RailSampleFrame]? = nil
+    let wantsRailFrames = options.debugDumpRailFrames || options.debugRailInvariants || options.debugDumpRailEndpoints
 
     let segmentsUsed: [Segment2] = {
         if plan.usesVariableWidthAngleAlpha {
@@ -41,7 +44,8 @@ func runSweep(
                 alphaStart: plan.alphaStartGT,
                 debugSampling: { capturedSampling = $0 },
                 debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
-                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil
+                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
+                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil
             )
         } else {
             return boundarySoup(
@@ -58,7 +62,8 @@ func runSweep(
                 maxSamples: options.maxSamples,
                 debugSampling: { capturedSampling = $0 },
                 debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
-                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil
+                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
+                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil
             )
         }
     }()
@@ -79,6 +84,7 @@ func runSweep(
         sampling: capturedSampling,
         traceSteps: traceSteps,
         capEndpointsDebug: capEndpointsDebug,
-        railDebugSummary: railDebugSummary
+        railDebugSummary: railDebugSummary,
+        railFrames: railFrames
     )
 }

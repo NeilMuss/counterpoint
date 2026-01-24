@@ -26,6 +26,13 @@ public struct CLIOptions {
     var debugDumpCapEndpoints: Bool = false
     var debugDumpRailEndpoints: Bool = false
     var debugDumpRailEndpointsPrefix: Int = 5
+    var debugDumpRailFrames: Bool = false
+    var debugDumpRailFramesPrefix: Int = 6
+    var debugRailInvariants: Bool = false
+    var debugRailInvariantsOnlyFails: Bool = false
+    var debugRailWidthEps: Double = 1.0e-3
+    var debugRailPerpEps: Double = 1.0e-3
+    var debugRailUnitEps: Double = 1.0e-3
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -111,6 +118,24 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugDumpRailEndpoints = true
         } else if arg == "--debug-dump-rail-endpoints-prefix", index + 1 < args.count {
             options.debugDumpRailEndpointsPrefix = max(1, Int(args[index + 1]) ?? options.debugDumpRailEndpointsPrefix)
+            index += 1
+        } else if arg == "--debug-dump-rail-frames" {
+            options.debugDumpRailFrames = true
+        } else if arg == "--debug-dump-rail-frames-prefix", index + 1 < args.count {
+            options.debugDumpRailFramesPrefix = max(1, Int(args[index + 1]) ?? options.debugDumpRailFramesPrefix)
+            index += 1
+        } else if arg == "--debug-rail-invariants" {
+            options.debugRailInvariants = true
+        } else if arg == "--debug-rail-invariants-only-fails" {
+            options.debugRailInvariantsOnlyFails = true
+        } else if arg == "--debug-rail-width-eps", index + 1 < args.count {
+            options.debugRailWidthEps = Double(args[index + 1]) ?? options.debugRailWidthEps
+            index += 1
+        } else if arg == "--debug-rail-perp-eps", index + 1 < args.count {
+            options.debugRailPerpEps = Double(args[index + 1]) ?? options.debugRailPerpEps
+            index += 1
+        } else if arg == "--debug-rail-unit-eps", index + 1 < args.count {
+            options.debugRailUnitEps = Double(args[index + 1]) ?? options.debugRailUnitEps
             index += 1
         } else if arg == "--debug-dump-cap-segments-top", index + 1 < args.count {
             options.debugDumpCapSegmentsTop = max(1, Int(args[index + 1]) ?? options.debugDumpCapSegmentsTop)
@@ -235,6 +260,13 @@ Debug flags:
   --debug-dump-cap-segments-top N  Limit cap segment dump (default: 10)
   --debug-dump-rail-endpoints  Dump rail endpoints (start/end/prefix)
   --debug-dump-rail-endpoints-prefix N  Rail prefix count (default: 5)
+  --debug-dump-rail-frames  Dump rail frames (center/tangent/normal/width)
+  --debug-dump-rail-frames-prefix N  Rail frame prefix count (default: 6)
+  --debug-rail-invariants  Print rail invariant checks
+  --debug-rail-invariants-only-fails  Only print invariant failures
+  --debug-rail-width-eps N  Width error epsilon (default: 1e-3)
+  --debug-rail-perp-eps N   Perp dot epsilon (default: 1e-3)
+  --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
