@@ -513,6 +513,34 @@ public func renderSVGString(
     let infoLabel = """
   <text x="20" y="20" font-size="14" fill="#111">example=\(exampleLabel) view=\(viewLabel) solo=\(options.debugSoloWhy)</text>
 """
+    let legendLabel: String = {
+        let wantsLegend = options.debugCompare || options.debugCompareAll || options.debugSVG || options.debugCenterline || options.debugInkControls || options.debugRingSpine || options.debugRingJump || options.debugSamplingWhy
+        guard wantsLegend else { return "" }
+        var lines: [(String, String)] = []
+        if referenceLayer != nil {
+            lines.append(("reference fill", "#111"))
+            lines.append(("reference outline", "cyan"))
+        }
+        lines.append(("ink fill", "#111"))
+        if options.debugCenterline { lines.append(("centerline", "orange")) }
+        if options.debugInkControls { lines.append(("ink controls", "gray")) }
+        if options.debugRingSpine { lines.append(("ring spine", "#00c853")) }
+        if options.debugRingJump { lines.append(("ring jump", "#ff1744")) }
+        if options.debugSamplingWhy {
+            lines.append(("why: flatness", "red"))
+            lines.append(("why: rail deviation", "blue"))
+            lines.append(("why: both", "purple"))
+            lines.append(("why: forced stop", "gray"))
+        }
+        var y = 40
+        var text = "  <g id=\"debug-legend\">"
+        for (label, color) in lines {
+            text += "\n    <text x=\"20\" y=\"\(y)\" font-size=\"12\" fill=\"\(color)\">\(label)</text>"
+            y += 16
+        }
+        text += "\n  </g>"
+        return text
+    }()
 
     return """
 <svg xmlns="http://www.w3.org/2000/svg" width="\(renderSettings.canvasPx.width)" height="\(renderSettings.canvasPx.height)" viewBox="\(String(format: "%.4f", viewMinX)) \(String(format: "%.4f", viewMinY)) \(String(format: "%.4f", viewWidth)) \(String(format: "%.4f", viewHeight))">
@@ -522,6 +550,7 @@ public func renderSVGString(
 \(referenceOutlineGroup)
 \(debugGroup)
 \(infoLabel)
+\(legendLabel)
 </svg>
 """
 }
