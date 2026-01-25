@@ -27,24 +27,8 @@ final class RailCornerDebugTests: XCTestCase {
                     c - u * halfW + v * halfH
                 ]
             },
-            chooseLeftRight: { corners, _, n in
-                var minDot = Double.greatestFiniteMagnitude
-                var maxDot = -Double.greatestFiniteMagnitude
-                var left = corners[0]
-                var right = corners[0]
-                for corner in corners {
-                    let d = corner.dot(n)
-                    if d < minDot {
-                        minDot = d
-                        left = corner
-                    }
-                    if d > maxDot {
-                        maxDot = d
-                        right = corner
-                    }
-                }
-                return (left, right)
-            }
+            left: center + normal,
+            right: center - normal
         )
 
         XCTAssertTrue(Epsilon.approxEqual(debug.uRot, debug.u, eps: 1.0e-9))

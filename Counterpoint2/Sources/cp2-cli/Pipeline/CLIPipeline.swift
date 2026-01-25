@@ -279,19 +279,19 @@ public func renderSVGString(
                     var unitFails = 0
                     for check in diag.checks {
                         if abs(check.widthErr) > options.debugRailWidthEps { widthFails += 1 }
-                        if abs(check.dotTR) > options.debugRailPerpEps { perpFails += 1 }
+                        if abs(check.alignment) > options.debugRailPerpEps { perpFails += 1 }
                         if abs(check.normalLen - 1.0) > options.debugRailUnitEps { unitFails += 1 }
                     }
                     print(String(format: "railInvSummary frames=%d widthFails=%d perpFails=%d unitFails=%d", diag.frames.count, widthFails, perpFails, unitFails))
                     let onlyFails = options.debugRailInvariantsOnlyFails
                     for check in diag.checks {
                         let widthFail = abs(check.widthErr) > options.debugRailWidthEps
-                        let perpFail = abs(check.dotTR) > options.debugRailPerpEps
+                        let perpFail = abs(check.alignment) > options.debugRailPerpEps
                         let unitFail = abs(check.normalLen - 1.0) > options.debugRailUnitEps
                         if onlyFails && !(widthFail || perpFail || unitFail) {
                             continue
                         }
-                        print(String(format: "  [%d] dist=%.6f expected=%.6f widthErr=%.6f dotTR=%.6f |N|=%.6f", check.index, check.distLR, check.expectedWidth, check.widthErr, check.dotTR, check.normalLen))
+                        print(String(format: "  [%d] dist=%.6f expected=%.6f widthErr=%.6f alignErr=%.6f |N|=%.6f", check.index, check.distLR, check.expectedWidth, check.widthErr, check.alignment, check.normalLen))
                     }
                 }
             }

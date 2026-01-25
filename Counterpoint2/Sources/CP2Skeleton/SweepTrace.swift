@@ -164,6 +164,7 @@ public struct RailSampleFrame: Equatable, Sendable {
     public let center: Vec2
     public let tangent: Vec2
     public let normal: Vec2
+    public let crossAxis: Vec2
     public let widthLeft: Double
     public let widthRight: Double
     public let widthTotal: Double
@@ -175,6 +176,7 @@ public struct RailSampleFrame: Equatable, Sendable {
         center: Vec2,
         tangent: Vec2,
         normal: Vec2,
+        crossAxis: Vec2,
         widthLeft: Double,
         widthRight: Double,
         widthTotal: Double,
@@ -185,6 +187,7 @@ public struct RailSampleFrame: Equatable, Sendable {
         self.center = center
         self.tangent = tangent
         self.normal = normal
+        self.crossAxis = crossAxis
         self.widthLeft = widthLeft
         self.widthRight = widthRight
         self.widthTotal = widthTotal
@@ -198,7 +201,7 @@ public struct RailInvariantCheck: Equatable, Sendable {
     public let distLR: Double
     public let expectedWidth: Double
     public let widthErr: Double
-    public let dotTR: Double
+    public let alignment: Double
     public let normalLen: Double
 
     public init(
@@ -206,14 +209,14 @@ public struct RailInvariantCheck: Equatable, Sendable {
         distLR: Double,
         expectedWidth: Double,
         widthErr: Double,
-        dotTR: Double,
+        alignment: Double,
         normalLen: Double
     ) {
         self.index = index
         self.distLR = distLR
         self.expectedWidth = expectedWidth
         self.widthErr = widthErr
-        self.dotTR = dotTR
+        self.alignment = alignment
         self.normalLen = normalLen
     }
 }
@@ -278,6 +281,32 @@ public struct RailCornerDebug: Equatable, Sendable {
         self.left = left
         self.right = right
     }
+}
+
+public struct RailPoints: Sendable, Equatable {
+    public let left: Vec2
+    public let right: Vec2
+
+    public init(left: Vec2, right: Vec2) {
+        self.left = left
+        self.right = right
+    }
+}
+
+public func railPointsFromCrossAxis(
+    center: Vec2,
+    crossAxis: Vec2,
+    widthLeft: Double,
+    widthRight: Double
+) -> RailPoints {
+    let axisLen = crossAxis.length
+    if axisLen <= 1.0e-12 {
+        return RailPoints(left: center, right: center)
+    }
+    let axis = crossAxis * (1.0 / axisLen)
+    let left = center + axis * widthLeft
+    let right = center - axis * widthRight
+    return RailPoints(left: left, right: right)
 }
 
 public struct RailDeltaDecomp: Equatable, Sendable {
@@ -446,24 +475,8 @@ public func boundarySoupGeneral(
                             effectiveAngle: angle
                         )
                     },
-                    chooseLeftRight: { corners, _, normal in
-                        var minDot = Double.greatestFiniteMagnitude
-                        var maxDot = -Double.greatestFiniteMagnitude
-                        var left = corners[0]
-                        var right = corners[0]
-                        for corner in corners {
-                            let d = corner.dot(normal)
-                            if d < minDot {
-                                minDot = d
-                                left = corner
-                            }
-                            if d > maxDot {
-                                maxDot = d
-                                right = corner
-                            }
-                        }
-                        return (left, right)
-                    }
+                    left: frame.left,
+                    right: frame.right
                 )
                 debugRailCorner(cornerDebug)
             }
@@ -499,24 +512,8 @@ public func boundarySoupGeneral(
                             effectiveAngle: angle
                         )
                     },
-                    chooseLeftRight: { corners, _, normal in
-                        var minDot = Double.greatestFiniteMagnitude
-                        var maxDot = -Double.greatestFiniteMagnitude
-                        var left = corners[0]
-                        var right = corners[0]
-                        for corner in corners {
-                            let d = corner.dot(normal)
-                            if d < minDot {
-                                minDot = d
-                                left = corner
-                            }
-                            if d > maxDot {
-                                maxDot = d
-                                right = corner
-                            }
-                        }
-                        return (left, right)
-                    }
+                    left: frame.left,
+                    right: frame.right
                 )
                 debugRailCorner(cornerDebug)
             }
@@ -764,44 +761,28 @@ private func computeRailSampleFrame(
 
     let center = point + normal * style.offset
 
-    let corners = rectangleCorners(
-        center: center,
-        tangent: tangent,
-        normal: normal,
-        width: style.width,
-        height: style.height,
-        effectiveAngle: style.angle
-    )
-
-    var minDot = Double.greatestFiniteMagnitude
-    var maxDot = -Double.greatestFiniteMagnitude
-    var leftPoint = center
-    var rightPoint = center
-
-    for corner in corners {
-        let d = corner.dot(normal)
-        if d < minDot {
-            minDot = d
-            leftPoint = corner
-        }
-        if d > maxDot {
-            maxDot = d
-            rightPoint = corner
-        }
-    }
-
-    let sample = RailSample(left: leftPoint, right: rightPoint)
     let halfWidth = 0.5 * style.width
+    let c = cos(style.angle)
+    let s = sin(style.angle)
+    let vRot = tangent * s + normal * c
+    let railPoints = railPointsFromCrossAxis(
+        center: center,
+        crossAxis: vRot,
+        widthLeft: halfWidth,
+        widthRight: halfWidth
+    )
+    let sample = RailSample(left: railPoints.left, right: railPoints.right)
     let frame = RailSampleFrame(
         index: index,
         center: center,
         tangent: tangent,
         normal: normal,
+        crossAxis: vRot,
         widthLeft: halfWidth,
         widthRight: halfWidth,
         widthTotal: style.width,
-        left: leftPoint,
-        right: rightPoint
+        left: railPoints.left,
+        right: railPoints.right
     )
     return (sample, frame)
 }
@@ -1225,14 +1206,17 @@ public func computeRailFrameDiagnostics(
             ? (frame.widthLeft + frame.widthRight)
             : frame.widthTotal
         let widthErr = distLR - expectedWidth
-        let dotTR = delta.dot(frame.tangent)
+        let axisLen = frame.crossAxis.length
+        let deltaDir = distLR > 1.0e-12 ? (delta * (1.0 / distLR)) : Vec2(0.0, 0.0)
+        let expectedDir = axisLen > 1.0e-12 ? (frame.crossAxis * (-1.0 / axisLen)) : Vec2(0.0, 0.0)
+        let alignment = 1.0 - abs(deltaDir.dot(expectedDir))
         let normalLen = frame.normal.length
         return RailInvariantCheck(
             index: frame.index,
             distLR: distLR,
             expectedWidth: expectedWidth,
             widthErr: widthErr,
-            dotTR: dotTR,
+            alignment: alignment,
             normalLen: normalLen
         )
     }
@@ -1264,7 +1248,8 @@ public func computeRailCornerDebug(
     height: Double,
     effectiveAngle: Double,
     computeCorners: (Vec2, Vec2, Vec2, Double, Double, Double) -> [Vec2],
-    chooseLeftRight: ([Vec2], Vec2, Vec2) -> (Vec2, Vec2)
+    left: Vec2,
+    right: Vec2
 ) -> RailCornerDebug {
     let u = tangent
     let v = normal
@@ -1274,7 +1259,6 @@ public func computeRailCornerDebug(
     let vRot = u * s + v * c
     let widthTotal = widthLeft + widthRight
     let corners = computeCorners(center, u, v, widthTotal, height, effectiveAngle)
-    let chosen = chooseLeftRight(corners, tangent, normal)
     return RailCornerDebug(
         index: index,
         center: center,
@@ -1289,8 +1273,8 @@ public func computeRailCornerDebug(
         widthRight: widthRight,
         widthTotal: widthTotal,
         corners: corners,
-        left: chosen.0,
-        right: chosen.1
+        left: left,
+        right: right
     )
 }
 
