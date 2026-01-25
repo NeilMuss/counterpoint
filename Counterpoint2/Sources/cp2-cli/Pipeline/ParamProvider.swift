@@ -5,8 +5,10 @@ struct StrokeParamFuncs {
     var alphaEndValue: Double
     var widthAtT: (Double) -> Double
     var thetaAtT: (Double) -> Double
+    var offsetAtT: (Double) -> Double
     var alphaAtT: (Double) -> Double
     var usesVariableWidthAngleAlpha: Bool
+    var angleMode: AngleMode
 }
 
 protocol StrokeParamProvider {

@@ -165,6 +165,7 @@ public struct RailSampleFrame: Equatable, Sendable {
     public let tangent: Vec2
     public let normal: Vec2
     public let crossAxis: Vec2
+    public let effectiveAngle: Double
     public let widthLeft: Double
     public let widthRight: Double
     public let widthTotal: Double
@@ -177,6 +178,7 @@ public struct RailSampleFrame: Equatable, Sendable {
         tangent: Vec2,
         normal: Vec2,
         crossAxis: Vec2,
+        effectiveAngle: Double,
         widthLeft: Double,
         widthRight: Double,
         widthTotal: Double,
@@ -188,6 +190,7 @@ public struct RailSampleFrame: Equatable, Sendable {
         self.tangent = tangent
         self.normal = normal
         self.crossAxis = crossAxis
+        self.effectiveAngle = effectiveAngle
         self.widthLeft = widthLeft
         self.widthRight = widthRight
         self.widthTotal = widthTotal
@@ -329,13 +332,15 @@ public struct SweepStyle: Equatable, Codable {
     public let width: Double
     public let height: Double
     public let angle: Double
-    public let offset: Double   // reserved; can be 0 for now
+    public let offset: Double
+    public let angleIsRelative: Bool
 
-    public init(width: Double, height: Double, angle: Double, offset: Double) {
+    public init(width: Double, height: Double, angle: Double, offset: Double, angleIsRelative: Bool) {
         self.width = width
         self.height = height
         self.angle = angle
         self.offset = offset
+        self.angleIsRelative = angleIsRelative
     }
 }
 
@@ -464,7 +469,7 @@ public func boundarySoupGeneral(
                     widthLeft: frame.widthLeft,
                     widthRight: frame.widthRight,
                     height: styleAtGT(warpGT(gt)).height,
-                    effectiveAngle: styleAtGT(warpGT(gt)).angle,
+                    effectiveAngle: frame.effectiveAngle,
                     computeCorners: { center, u, v, width, height, angle in
                         rectangleCorners(
                             center: center,
@@ -501,7 +506,7 @@ public func boundarySoupGeneral(
                     widthLeft: frame.widthLeft,
                     widthRight: frame.widthRight,
                     height: styleAtGT(warpGT(gt)).height,
-                    effectiveAngle: styleAtGT(warpGT(gt)).angle,
+                    effectiveAngle: frame.effectiveAngle,
                     computeCorners: { center, u, v, width, height, angle in
                         rectangleCorners(
                             center: center,
@@ -588,7 +593,7 @@ public func boundarySoup(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        styleAtGT: { _ in SweepStyle(width: width, height: height, angle: effectiveAngle, offset: 0.0) },
+        styleAtGT: { _ in SweepStyle(width: width, height: height, angle: effectiveAngle, offset: 0.0, angleIsRelative: true) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -626,7 +631,7 @@ public func boundarySoupVariableWidth(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: effectiveAngle, offset: 0.0) },
+        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: effectiveAngle, offset: 0.0, angleIsRelative: true) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -664,7 +669,7 @@ public func boundarySoupVariableWidthAngle(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) },
+        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0, angleIsRelative: true) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -686,8 +691,10 @@ public func boundarySoupVariableWidthAngleAlpha(
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
     angleAtT: @escaping (Double) -> Double,
+    offsetAtT: @escaping (Double) -> Double = { _ in 0.0 },
     alphaAtT: @escaping (Double) -> Double,
     alphaStart: Double,
+    angleIsRelative: Bool = true,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
@@ -705,7 +712,7 @@ public func boundarySoupVariableWidthAngleAlpha(
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         warpGT: { gt in applyAlphaWarp(t: gt, alphaValue: alphaAtT(gt), alphaStart: alphaStart) },
-        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0) },
+        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: offsetAtT(t), angleIsRelative: angleIsRelative) },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -759,12 +766,13 @@ private func computeRailSampleFrame(
     let warped = warpGT(gt)
     let style = styleAtGT(warped)
 
-    let center = point + normal * style.offset
-
     let halfWidth = 0.5 * style.width
-    let c = cos(style.angle)
-    let s = sin(style.angle)
+    let baseAngle = style.angleIsRelative ? 0.0 : atan2(tangent.y, tangent.x)
+    let effectiveAngle = baseAngle + style.angle
+    let c = cos(effectiveAngle)
+    let s = sin(effectiveAngle)
     let vRot = tangent * s + normal * c
+    let center = point + vRot * style.offset
     let railPoints = railPointsFromCrossAxis(
         center: center,
         crossAxis: vRot,
@@ -778,6 +786,7 @@ private func computeRailSampleFrame(
         tangent: tangent,
         normal: normal,
         crossAxis: vRot,
+        effectiveAngle: effectiveAngle,
         widthLeft: halfWidth,
         widthRight: halfWidth,
         widthTotal: style.width,
@@ -1276,6 +1285,22 @@ public func computeRailCornerDebug(
         left: left,
         right: right
     )
+}
+
+public func railSampleFrameAtGlobalT(
+    param: SkeletonPathParameterization,
+    warpGT: @escaping (Double) -> Double,
+    styleAtGT: @escaping (Double) -> SweepStyle,
+    gt: Double,
+    index: Int
+) -> RailSampleFrame {
+    return computeRailSampleFrame(
+        param: param,
+        warpGT: warpGT,
+        styleAtGT: styleAtGT,
+        gt: gt,
+        index: index
+    ).frame
 }
 
 public struct SegmentSpotlight: Equatable {

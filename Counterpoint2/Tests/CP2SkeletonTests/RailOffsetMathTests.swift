@@ -48,6 +48,7 @@ final class RailOffsetMathTests: XCTestCase {
             tangent: tangent,
             normal: normal,
             crossAxis: crossAxis,
+            effectiveAngle: 0.0,
             widthLeft: 1.0,
             widthRight: 1.0,
             widthTotal: 2.0,

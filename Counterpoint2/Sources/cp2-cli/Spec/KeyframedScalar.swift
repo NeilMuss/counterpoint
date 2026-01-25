@@ -53,6 +53,10 @@ public struct KeyframedScalar: Codable, Equatable {
     public var keyframes: [Keyframe]
     public init(keyframes: [Keyframe]) { self.keyframes = keyframes }
 
+    public func eval(t: Double) -> Double {
+        value(at: t)
+    }
+
     public func value(at t: Double) -> Double {
         guard !keyframes.isEmpty else { return 0.0 }
         let kfs = keyframes.sorted { $0.t < $1.t }
@@ -71,4 +75,3 @@ public struct KeyframedScalar: Codable, Equatable {
         return kfs[kfs.count - 1].value
     }
 }
-

@@ -12,6 +12,7 @@ public struct CLIOptions {
     var verbose: Bool = false
     var debugParam: Bool = false
     var debugSweep: Bool = false
+    var debugParams: Bool = false
     var debugSVG: Bool = false
     var debugCenterline: Bool = false
     var debugInkControls: Bool = false
@@ -94,6 +95,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugParam = true
         } else if arg == "--debug-sweep" {
             options.debugSweep = true
+        } else if arg == "--debug-params" {
+            options.debugParams = true
         } else if arg == "--debug-svg" {
             options.debugSVG = true
         } else if arg == "--debug-centerline" {
@@ -247,11 +250,12 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
   --debug-param    Print parameterization summary + probe mappings
+  --debug-params   Print evaluated params at probe GTs
   --debug-sweep    Print sweep tracing stats
   --debug-svg      Include skeleton/sample overlay in the SVG
   --debug-centerline  Centerline-only overlay with control points

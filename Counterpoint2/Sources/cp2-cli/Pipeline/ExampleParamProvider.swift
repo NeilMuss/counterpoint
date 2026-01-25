@@ -18,6 +18,7 @@ struct ExampleParamProvider: StrokeParamProvider {
 
         let widthAtT: (Double) -> Double
         let thetaAtT: (Double) -> Double
+        let offsetAtT: (Double) -> Double
         let alphaAtT: (Double) -> Double
 
         if example == "j" || example == "j_serif_only" {
@@ -57,6 +58,7 @@ struct ExampleParamProvider: StrokeParamProvider {
                 let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
                 return alphaEndValue * max(0.0, min(1.0, phase))
             }
+            offsetAtT = { _ in 0.0 }
         } else if example == "line_end_ramp" {
             let rampStart = options.widthRampStartGT
             let start = options.widthStart
@@ -76,6 +78,7 @@ struct ExampleParamProvider: StrokeParamProvider {
                 let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
                 return alphaEndValue * max(0.0, min(1.0, phase))
             }
+            offsetAtT = { _ in 0.0 }
         } else if example == "poly3" {
             widthAtT = { t in
                 let clamped = max(0.0, min(1.0, t))
@@ -98,9 +101,11 @@ struct ExampleParamProvider: StrokeParamProvider {
                 let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
                 return alphaEndValue * max(0.0, min(1.0, phase))
             }
+            offsetAtT = { _ in 0.0 }
         } else {
             widthAtT = { _ in sweepWidth }
             thetaAtT = { _ in 0.0 }
+            offsetAtT = { _ in 0.0 }
             alphaAtT = { _ in 0.0 }
         }
 
@@ -111,8 +116,10 @@ struct ExampleParamProvider: StrokeParamProvider {
             alphaEndValue: alphaEndValue,
             widthAtT: widthAtT,
             thetaAtT: thetaAtT,
+            offsetAtT: offsetAtT,
             alphaAtT: alphaAtT,
-            usesVariableWidthAngleAlpha: usesVariableWidthAngleAlpha
+            usesVariableWidthAngleAlpha: usesVariableWidthAngleAlpha,
+            angleMode: .relative
         )
     }
 }

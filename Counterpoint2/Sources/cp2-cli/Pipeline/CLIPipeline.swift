@@ -77,7 +77,12 @@ public func renderSVGString(
         }
     }
 
-    let provider = ExampleParamProvider()
+    let provider: StrokeParamProvider
+    if let params = spec?.strokes?.first?.params {
+        provider = SpecParamProvider(params: params)
+    } else {
+        provider = ExampleParamProvider()
+    }
     let funcs = provider.makeParamFuncs(options: options, exampleName: exampleName, sweepWidth: 20.0)
     
     let plan = makeSweepPlan(
@@ -88,6 +93,35 @@ public func renderSVGString(
         sweepHeight: 10.0,
         sweepSampleCount: 64
     )
+
+    if options.debugParams {
+        let count = max(1, options.probeCount)
+        let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
+        for gt in probes {
+            let warped = plan.warpT(gt)
+            let styleAtGT: (Double) -> SweepStyle = { t in
+                SweepStyle(
+                    width: plan.scaledWidthAtT(t),
+                    height: plan.sweepHeight,
+                    angle: plan.thetaAtT(t),
+                    offset: plan.offsetAtT(t),
+                    angleIsRelative: plan.angleMode == .relative
+                )
+            }
+            let frame = railSampleFrameAtGlobalT(
+                param: pathParam,
+                warpGT: plan.warpT,
+                styleAtGT: styleAtGT,
+                gt: gt,
+                index: -1
+            )
+            let thetaDeg = plan.thetaAtT(warped) * 180.0 / Double.pi
+            let width = plan.scaledWidthAtT(warped)
+            let offset = plan.offsetAtT(warped)
+            let dist = (frame.right - frame.left).length
+            print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f width=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, width, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
+        }
+    }
 
     // 4. Run Sweep
     let result = runSweep(path: path, plan: plan, options: options)
