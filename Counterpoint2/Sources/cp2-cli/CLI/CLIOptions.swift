@@ -36,6 +36,8 @@ public struct CLIOptions {
     var debugRailUnitEps: Double = 1.0e-3
     var debugDumpRailCorners: Bool = false
     var debugDumpRailCornersIndex: Int = 0
+    var debugCompare: Bool = false
+    var debugCompareAll: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -153,12 +155,18 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--view", index + 1 < args.count {
             let tokens = args[index + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             if tokens.contains("compare") {
+                options.debugCompare = true
+            }
+            if tokens.contains("compareAll") {
+                options.debugCompare = true
+                options.debugCompareAll = true
                 options.debugSVG = true
                 options.debugCenterline = true
                 options.debugInkControls = true
                 options.debugSamplingWhy = true
                 options.debugRingSpine = true
                 options.debugRingJump = true
+                options.debugTraceJumpStep = true
             }
             if tokens.contains("ringSpine") {
                 options.debugRingSpine = true
@@ -288,7 +296,7 @@ Debug flags:
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index
   --debug-dump-rail-corners-index K  Rail corner index (default: 0)
-  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare)
+  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --canvas WxH     Output canvas pixel size (default: 1200x1200)

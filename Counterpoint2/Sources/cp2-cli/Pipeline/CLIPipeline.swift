@@ -461,10 +461,12 @@ public func renderSVGString(
 """
     }()
     let referenceOutlineGroup: String = {
-        guard referenceLayer != nil, let referenceSVG = referenceSVG else { return "" }
+        guard (options.debugCompare || options.debugCompareAll),
+              referenceLayer != nil,
+              let referenceSVG = referenceSVG else { return "" }
         let transform = svgTransformString(referenceTransformMatrix(referenceLayer!))
         return """
-  <g id="reference-outline" transform="\(transform)" style="fill:none;stroke:rgba(0,0,0,0.35);stroke-width:1;vector-effect:non-scaling-stroke">
+  <g id="reference-outline" transform="\(transform)" style="fill:none;stroke:cyan;stroke-width:1;vector-effect:non-scaling-stroke">
 \(referenceSVG)
   </g>
 """
@@ -492,6 +494,11 @@ public func renderSVGString(
 
     let viewTokens: [String] = {
         var tokens: [String] = []
+        if options.debugCompareAll {
+            tokens.append("compareAll")
+        } else if options.debugCompare {
+            tokens.append("compare")
+        }
         if options.debugRingSpine { tokens.append("ringSpine") }
         if options.debugRingJump { tokens.append("ringJump") }
         if options.debugSamplingWhy { tokens.append("samplingWhy") }

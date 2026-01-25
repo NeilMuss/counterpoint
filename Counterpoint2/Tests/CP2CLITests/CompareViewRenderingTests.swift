@@ -17,6 +17,7 @@ final class CompareViewRenderingTests: XCTestCase {
         let spec = CP2Spec(example: "line", render: nil, reference: reference, ink: nil)
         var options = CLIOptions()
         options.example = "line"
+        options.debugCompare = true
 
         let svg = try renderSVGString(options: options, spec: spec)
         guard
@@ -33,6 +34,8 @@ final class CompareViewRenderingTests: XCTestCase {
         XCTAssertLessThan(ink.lowerBound, refOutline.lowerBound)
         XCTAssertLessThan(refOutline.lowerBound, debug.lowerBound)
         XCTAssertTrue(svg.contains("id=\"reference-outline\""))
-        XCTAssertTrue(svg.contains("fill:none;stroke:rgba(0,0,0,0.35);stroke-width:1;vector-effect:non-scaling-stroke"))
+        XCTAssertTrue(svg.contains("fill:none;stroke:cyan;stroke-width:1;vector-effect:non-scaling-stroke"))
+        XCTAssertTrue(svg.contains("id=\"stroke-ink\""))
+        XCTAssertTrue(svg.contains("stroke=\"none\""))
     }
 }
