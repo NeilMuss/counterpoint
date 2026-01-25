@@ -33,6 +33,8 @@ public struct CLIOptions {
     var debugRailWidthEps: Double = 1.0e-3
     var debugRailPerpEps: Double = 1.0e-3
     var debugRailUnitEps: Double = 1.0e-3
+    var debugDumpRailCorners: Bool = false
+    var debugDumpRailCornersIndex: Int = 0
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -136,6 +138,11 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             index += 1
         } else if arg == "--debug-rail-unit-eps", index + 1 < args.count {
             options.debugRailUnitEps = Double(args[index + 1]) ?? options.debugRailUnitEps
+            index += 1
+        } else if arg == "--debug-dump-rail-corners" {
+            options.debugDumpRailCorners = true
+        } else if arg == "--debug-dump-rail-corners-index", index + 1 < args.count {
+            options.debugDumpRailCornersIndex = max(0, Int(args[index + 1]) ?? options.debugDumpRailCornersIndex)
             index += 1
         } else if arg == "--debug-dump-cap-segments-top", index + 1 < args.count {
             options.debugDumpCapSegmentsTop = max(1, Int(args[index + 1]) ?? options.debugDumpCapSegmentsTop)
@@ -267,6 +274,8 @@ Debug flags:
   --debug-rail-width-eps N  Width error epsilon (default: 1e-3)
   --debug-rail-perp-eps N   Perp dot epsilon (default: 1e-3)
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
+  --debug-dump-rail-corners  Dump rail corner basis/corners for one index
+  --debug-dump-rail-corners-index K  Rail corner index (default: 0)
   --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)

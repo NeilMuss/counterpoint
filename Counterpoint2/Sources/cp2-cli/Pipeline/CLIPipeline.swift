@@ -296,6 +296,34 @@ public func renderSVGString(
                 }
             }
         }
+        if options.debugDumpRailCorners {
+            if let corner = result.railCornerDebug {
+                print(String(format: "railCornerDebug idx=%d", corner.index))
+                print(String(format: "  C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f)", corner.center.x, corner.center.y, corner.tangent.x, corner.tangent.y, corner.normal.x, corner.normal.y))
+                print(String(format: "  u=(%.6f,%.6f) v=(%.6f,%.6f)", corner.u.x, corner.u.y, corner.v.x, corner.v.y))
+                print(String(format: "  effectiveAngle=%.6f", corner.effectiveAngle))
+                print(String(format: "  uRot=(%.6f,%.6f) vRot=(%.6f,%.6f)", corner.uRot.x, corner.uRot.y, corner.vRot.x, corner.vRot.y))
+                print(String(format: "  widths: wL=%.6f wR=%.6f expected=%.6f", corner.widthLeft, corner.widthRight, corner.widthTotal))
+                print("  corners:")
+                for (idx, c) in corner.corners.enumerated() {
+                    let delta = c - corner.center
+                    let dotT = delta.dot(corner.tangent)
+                    let dotN = delta.dot(corner.normal)
+                    print(String(format: "    c%d=(%.6f,%.6f) dotT=%.6f dotN=%.6f", idx, c.x, c.y, dotT, dotN))
+                }
+                let decomp = decomposeDelta(
+                    left: corner.left,
+                    right: corner.right,
+                    tangent: corner.tangent,
+                    normal: corner.normal,
+                    expectedWidth: corner.widthTotal
+                )
+                print(String(format: "  chosen: L=(%.6f,%.6f) R=(%.6f,%.6f)", corner.left.x, corner.left.y, corner.right.x, corner.right.y))
+                print(String(format: "    delta=(%.6f,%.6f) dotT=%.6f dotN=%.6f len=%.6f widthErr=%.6f", decomp.delta.x, decomp.delta.y, decomp.dotT, decomp.dotN, decomp.len, decomp.widthErr))
+            } else {
+                print("railCornerDebug <none>")
+            }
+        }
         if options.debugRingSpine {
             overlays.append(makeRingSpineOverlay(rings: result.rings))
         }

@@ -228,6 +228,74 @@ public struct RailFrameDiagnostics: Equatable, Sendable {
     }
 }
 
+public struct RailCornerDebug: Equatable, Sendable {
+    public let index: Int
+    public let center: Vec2
+    public let tangent: Vec2
+    public let normal: Vec2
+    public let u: Vec2
+    public let v: Vec2
+    public let uRot: Vec2
+    public let vRot: Vec2
+    public let effectiveAngle: Double
+    public let widthLeft: Double
+    public let widthRight: Double
+    public let widthTotal: Double
+    public let corners: [Vec2]
+    public let left: Vec2
+    public let right: Vec2
+
+    public init(
+        index: Int,
+        center: Vec2,
+        tangent: Vec2,
+        normal: Vec2,
+        u: Vec2,
+        v: Vec2,
+        uRot: Vec2,
+        vRot: Vec2,
+        effectiveAngle: Double,
+        widthLeft: Double,
+        widthRight: Double,
+        widthTotal: Double,
+        corners: [Vec2],
+        left: Vec2,
+        right: Vec2
+    ) {
+        self.index = index
+        self.center = center
+        self.tangent = tangent
+        self.normal = normal
+        self.u = u
+        self.v = v
+        self.uRot = uRot
+        self.vRot = vRot
+        self.effectiveAngle = effectiveAngle
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
+        self.widthTotal = widthTotal
+        self.corners = corners
+        self.left = left
+        self.right = right
+    }
+}
+
+public struct RailDeltaDecomp: Equatable, Sendable {
+    public let delta: Vec2
+    public let dotT: Double
+    public let dotN: Double
+    public let len: Double
+    public let widthErr: Double
+
+    public init(delta: Vec2, dotT: Double, dotN: Double, len: Double, widthErr: Double) {
+        self.delta = delta
+        self.dotT = dotT
+        self.dotN = dotN
+        self.len = len
+        self.widthErr = widthErr
+    }
+}
+
 public struct SweepStyle: Equatable, Codable {
     public let width: Double
     public let height: Double
@@ -287,7 +355,9 @@ public func boundarySoupGeneral(
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
-    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
+    debugRailCornerIndex: Int? = nil,
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -356,10 +426,100 @@ public func boundarySoupGeneral(
             left.append(rail.left)
             right.append(rail.right)
             frames.append(frame)
+            if let debugRailCorner, let target = debugRailCornerIndex, target == index {
+                let cornerDebug = computeRailCornerDebug(
+                    index: index,
+                    center: frame.center,
+                    tangent: frame.tangent,
+                    normal: frame.normal,
+                    widthLeft: frame.widthLeft,
+                    widthRight: frame.widthRight,
+                    height: styleAtGT(warpGT(gt)).height,
+                    effectiveAngle: styleAtGT(warpGT(gt)).angle,
+                    computeCorners: { center, u, v, width, height, angle in
+                        rectangleCorners(
+                            center: center,
+                            tangent: u,
+                            normal: v,
+                            width: width,
+                            height: height,
+                            effectiveAngle: angle
+                        )
+                    },
+                    chooseLeftRight: { corners, _, normal in
+                        var minDot = Double.greatestFiniteMagnitude
+                        var maxDot = -Double.greatestFiniteMagnitude
+                        var left = corners[0]
+                        var right = corners[0]
+                        for corner in corners {
+                            let d = corner.dot(normal)
+                            if d < minDot {
+                                minDot = d
+                                left = corner
+                            }
+                            if d > maxDot {
+                                maxDot = d
+                                right = corner
+                            }
+                        }
+                        return (left, right)
+                    }
+                )
+                debugRailCorner(cornerDebug)
+            }
         } else {
             let rail = probe.rails(atGlobalT: gt)
             left.append(rail.left)
             right.append(rail.right)
+            if let debugRailCorner, let target = debugRailCornerIndex, target == index {
+                let (railSample, frame) = computeRailSampleFrame(
+                    param: param,
+                    warpGT: warpGT,
+                    styleAtGT: styleAtGT,
+                    gt: gt,
+                    index: index
+                )
+                _ = railSample
+                let cornerDebug = computeRailCornerDebug(
+                    index: index,
+                    center: frame.center,
+                    tangent: frame.tangent,
+                    normal: frame.normal,
+                    widthLeft: frame.widthLeft,
+                    widthRight: frame.widthRight,
+                    height: styleAtGT(warpGT(gt)).height,
+                    effectiveAngle: styleAtGT(warpGT(gt)).angle,
+                    computeCorners: { center, u, v, width, height, angle in
+                        rectangleCorners(
+                            center: center,
+                            tangent: u,
+                            normal: v,
+                            width: width,
+                            height: height,
+                            effectiveAngle: angle
+                        )
+                    },
+                    chooseLeftRight: { corners, _, normal in
+                        var minDot = Double.greatestFiniteMagnitude
+                        var maxDot = -Double.greatestFiniteMagnitude
+                        var left = corners[0]
+                        var right = corners[0]
+                        for corner in corners {
+                            let d = corner.dot(normal)
+                            if d < minDot {
+                                minDot = d
+                                left = corner
+                            }
+                            if d > maxDot {
+                                maxDot = d
+                                right = corner
+                            }
+                        }
+                        return (left, right)
+                    }
+                )
+                debugRailCorner(cornerDebug)
+            }
         }
     }
     if let debugRailFrames {
@@ -418,7 +578,9 @@ public func boundarySoup(
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
-    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
+    debugRailCornerIndex: Int? = nil,
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -433,7 +595,9 @@ public func boundarySoup(
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
-        debugRailFrames: debugRailFrames
+        debugRailFrames: debugRailFrames,
+        debugRailCornerIndex: debugRailCornerIndex,
+        debugRailCorner: debugRailCorner
     )
 }
 
@@ -452,7 +616,9 @@ public func boundarySoupVariableWidth(
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
-    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
+    debugRailCornerIndex: Int? = nil,
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -467,7 +633,9 @@ public func boundarySoupVariableWidth(
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
-        debugRailFrames: debugRailFrames
+        debugRailFrames: debugRailFrames,
+        debugRailCornerIndex: debugRailCornerIndex,
+        debugRailCorner: debugRailCorner
     )
 }
 
@@ -486,7 +654,9 @@ public func boundarySoupVariableWidthAngle(
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
-    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
+    debugRailCornerIndex: Int? = nil,
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -501,7 +671,9 @@ public func boundarySoupVariableWidthAngle(
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
-        debugRailFrames: debugRailFrames
+        debugRailFrames: debugRailFrames,
+        debugRailCornerIndex: debugRailCornerIndex,
+        debugRailCorner: debugRailCorner
     )
 }
 
@@ -522,7 +694,9 @@ public func boundarySoupVariableWidthAngleAlpha(
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
-    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil
+    debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
+    debugRailCornerIndex: Int? = nil,
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -538,7 +712,9 @@ public func boundarySoupVariableWidthAngleAlpha(
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
-        debugRailFrames: debugRailFrames
+        debugRailFrames: debugRailFrames,
+        debugRailCornerIndex: debugRailCornerIndex,
+        debugRailCorner: debugRailCorner
     )
 }
 
@@ -1061,6 +1237,61 @@ public func computeRailFrameDiagnostics(
         )
     }
     return RailFrameDiagnostics(frames: frames, checks: checks)
+}
+
+public func decomposeDelta(
+    left: Vec2,
+    right: Vec2,
+    tangent: Vec2,
+    normal: Vec2,
+    expectedWidth: Double
+) -> RailDeltaDecomp {
+    let delta = right - left
+    let dotT = delta.dot(tangent)
+    let dotN = delta.dot(normal)
+    let len = delta.length
+    let widthErr = len - expectedWidth
+    return RailDeltaDecomp(delta: delta, dotT: dotT, dotN: dotN, len: len, widthErr: widthErr)
+}
+
+public func computeRailCornerDebug(
+    index: Int,
+    center: Vec2,
+    tangent: Vec2,
+    normal: Vec2,
+    widthLeft: Double,
+    widthRight: Double,
+    height: Double,
+    effectiveAngle: Double,
+    computeCorners: (Vec2, Vec2, Vec2, Double, Double, Double) -> [Vec2],
+    chooseLeftRight: ([Vec2], Vec2, Vec2) -> (Vec2, Vec2)
+) -> RailCornerDebug {
+    let u = tangent
+    let v = normal
+    let c = cos(effectiveAngle)
+    let s = sin(effectiveAngle)
+    let uRot = u * c - v * s
+    let vRot = u * s + v * c
+    let widthTotal = widthLeft + widthRight
+    let corners = computeCorners(center, u, v, widthTotal, height, effectiveAngle)
+    let chosen = chooseLeftRight(corners, tangent, normal)
+    return RailCornerDebug(
+        index: index,
+        center: center,
+        tangent: tangent,
+        normal: normal,
+        u: u,
+        v: v,
+        uRot: uRot,
+        vRot: vRot,
+        effectiveAngle: effectiveAngle,
+        widthLeft: widthLeft,
+        widthRight: widthRight,
+        widthTotal: widthTotal,
+        corners: corners,
+        left: chosen.0,
+        right: chosen.1
+    )
 }
 
 public struct SegmentSpotlight: Equatable {

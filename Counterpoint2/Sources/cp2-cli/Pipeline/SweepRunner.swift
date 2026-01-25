@@ -12,6 +12,7 @@ struct SweepResult {
     var capEndpointsDebug: CapEndpointsDebug?
     var railDebugSummary: RailDebugSummary?
     var railFrames: [RailSampleFrame]?
+    var railCornerDebug: RailCornerDebug?
 }
 
 func runSweep(
@@ -24,7 +25,9 @@ func runSweep(
     var capEndpointsDebug: CapEndpointsDebug? = nil
     var railDebugSummary: RailDebugSummary? = nil
     var railFrames: [RailSampleFrame]? = nil
+    var railCornerDebug: RailCornerDebug? = nil
     let wantsRailFrames = options.debugDumpRailFrames || options.debugRailInvariants || options.debugDumpRailEndpoints
+    let wantsRailCorner = options.debugDumpRailCorners
 
     let segmentsUsed: [Segment2] = {
         if plan.usesVariableWidthAngleAlpha {
@@ -45,7 +48,9 @@ func runSweep(
                 debugSampling: { capturedSampling = $0 },
                 debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
                 debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
-                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil
+                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
+                debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
+                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil
             )
         } else {
             return boundarySoup(
@@ -63,7 +68,9 @@ func runSweep(
                 debugSampling: { capturedSampling = $0 },
                 debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
                 debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
-                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil
+                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
+                debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
+                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil
             )
         }
     }()
@@ -85,6 +92,7 @@ func runSweep(
         traceSteps: traceSteps,
         capEndpointsDebug: capEndpointsDebug,
         railDebugSummary: railDebugSummary,
-        railFrames: railFrames
+        railFrames: railFrames,
+        railCornerDebug: railCornerDebug
     )
 }
