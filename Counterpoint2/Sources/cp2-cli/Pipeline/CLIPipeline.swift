@@ -102,6 +102,8 @@ public func renderSVGString(
             let styleAtGT: (Double) -> SweepStyle = { t in
                 SweepStyle(
                     width: plan.scaledWidthAtT(t),
+                    widthLeft: plan.scaledWidthLeftAtT(t),
+                    widthRight: plan.scaledWidthRightAtT(t),
                     height: plan.sweepHeight,
                     angle: plan.thetaAtT(t),
                     offset: plan.offsetAtT(t),
@@ -116,10 +118,13 @@ public func renderSVGString(
                 index: -1
             )
             let thetaDeg = plan.thetaAtT(warped) * 180.0 / Double.pi
-            let width = plan.scaledWidthAtT(warped)
+            let widthLegacy = plan.widthAtT(warped)
+            let widthLeft = plan.scaledWidthLeftAtT(warped)
+            let widthRight = plan.scaledWidthRightAtT(warped)
+            let widthSum = widthLeft + widthRight
             let offset = plan.offsetAtT(warped)
             let dist = (frame.right - frame.left).length
-            print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f width=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, width, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
+            print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f widthLegacy=%.6f widthLeft=%.6f widthRight=%.6f sumWidth=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, widthLegacy, widthLeft, widthRight, widthSum, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
         }
     }
 
@@ -446,11 +451,20 @@ public func renderSVGString(
   </clipPath>
 """ : ""
 
-    let referenceGroup: String = {
+    let referenceFillGroup: String = {
         guard let layer = referenceLayer, let referenceSVG = referenceSVG else { return "" }
         let transform = svgTransformString(referenceTransformMatrix(layer))
         return """
-  <g id="reference" opacity="\(String(format: "%.4f", layer.opacity))" transform="\(transform)">
+  <g id="reference-fill" opacity="\(String(format: "%.4f", layer.opacity))" transform="\(transform)">
+\(referenceSVG)
+  </g>
+"""
+    }()
+    let referenceOutlineGroup: String = {
+        guard referenceLayer != nil, let referenceSVG = referenceSVG else { return "" }
+        let transform = svgTransformString(referenceTransformMatrix(referenceLayer!))
+        return """
+  <g id="reference-outline" transform="\(transform)" style="fill:none;stroke:rgba(0,0,0,0.35);stroke-width:1;vector-effect:non-scaling-stroke">
 \(referenceSVG)
   </g>
 """
@@ -462,15 +476,19 @@ public func renderSVGString(
     <path d="\(pathData)" fill="black" stroke="none" />
   </g>
 """ : """
-  <g id="glyph">
+  <g id="stroke-ink">
     <path d="\(pathData)" fill="black" stroke="none" />
   </g>
 """
     let debugGroup = renderSettings.clipToFrame ? """
-  <g id="debugOverlay" clip-path="url(#\(clipId))">
+  <g id="debug-overlays" clip-path="url(#\(clipId))">
 \(debugSVG)
   </g>
-""" : debugSVG
+""" : """
+  <g id="debug-overlays">
+\(debugSVG)
+  </g>
+"""
 
     let viewTokens: [String] = {
         var tokens: [String] = []
@@ -492,8 +510,9 @@ public func renderSVGString(
     return """
 <svg xmlns="http://www.w3.org/2000/svg" width="\(renderSettings.canvasPx.width)" height="\(renderSettings.canvasPx.height)" viewBox="\(String(format: "%.4f", viewMinX)) \(String(format: "%.4f", viewMinY)) \(String(format: "%.4f", viewWidth)) \(String(format: "%.4f", viewHeight))">
 \(clipPath)
-\(referenceGroup)
+\(referenceFillGroup)
 \(glyphGroup)
+\(referenceOutlineGroup)
 \(debugGroup)
 \(infoLabel)
 </svg>

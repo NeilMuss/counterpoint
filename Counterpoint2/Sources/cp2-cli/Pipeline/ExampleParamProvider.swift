@@ -111,10 +111,15 @@ struct ExampleParamProvider: StrokeParamProvider {
 
         let usesVariableWidthAngleAlpha = (example == "j" || example == "j_serif_only" || example == "poly3" || example == "line_end_ramp")
 
+        let widthLeftAtT: (Double) -> Double = { t in widthAtT(t) * 0.5 }
+        let widthRightAtT: (Double) -> Double = { t in widthAtT(t) * 0.5 }
+
         return StrokeParamFuncs(
             alphaStartGT: alphaStartGT,
             alphaEndValue: alphaEndValue,
             widthAtT: widthAtT,
+            widthLeftAtT: widthLeftAtT,
+            widthRightAtT: widthRightAtT,
             thetaAtT: thetaAtT,
             offsetAtT: offsetAtT,
             alphaAtT: alphaAtT,

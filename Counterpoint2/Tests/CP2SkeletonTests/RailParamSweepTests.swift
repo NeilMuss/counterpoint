@@ -16,7 +16,8 @@ final class RailParamSweepTests: XCTestCase {
         let warpGT: (Double) -> Double = { $0 }
         let styleAtGT: (Double) -> SweepStyle = { t in
             let width = 20.0 + 180.0 * t
-            return SweepStyle(width: width, height: 10.0, angle: 0.0, offset: 0.0, angleIsRelative: true)
+            let half = width * 0.5
+            return SweepStyle(width: width, widthLeft: half, widthRight: half, height: 10.0, angle: 0.0, offset: 0.0, angleIsRelative: true)
         }
 
         let start = railSampleFrameAtGlobalT(param: param, warpGT: warpGT, styleAtGT: styleAtGT, gt: 0.0, index: 0)
@@ -41,7 +42,7 @@ final class RailParamSweepTests: XCTestCase {
         let warpGT: (Double) -> Double = { $0 }
         let styleAtGT: (Double) -> SweepStyle = { t in
             let offset = 100.0 * t
-            return SweepStyle(width: 20.0, height: 10.0, angle: 0.0, offset: offset, angleIsRelative: true)
+            return SweepStyle(width: 20.0, widthLeft: 10.0, widthRight: 10.0, height: 10.0, angle: 0.0, offset: offset, angleIsRelative: true)
         }
 
         let frame = railSampleFrameAtGlobalT(param: param, warpGT: warpGT, styleAtGT: styleAtGT, gt: 1.0, index: 0)

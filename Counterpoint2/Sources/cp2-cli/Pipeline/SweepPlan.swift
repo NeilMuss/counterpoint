@@ -14,11 +14,15 @@ struct SweepPlan {
     var baselineWidth: Double
     var widthScale: Double
     var widthAtT: (Double) -> Double
+    var widthLeftAtT: (Double) -> Double
+    var widthRightAtT: (Double) -> Double
     var thetaAtT: (Double) -> Double
     var offsetAtT: (Double) -> Double
     var alphaAtT: (Double) -> Double
     var warpT: (Double) -> Double
     var scaledWidthAtT: (Double) -> Double
+    var scaledWidthLeftAtT: (Double) -> Double
+    var scaledWidthRightAtT: (Double) -> Double
     var sweepGT: [Double]
     var widths: [Double]
     var angleMode: AngleMode
@@ -57,6 +61,12 @@ func makeSweepPlan(
     let scaledWidthAtT: (Double) -> Double = { t in
         funcs.widthAtT(t) * widthScale
     }
+    let scaledWidthLeftAtT: (Double) -> Double = { t in
+        funcs.widthLeftAtT(t) * widthScale
+    }
+    let scaledWidthRightAtT: (Double) -> Double = { t in
+        funcs.widthRightAtT(t) * widthScale
+    }
 
     return SweepPlan(
         sweepSampleCount: sweepSampleCount,
@@ -70,11 +80,15 @@ func makeSweepPlan(
         baselineWidth: baselineWidth,
         widthScale: widthScale,
         widthAtT: funcs.widthAtT,
+        widthLeftAtT: funcs.widthLeftAtT,
+        widthRightAtT: funcs.widthRightAtT,
         thetaAtT: funcs.thetaAtT,
         offsetAtT: funcs.offsetAtT,
         alphaAtT: funcs.alphaAtT,
         warpT: warpT,
         scaledWidthAtT: scaledWidthAtT,
+        scaledWidthLeftAtT: scaledWidthLeftAtT,
+        scaledWidthRightAtT: scaledWidthRightAtT,
         sweepGT: sweepGT,
         widths: widths,
         angleMode: funcs.angleMode

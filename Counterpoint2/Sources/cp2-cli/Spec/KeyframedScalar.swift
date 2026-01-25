@@ -20,6 +20,8 @@ public struct StrokeParams: Codable, Equatable {
     public var angleMode: AngleMode?
     public var theta: KeyframedScalar?
     public var width: KeyframedScalar?
+    public var widthLeft: KeyframedScalar?
+    public var widthRight: KeyframedScalar?
     public var offset: KeyframedScalar?
     public var alpha: KeyframedScalar?   // optional for now
 
@@ -27,12 +29,16 @@ public struct StrokeParams: Codable, Equatable {
         angleMode: AngleMode? = nil,
         theta: KeyframedScalar? = nil,
         width: KeyframedScalar? = nil,
+        widthLeft: KeyframedScalar? = nil,
+        widthRight: KeyframedScalar? = nil,
         offset: KeyframedScalar? = nil,
         alpha: KeyframedScalar? = nil
     ) {
         self.angleMode = angleMode
         self.theta = theta
         self.width = width
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
         self.offset = offset
         self.alpha = alpha
     }

@@ -16,7 +16,10 @@ let package = Package(
         ),
         .target(
             name: "CP2Skeleton",
-            dependencies: ["CP2Geometry"]
+            dependencies: ["CP2Geometry"],
+            exclude: [
+                "Sampling/README.md"
+            ]
         ),
         .executableTarget(
             name: "cp2-cli",
@@ -28,11 +31,18 @@ let package = Package(
         ),
         .testTarget(
             name: "CP2SkeletonTests",
-            dependencies: ["CP2Skeleton"]
+            dependencies: ["CP2Skeleton"],
+            exclude: [
+                "RingIntersectionTests.swift.disabled"
+            ]
         ),
         .testTarget(
             name: "CP2CLITests",
-            dependencies: ["cp2-cli"]
+            dependencies: ["cp2-cli"],
+            exclude: [
+                "SweepPlanTests.swift.disabled",
+                "KeyframedScalarTests.swift.disabled"
+            ]
         )
     ]
 )

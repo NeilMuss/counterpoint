@@ -330,13 +330,25 @@ public struct RailDeltaDecomp: Equatable, Sendable {
 
 public struct SweepStyle: Equatable, Codable {
     public let width: Double
+    public let widthLeft: Double
+    public let widthRight: Double
     public let height: Double
     public let angle: Double
     public let offset: Double
     public let angleIsRelative: Bool
 
-    public init(width: Double, height: Double, angle: Double, offset: Double, angleIsRelative: Bool) {
+    public init(
+        width: Double,
+        widthLeft: Double,
+        widthRight: Double,
+        height: Double,
+        angle: Double,
+        offset: Double,
+        angleIsRelative: Bool
+    ) {
         self.width = width
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
         self.height = height
         self.angle = angle
         self.offset = offset
@@ -593,7 +605,17 @@ public func boundarySoup(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        styleAtGT: { _ in SweepStyle(width: width, height: height, angle: effectiveAngle, offset: 0.0, angleIsRelative: true) },
+        styleAtGT: { _ in
+            SweepStyle(
+                width: width,
+                widthLeft: width * 0.5,
+                widthRight: width * 0.5,
+                height: height,
+                angle: effectiveAngle,
+                offset: 0.0,
+                angleIsRelative: true
+            )
+        },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -631,7 +653,18 @@ public func boundarySoupVariableWidth(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: effectiveAngle, offset: 0.0, angleIsRelative: true) },
+        styleAtGT: { t in
+            let total = widthAtT(t)
+            return SweepStyle(
+                width: total,
+                widthLeft: total * 0.5,
+                widthRight: total * 0.5,
+                height: height,
+                angle: effectiveAngle,
+                offset: 0.0,
+                angleIsRelative: true
+            )
+        },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -652,6 +685,8 @@ public func boundarySoupVariableWidthAngle(
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
+    widthLeftAtT: ((Double) -> Double)? = nil,
+    widthRightAtT: ((Double) -> Double)? = nil,
     angleAtT: @escaping (Double) -> Double,
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
@@ -669,7 +704,20 @@ public func boundarySoupVariableWidthAngle(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: 0.0, angleIsRelative: true) },
+        styleAtGT: { t in
+            let total = widthAtT(t)
+            let wL = widthLeftAtT?(t) ?? total * 0.5
+            let wR = widthRightAtT?(t) ?? total * 0.5
+            return SweepStyle(
+                width: total,
+                widthLeft: wL,
+                widthRight: wR,
+                height: height,
+                angle: angleAtT(t),
+                offset: 0.0,
+                angleIsRelative: true
+            )
+        },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -690,6 +738,8 @@ public func boundarySoupVariableWidthAngleAlpha(
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
+    widthLeftAtT: ((Double) -> Double)? = nil,
+    widthRightAtT: ((Double) -> Double)? = nil,
     angleAtT: @escaping (Double) -> Double,
     offsetAtT: @escaping (Double) -> Double = { _ in 0.0 },
     alphaAtT: @escaping (Double) -> Double,
@@ -712,7 +762,20 @@ public func boundarySoupVariableWidthAngleAlpha(
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         warpGT: { gt in applyAlphaWarp(t: gt, alphaValue: alphaAtT(gt), alphaStart: alphaStart) },
-        styleAtGT: { t in SweepStyle(width: widthAtT(t), height: height, angle: angleAtT(t), offset: offsetAtT(t), angleIsRelative: angleIsRelative) },
+        styleAtGT: { t in
+            let total = widthAtT(t)
+            let wL = widthLeftAtT?(t) ?? total * 0.5
+            let wR = widthRightAtT?(t) ?? total * 0.5
+            return SweepStyle(
+                width: total,
+                widthLeft: wL,
+                widthRight: wR,
+                height: height,
+                angle: angleAtT(t),
+                offset: offsetAtT(t),
+                angleIsRelative: angleIsRelative
+            )
+        },
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -776,8 +839,8 @@ private func computeRailSampleFrame(
     let railPoints = railPointsFromCrossAxis(
         center: center,
         crossAxis: vRot,
-        widthLeft: halfWidth,
-        widthRight: halfWidth
+        widthLeft: style.widthLeft > 0.0 ? style.widthLeft : halfWidth,
+        widthRight: style.widthRight > 0.0 ? style.widthRight : halfWidth
     )
     let sample = RailSample(left: railPoints.left, right: railPoints.right)
     let frame = RailSampleFrame(

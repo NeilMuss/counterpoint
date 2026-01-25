@@ -4,6 +4,8 @@ struct StrokeParamFuncs {
     var alphaStartGT: Double
     var alphaEndValue: Double
     var widthAtT: (Double) -> Double
+    var widthLeftAtT: (Double) -> Double
+    var widthRightAtT: (Double) -> Double
     var thetaAtT: (Double) -> Double
     var offsetAtT: (Double) -> Double
     var alphaAtT: (Double) -> Double

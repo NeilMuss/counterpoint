@@ -42,6 +42,8 @@ func runSweep(
                 maxDepth: options.maxDepth,
                 maxSamples: options.maxSamples,
                 widthAtT: { t in plan.scaledWidthAtT(plan.warpT(t)) },
+                widthLeftAtT: { t in plan.scaledWidthLeftAtT(plan.warpT(t)) },
+                widthRightAtT: { t in plan.scaledWidthRightAtT(plan.warpT(t)) },
                 angleAtT: { t in plan.thetaAtT(plan.warpT(t)) },
                 offsetAtT: { t in plan.offsetAtT(plan.warpT(t)) },
                 alphaAtT: plan.alphaAtT,
