@@ -120,6 +120,8 @@ struct ExampleParamProvider: StrokeParamProvider {
             widthAtT: widthAtT,
             widthLeftAtT: widthLeftAtT,
             widthRightAtT: widthRightAtT,
+            widthLeftSegmentAlphaAtT: { _ in 0.0 },
+            widthRightSegmentAlphaAtT: { _ in 0.0 },
             thetaAtT: thetaAtT,
             offsetAtT: offsetAtT,
             alphaAtT: alphaAtT,

@@ -761,7 +761,7 @@ public func boundarySoupVariableWidthAngleAlpha(
         railEps: railEps,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
-        warpGT: { gt in applyAlphaWarp(t: gt, alphaValue: alphaAtT(gt), alphaStart: alphaStart) },
+        warpGT: { gt in gt },
         styleAtGT: { t in
             let total = widthAtT(t)
             let wL = widthLeftAtT?(t) ?? total * 0.5
@@ -885,17 +885,6 @@ private func rectangleCorners(
         let world = tangent * rotated.y + normal * rotated.x
         return center + world
     }
-}
-
-private func applyAlphaWarp(t: Double, alphaValue: Double, alphaStart: Double) -> Double {
-    if t <= alphaStart || abs(alphaValue) <= Epsilon.defaultValue {
-        return t
-    }
-    let span = max(Epsilon.defaultValue, 1.0 - alphaStart)
-    let phase = max(0.0, min(1.0, (t - alphaStart) / span))
-    let exponent = max(0.05, 1.0 + alphaValue)
-    let biased = pow(phase, exponent)
-    return alphaStart + biased * span
 }
 
 // MARK: - Sampling utilities (unchanged)

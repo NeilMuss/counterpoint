@@ -16,6 +16,8 @@ struct SweepPlan {
     var widthAtT: (Double) -> Double
     var widthLeftAtT: (Double) -> Double
     var widthRightAtT: (Double) -> Double
+    var widthLeftSegmentAlphaAtT: (Double) -> Double
+    var widthRightSegmentAlphaAtT: (Double) -> Double
     var thetaAtT: (Double) -> Double
     var offsetAtT: (Double) -> Double
     var alphaAtT: (Double) -> Double
@@ -41,15 +43,7 @@ func makeSweepPlan(
     }
     
     let warpT: (Double) -> Double = { t in
-        let alphaValue = funcs.alphaAtT(t)
-        if t <= funcs.alphaStartGT || abs(alphaValue) <= Epsilon.defaultValue {
-            return t
-        }
-        let span = max(Epsilon.defaultValue, 1.0 - funcs.alphaStartGT)
-        let phase = max(0.0, min(1.0, (t - funcs.alphaStartGT) / span))
-        let exponent = max(0.05, 1.0 + alphaValue)
-        let biased = pow(phase, exponent)
-        return funcs.alphaStartGT + biased * span
+        CP2Skeleton.warpT(t: t, alpha: funcs.alphaAtT(t))
     }
     
     let widths = sweepGT.map { funcs.widthAtT(warpT($0)) }
@@ -82,6 +76,8 @@ func makeSweepPlan(
         widthAtT: funcs.widthAtT,
         widthLeftAtT: funcs.widthLeftAtT,
         widthRightAtT: funcs.widthRightAtT,
+        widthLeftSegmentAlphaAtT: funcs.widthLeftSegmentAlphaAtT,
+        widthRightSegmentAlphaAtT: funcs.widthRightSegmentAlphaAtT,
         thetaAtT: funcs.thetaAtT,
         offsetAtT: funcs.offsetAtT,
         alphaAtT: funcs.alphaAtT,

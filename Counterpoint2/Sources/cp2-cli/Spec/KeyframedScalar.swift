@@ -1,3 +1,5 @@
+import Foundation
+
 public struct StrokeSpec: Codable, Equatable {
     public var id: String
     public var type: StrokeSpecType
@@ -52,7 +54,17 @@ public enum AngleMode: String, Codable, Equatable {
 public struct Keyframe: Codable, Equatable {
     public var t: Double
     public var value: Double
-    public init(t: Double, value: Double) { self.t = t; self.value = value }
+    public var interpToNext: InterpToNext?
+    public init(t: Double, value: Double, interpToNext: InterpToNext? = nil) {
+        self.t = t
+        self.value = value
+        self.interpToNext = interpToNext
+    }
+}
+
+public struct InterpToNext: Codable, Equatable {
+    public var alpha: Double
+    public init(alpha: Double) { self.alpha = alpha }
 }
 
 public struct KeyframedScalar: Codable, Equatable {
@@ -75,9 +87,32 @@ public struct KeyframedScalar: Codable, Equatable {
                 let denom = (b.t - a.t)
                 if denom == 0 { return b.value }
                 let u = (t - a.t) / denom
-                return a.value + (b.value - a.value) * u
+                let alpha = a.interpToNext?.alpha ?? 0.0
+                let uWarp = warpU(u: u, alpha: alpha)
+                return a.value + (b.value - a.value) * uWarp
             }
         }
         return kfs[kfs.count - 1].value
+    }
+
+    public func segmentAlpha(at t: Double) -> Double {
+        guard keyframes.count >= 2 else { return 0.0 }
+        let kfs = keyframes.sorted { $0.t < $1.t }
+        if t <= kfs[0].t { return kfs[0].interpToNext?.alpha ?? 0.0 }
+        if t >= kfs[kfs.count - 1].t { return 0.0 }
+        for i in 0..<(kfs.count - 1) {
+            let a = kfs[i], b = kfs[i + 1]
+            if t >= a.t && t <= b.t {
+                return a.interpToNext?.alpha ?? 0.0
+            }
+        }
+        return 0.0
+    }
+
+    private func warpU(u: Double, alpha: Double) -> Double {
+        let clampedU = max(0.0, min(1.0, u))
+        let exponent = exp(alpha)
+        let warped = pow(clampedU, exponent)
+        return max(0.0, min(1.0, warped))
     }
 }

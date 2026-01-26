@@ -29,6 +29,22 @@ struct SpecParamProvider: StrokeParamProvider {
             return sweepWidth * 0.5
         }
 
+        let widthLeftSegmentAlphaAtT: (Double) -> Double = { t in
+            if let widthLeft = params.widthLeft {
+                return widthLeft.segmentAlpha(at: t)
+            }
+            if params.widthRight != nil {
+                if let width = params.width {
+                    return width.segmentAlpha(at: t)
+                }
+                return params.widthRight?.segmentAlpha(at: t) ?? 0.0
+            }
+            if let width = params.width {
+                return width.segmentAlpha(at: t)
+            }
+            return 0.0
+        }
+
         let widthRightAtT: (Double) -> Double = { t in
             if let widthRight = params.widthRight {
                 return widthRight.eval(t: t)
@@ -43,6 +59,22 @@ struct SpecParamProvider: StrokeParamProvider {
                 return widthLegacyAtT(t) * 0.5
             }
             return sweepWidth * 0.5
+        }
+
+        let widthRightSegmentAlphaAtT: (Double) -> Double = { t in
+            if let widthRight = params.widthRight {
+                return widthRight.segmentAlpha(at: t)
+            }
+            if params.widthLeft != nil {
+                if let width = params.width {
+                    return width.segmentAlpha(at: t)
+                }
+                return params.widthLeft?.segmentAlpha(at: t) ?? 0.0
+            }
+            if let width = params.width {
+                return width.segmentAlpha(at: t)
+            }
+            return 0.0
         }
 
         let widthAtT: (Double) -> Double = { t in
@@ -71,6 +103,8 @@ struct SpecParamProvider: StrokeParamProvider {
             widthAtT: widthAtT,
             widthLeftAtT: widthLeftAtT,
             widthRightAtT: widthRightAtT,
+            widthLeftSegmentAlphaAtT: widthLeftSegmentAlphaAtT,
+            widthRightSegmentAlphaAtT: widthRightSegmentAlphaAtT,
             thetaAtT: thetaAtT,
             offsetAtT: offsetAtT,
             alphaAtT: alphaAtT,

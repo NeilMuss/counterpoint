@@ -346,7 +346,7 @@ final class SweepTraceTests: XCTestCase {
         assertNoRailFlip(path: path, angleAtT: thetaRampRadians)
     }
 
-    func testJSerifOnlyAlphaAffectsOnlyTailRegion() {
+    func testJSerifOnlyAlphaIgnoredWhenUsingLocalKeyframeAlpha() {
         let path = jSerifOnlyFixturePath()
         let height = 10.0
         let samples = 64
@@ -397,7 +397,7 @@ final class SweepTraceTests: XCTestCase {
                 maxTailDelta = delta
             }
         }
-        XCTAssertGreaterThan(maxTailDelta, 1.0e-6)
+        XCTAssertLessThanOrEqual(maxTailDelta, 1.0e-6)
     }
 
     func testJHookSweepProducesDeterministicClosedRing() {
@@ -493,7 +493,7 @@ final class SweepTraceTests: XCTestCase {
         assertNoRailFlip(path: path, angleAtT: thetaRampRadians)
     }
 
-    func testJHookAlphaAffectsOnlyTailRegion() {
+    func testJHookAlphaIgnoredWhenUsingLocalKeyframeAlpha() {
         let path = jFullFixturePath()
         let height = 10.0
         let samples = 64
@@ -543,7 +543,7 @@ final class SweepTraceTests: XCTestCase {
                 maxTailDelta = delta
             }
         }
-        XCTAssertGreaterThan(maxTailDelta, 1.0e-6)
+        XCTAssertLessThanOrEqual(maxTailDelta, 1.0e-6)
 
         let ring = traceLoops(segments: alphaSoup, eps: 1.0e-6).first ?? []
         XCTAssertFalse(ring.isEmpty)
@@ -627,7 +627,7 @@ final class SweepTraceTests: XCTestCase {
         }
     }
 
-    func testLineEndRampAlphaLocality() {
+    func testLineEndRampAlphaIgnoredWhenUsingLocalKeyframeAlpha() {
         let path = SkeletonPath(segments: [lineFixtureCubic()])
         let height = 10.0
         let samples = 64
@@ -683,7 +683,7 @@ final class SweepTraceTests: XCTestCase {
                 maxTailDelta = delta
             }
         }
-        XCTAssertGreaterThan(maxTailDelta, 1.0e-6)
+        XCTAssertLessThanOrEqual(maxTailDelta, 1.0e-6)
     }
 
     func testLineEndRampWidthIncreasesNearEnd() {

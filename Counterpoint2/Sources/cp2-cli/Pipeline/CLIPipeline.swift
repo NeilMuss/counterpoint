@@ -98,9 +98,8 @@ public func renderSVGString(
         let count = max(1, options.probeCount)
         let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
         for gt in probes {
-            let warped = plan.warpT(gt)
             let styleAtGT: (Double) -> SweepStyle = { t in
-                SweepStyle(
+                return SweepStyle(
                     width: plan.scaledWidthAtT(t),
                     widthLeft: plan.scaledWidthLeftAtT(t),
                     widthRight: plan.scaledWidthRightAtT(t),
@@ -117,14 +116,16 @@ public func renderSVGString(
                 gt: gt,
                 index: -1
             )
-            let thetaDeg = plan.thetaAtT(warped) * 180.0 / Double.pi
-            let widthLegacy = plan.widthAtT(warped)
-            let widthLeft = plan.scaledWidthLeftAtT(warped)
-            let widthRight = plan.scaledWidthRightAtT(warped)
+            let thetaDeg = plan.thetaAtT(gt) * 180.0 / Double.pi
+            let widthLegacy = plan.widthAtT(gt)
+            let widthLeft = plan.scaledWidthLeftAtT(gt)
+            let widthRight = plan.scaledWidthRightAtT(gt)
+            let widthLeftAlpha = plan.widthLeftSegmentAlphaAtT(gt)
+            let widthRightAlpha = plan.widthRightSegmentAlphaAtT(gt)
             let widthSum = widthLeft + widthRight
-            let offset = plan.offsetAtT(warped)
+            let offset = plan.offsetAtT(gt)
             let dist = (frame.right - frame.left).length
-            print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f widthLegacy=%.6f widthLeft=%.6f widthRight=%.6f sumWidth=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, widthLegacy, widthLeft, widthRight, widthSum, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
+            print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f widthLegacy=%.6f widthLeft=%.6f widthRight=%.6f segAlphaL=%.6f segAlphaR=%.6f sumWidth=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, widthLegacy, widthLeft, widthRight, widthLeftAlpha, widthRightAlpha, widthSum, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
         }
     }
 

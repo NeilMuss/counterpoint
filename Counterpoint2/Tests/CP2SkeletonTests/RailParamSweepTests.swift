@@ -50,4 +50,5 @@ final class RailParamSweepTests: XCTestCase {
         let shift = (frame.center - point).length
         XCTAssertEqual(shift, 100.0, accuracy: 1.0e-6)
     }
+
 }
