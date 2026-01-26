@@ -9,20 +9,27 @@ struct SpecParamProvider: StrokeParamProvider {
         let alphaEndValue = options.alphaEnd ?? 0.0
         let paramKeyframeTs = collectKeyframeTs()
 
+        let widthTrack = params.width.map { ParamTrack.fromKeyframedScalar($0, mode: .hermiteMonotone) }
+        let widthLeftTrack = params.widthLeft.map { ParamTrack.fromKeyframedScalar($0, mode: .hermiteMonotone) }
+        let widthRightTrack = params.widthRight.map { ParamTrack.fromKeyframedScalar($0, mode: .hermiteMonotone) }
+        let thetaTrack = params.theta.map { ParamTrack.fromKeyframedScalar($0, mode: .linear) }
+        let offsetTrack = params.offset.map { ParamTrack.fromKeyframedScalar($0, mode: .linear) }
+        let alphaTrack = params.alpha.map { ParamTrack.fromKeyframedScalar($0, mode: .linear) }
+
         let widthLegacyAtT: (Double) -> Double = { t in
-            if let width = params.width { return width.eval(t: t) }
+            if let widthTrack { return widthTrack.value(at: t) }
             return sweepWidth
         }
 
         let widthLeftAtT: (Double) -> Double = { t in
-            if let widthLeft = params.widthLeft {
-                return widthLeft.eval(t: t)
+            if let widthLeftTrack {
+                return widthLeftTrack.value(at: t)
             }
             if params.widthRight != nil {
                 if params.width != nil {
                     return widthLegacyAtT(t) * 0.5
                 }
-                return params.widthRight?.eval(t: t) ?? (sweepWidth * 0.5)
+                return widthRightTrack?.value(at: t) ?? (sweepWidth * 0.5)
             }
             if params.width != nil {
                 return widthLegacyAtT(t) * 0.5
@@ -31,30 +38,30 @@ struct SpecParamProvider: StrokeParamProvider {
         }
 
         let widthLeftSegmentAlphaAtT: (Double) -> Double = { t in
-            if let widthLeft = params.widthLeft {
-                return widthLeft.segmentAlpha(at: t)
+            if let widthLeftTrack {
+                return widthLeftTrack.segmentAlpha(at: t)
             }
             if params.widthRight != nil {
-                if let width = params.width {
-                    return width.segmentAlpha(at: t)
+                if params.width != nil {
+                    return widthTrack?.segmentAlpha(at: t) ?? 0.0
                 }
-                return params.widthRight?.segmentAlpha(at: t) ?? 0.0
+                return widthRightTrack?.segmentAlpha(at: t) ?? 0.0
             }
-            if let width = params.width {
-                return width.segmentAlpha(at: t)
+            if params.width != nil {
+                return widthTrack?.segmentAlpha(at: t) ?? 0.0
             }
             return 0.0
         }
 
         let widthRightAtT: (Double) -> Double = { t in
-            if let widthRight = params.widthRight {
-                return widthRight.eval(t: t)
+            if let widthRightTrack {
+                return widthRightTrack.value(at: t)
             }
             if params.widthLeft != nil {
                 if params.width != nil {
                     return widthLegacyAtT(t) * 0.5
                 }
-                return params.widthLeft?.eval(t: t) ?? (sweepWidth * 0.5)
+                return widthLeftTrack?.value(at: t) ?? (sweepWidth * 0.5)
             }
             if params.width != nil {
                 return widthLegacyAtT(t) * 0.5
@@ -63,17 +70,17 @@ struct SpecParamProvider: StrokeParamProvider {
         }
 
         let widthRightSegmentAlphaAtT: (Double) -> Double = { t in
-            if let widthRight = params.widthRight {
-                return widthRight.segmentAlpha(at: t)
+            if let widthRightTrack {
+                return widthRightTrack.segmentAlpha(at: t)
             }
             if params.widthLeft != nil {
-                if let width = params.width {
-                    return width.segmentAlpha(at: t)
+                if params.width != nil {
+                    return widthTrack?.segmentAlpha(at: t) ?? 0.0
                 }
-                return params.widthLeft?.segmentAlpha(at: t) ?? 0.0
+                return widthLeftTrack?.segmentAlpha(at: t) ?? 0.0
             }
-            if let width = params.width {
-                return width.segmentAlpha(at: t)
+            if params.width != nil {
+                return widthTrack?.segmentAlpha(at: t) ?? 0.0
             }
             return 0.0
         }
@@ -82,15 +89,15 @@ struct SpecParamProvider: StrokeParamProvider {
             widthLeftAtT(t) + widthRightAtT(t)
         }
         let thetaAtT: (Double) -> Double = { t in
-            if let theta = params.theta { return theta.eval(t: t) * Double.pi / 180.0 }
+            if let thetaTrack { return thetaTrack.value(at: t) * Double.pi / 180.0 }
             return 0.0
         }
         let offsetAtT: (Double) -> Double = { t in
-            if let offset = params.offset { return offset.eval(t: t) }
+            if let offsetTrack { return offsetTrack.value(at: t) }
             return 0.0
         }
         let alphaAtT: (Double) -> Double = { t in
-            if let alpha = params.alpha { return alpha.eval(t: t) }
+            if let alphaTrack { return alphaTrack.value(at: t) }
             if t < alphaStartGT { return 0.0 }
             let phase = (t - alphaStartGT) / max(1.0e-12, 1.0 - alphaStartGT)
             return alphaEndValue * max(0.0, min(1.0, phase))

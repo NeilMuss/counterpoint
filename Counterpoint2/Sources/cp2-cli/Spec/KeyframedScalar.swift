@@ -55,10 +55,12 @@ public struct Keyframe: Codable, Equatable {
     public var t: Double
     public var value: Double
     public var interpToNext: InterpToNext?
-    public init(t: Double, value: Double, interpToNext: InterpToNext? = nil) {
+    public var knot: KnotType?
+    public init(t: Double, value: Double, interpToNext: InterpToNext? = nil, knot: KnotType? = nil) {
         self.t = t
         self.value = value
         self.interpToNext = interpToNext
+        self.knot = knot
     }
 }
 

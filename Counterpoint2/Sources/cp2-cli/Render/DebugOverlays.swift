@@ -395,6 +395,108 @@ func makeKeyframesOverlay(
     return DebugOverlay(svg: svg, bounds: bounds)
 }
 
+func makeParamsPlotOverlay(
+    params: StrokeParams,
+    plan: SweepPlan,
+    glyphBounds: AABB?
+) -> DebugOverlay {
+    guard let bounds = glyphBounds else {
+        return DebugOverlay(svg: "<g id=\"debug-params-plot\"></g>", bounds: AABB.empty)
+    }
+
+    let plotWidth = 200.0
+    let plotHeight = 120.0
+    let origin = Vec2(bounds.min.x + 20.0, bounds.min.y + 20.0)
+    let samples = 200
+
+    func sampleTrack(_ track: ParamTrack?) -> [Double] {
+        guard let track else { return [] }
+        return (0..<samples).map { i in
+            let t = Double(i) / Double(max(1, samples - 1))
+            return track.value(at: t)
+        }
+    }
+
+    let widthLeftTrack = params.widthLeft.map { ParamTrack.fromKeyframedScalar($0, mode: .hermiteMonotone) }
+    let widthRightTrack = params.widthRight.map { ParamTrack.fromKeyframedScalar($0, mode: .hermiteMonotone) }
+    let widthTrack = params.width.map { ParamTrack.fromKeyframedScalar($0, mode: .hermiteMonotone) }
+
+    var values: [Double] = []
+    values.append(contentsOf: sampleTrack(widthLeftTrack))
+    values.append(contentsOf: sampleTrack(widthRightTrack))
+    if values.isEmpty {
+        values.append(contentsOf: sampleTrack(widthTrack))
+    }
+    guard let minV = values.min(), let maxV = values.max() else {
+        return DebugOverlay(svg: "<g id=\"debug-params-plot\"></g>", bounds: AABB.empty)
+    }
+    let range = max(1.0e-9, maxV - minV)
+
+    func mapPoint(t: Double, value: Double) -> Vec2 {
+        let x = origin.x + t * plotWidth
+        let y = origin.y + (1.0 - (value - minV) / range) * plotHeight
+        return Vec2(x, y)
+    }
+
+    func pathForTrack(_ track: ParamTrack, stroke: String) -> String {
+        var parts: [String] = []
+        for i in 0..<samples {
+            let t = Double(i) / Double(max(1, samples - 1))
+            let v = track.value(at: t)
+            let p = mapPoint(t: t, value: v)
+            let cmd = i == 0 ? "M" : "L"
+            parts.append(String(format: "\(cmd) %.4f %.4f", p.x, p.y))
+        }
+        let d = parts.joined(separator: " ")
+        return "<path d=\"\(d)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"1\" vector-effect=\"non-scaling-stroke\"/>"
+    }
+
+    func knotLabel(_ knot: KnotType) -> String {
+        switch knot {
+        case .smooth: return "S"
+        case .cusp: return "C"
+        case .hold: return "H"
+        case .snap: return "N"
+        }
+    }
+
+    func markersForTrack(_ track: ParamTrack, stroke: String) -> [String] {
+        var parts: [String] = []
+        for kf in track.keyframes {
+            let p = mapPoint(t: kf.t, value: track.value(at: kf.t))
+            parts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"2.5\" fill=\"none\" stroke=\"%@\" stroke-width=\"1\" vector-effect=\"non-scaling-stroke\"/>", p.x, p.y, stroke))
+            parts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"9\" fill=\"%@\">%@</text>", p.x + 3.0, p.y - 3.0, stroke, knotLabel(kf.knot)))
+        }
+        return parts
+    }
+
+    var parts: [String] = []
+    if let widthLeftTrack {
+        parts.append(pathForTrack(widthLeftTrack, stroke: "#d32f2f"))
+        parts.append(contentsOf: markersForTrack(widthLeftTrack, stroke: "#d32f2f"))
+    }
+    if let widthRightTrack {
+        parts.append(pathForTrack(widthRightTrack, stroke: "#1976d2"))
+        parts.append(contentsOf: markersForTrack(widthRightTrack, stroke: "#1976d2"))
+    }
+    if parts.isEmpty, let widthTrack {
+        parts.append(pathForTrack(widthTrack, stroke: "#555555"))
+        parts.append(contentsOf: markersForTrack(widthTrack, stroke: "#555555"))
+    }
+
+    let plotBounds = AABB(
+        min: origin,
+        max: Vec2(origin.x + plotWidth, origin.y + plotHeight)
+    )
+
+    let svg = """
+  <g id="debug-params-plot">
+    \(parts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: plotBounds)
+}
+
 func makeRingSpineOverlay(
     rings: [[Vec2]],
     breadcrumbStep: Int = 50,

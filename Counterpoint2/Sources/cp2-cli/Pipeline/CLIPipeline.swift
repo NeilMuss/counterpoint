@@ -240,6 +240,13 @@ public func renderSVGString(
             overlays.append(DebugOverlay(svg: "<g id=\"debug-keyframes\"></g>", bounds: AABB.empty))
         }
     }
+    if !soloWhy && options.debugParamsPlot {
+        if let params = spec?.strokes?.first?.params {
+            overlays.append(makeParamsPlotOverlay(params: params, plan: plan, glyphBounds: result.glyphBounds))
+        } else {
+            overlays.append(DebugOverlay(svg: "<g id=\"debug-params-plot\"></g>", bounds: AABB.empty))
+        }
+    }
     if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) {
         let ringJumps = (options.debugRingJump || options.debugTraceJumpStep) ? computeRingJumps(rings: result.rings) : []
         for (index, ring) in result.rings.enumerated() {
