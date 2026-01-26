@@ -2,6 +2,29 @@ import Foundation
 import CP2Geometry
 import CP2Skeleton
 
+enum SamplingModeError: Error, CustomStringConvertible {
+    case fixedNotAllowed(String)
+
+    var description: String {
+        switch self {
+        case .fixedNotAllowed(let message):
+            return message
+        }
+    }
+}
+
+func validateSamplingOptions(_ options: CLIOptions) throws {
+    if !options.adaptiveSampling && !options.allowFixedSampling {
+        throw SamplingModeError.fixedNotAllowed("adaptive sampling is required; to use fixed sampling pass --allow-fixed-sampling --no-adaptive-sampling")
+    }
+    if options.arcSamplesWasSet && !options.allowFixedSampling {
+        throw SamplingModeError.fixedNotAllowed("--arc-samples requires --allow-fixed-sampling")
+    }
+    if options.adaptiveSampling && options.arcSamplesWasSet {
+        throw SamplingModeError.fixedNotAllowed("--arc-samples cannot be used with adaptive sampling")
+    }
+}
+
 private func dumpSoupNode(
     label: String,
     key: SnapKey,
@@ -94,6 +117,14 @@ public func renderSVGString(
         sweepSampleCount: 64
     )
 
+    if options.verbose || options.debugSVG {
+        if options.adaptiveSampling {
+            print(String(format: "samplingMode=adaptive flatnessEps=%.6f maxDepth=%d maxSamples=%d", options.flatnessEps, options.maxDepth, options.maxSamples))
+        } else {
+            print(String(format: "samplingMode=fixed sampleCount=%d", plan.sweepSampleCount))
+        }
+    }
+
     if options.debugParams {
         let count = max(1, options.probeCount)
         let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
@@ -157,6 +188,32 @@ public func renderSVGString(
                 print(String(format: "    in[%d]  -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f src=%@", index, edge.to.x, edge.to.y, edge.toPos.x, edge.toPos.y, edge.len, edge.source.description))
             }
         }
+    }
+
+    if options.adaptiveSampling, let sampling = result.sampling, sampling.stats.forcedStops > 0 {
+        var sawMaxSamples = false
+        var sawMaxDepth = false
+        for decision in sampling.trace where decision.action == .forcedStop {
+            for reason in decision.reasons {
+                switch reason {
+                case .maxSamplesHit:
+                    sawMaxSamples = true
+                case .maxDepthHit:
+                    sawMaxDepth = true
+                default:
+                    continue
+                }
+            }
+        }
+        let reason: String
+        if sawMaxSamples {
+            reason = "maxSamples"
+        } else if sawMaxDepth {
+            reason = "maxDepth"
+        } else {
+            reason = "unknown"
+        }
+        print(String(format: "adaptiveSampling capped: reason=%@ producedSamples=%d requestedEps=%.6f", reason, sampling.ts.count, options.flatnessEps))
     }
 
     // 6. Debug Overlay
@@ -571,6 +628,13 @@ public func runCLI() {
         if let positional = CommandLine.arguments.dropFirst().first(where: { $0.hasSuffix(".json") && !$0.hasPrefix("--") }) {
             options.specPath = positional
         }
+    }
+    do {
+        try validateSamplingOptions(options)
+    } catch {
+        warn("invalid sampling options")
+        warn("error: \(error)")
+        exit(1)
     }
 
     let outURL = URL(fileURLWithPath: options.outPath)

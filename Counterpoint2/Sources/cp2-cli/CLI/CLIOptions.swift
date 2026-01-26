@@ -48,7 +48,10 @@ public struct CLIOptions {
     var widthStart: Double = 16.0
     var widthEnd: Double = 28.0
     var widthRampStartGT: Double = 0.85
-    var adaptiveSampling: Bool = false
+    var adaptiveSampling: Bool = true
+    var adaptiveSamplingWasSet: Bool = false
+    var allowFixedSampling: Bool = false
+    var arcSamplesWasSet: Bool = false
     var flatnessEps: Double = 0.25
     var maxDepth: Int = 12
     var maxSamples: Int = 512
@@ -192,7 +195,16 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             index += 1
         } else if arg == "--arc-samples", index + 1 < args.count {
             options.arcSamples = max(2, Int(args[index + 1]) ?? options.arcSamples)
+            options.arcSamplesWasSet = true
             index += 1
+        } else if arg == "--allow-fixed-sampling" {
+            options.allowFixedSampling = true
+        } else if arg == "--adaptive-sampling" {
+            options.adaptiveSampling = true
+            options.adaptiveSamplingWasSet = true
+        } else if arg == "--no-adaptive-sampling" {
+            options.adaptiveSampling = false
+            options.adaptiveSamplingWasSet = true
         } else if arg == "--normalize-width" {
             options.normalizeWidth = true
         } else if arg == "--alpha-end", index + 1 < args.count {
@@ -310,6 +322,9 @@ Debug flags:
   --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
+  --allow-fixed-sampling  Allow fixed sampling mode (escape hatch)
+  --adaptive-sampling     Force adaptive sampling on
+  --no-adaptive-sampling  Force adaptive sampling off (requires --allow-fixed-sampling)
   --canvas WxH     Output canvas pixel size (default: 1200x1200)
   --fit MODE       glyph|glyph+ref|everything|none (default: glyph)
   --padding N      World padding around fit bounds (default: 30)
