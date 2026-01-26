@@ -4,6 +4,29 @@ import CP2Skeleton
 @testable import cp2_cli
 
 final class KeyframedScalarAlphaTests: XCTestCase {
+    func testSegmentAlphaUsesLeftKeyframe() {
+        let scalar = KeyframedScalar(
+            keyframes: [
+                Keyframe(t: 0.0, value: 95.0),
+                Keyframe(t: 0.013, value: 95.0, interpToNext: InterpToNext(alpha: -2.0)),
+                Keyframe(t: 0.2, value: 35.0)
+            ]
+        )
+
+        let early = scalar.eval(t: 0.0065)
+        XCTAssertEqual(early, 95.0, accuracy: 1.0e-6)
+
+        let t = 0.1065
+        let t0 = 0.013
+        let t1 = 0.2
+        let u = (t - t0) / (t1 - t0)
+        let exponent = exp(-2.0)
+        let uWarp = pow(u, exponent)
+        let expected = 95.0 + (35.0 - 95.0) * uWarp
+        let mid = scalar.eval(t: t)
+        XCTAssertEqual(mid, expected, accuracy: 1.0e-6)
+    }
+
     func testPerSegmentAlphaWarpAffectsMidpoint() {
         let scalar = KeyframedScalar(
             keyframes: [

@@ -398,6 +398,7 @@ public func boundarySoupGeneral(
     maxSamples: Int = 512,
     warpGT: @escaping (Double) -> Double = { $0 },
     styleAtGT: @escaping (Double) -> SweepStyle,
+    keyframeTs: [Double] = [],
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
@@ -442,9 +443,10 @@ public func boundarySoupGeneral(
     debugSampling?(sampling)
 
     // Preserve the older behavior: even in adaptive mode, ensure a minimum uniform density.
-    let samples: [Double] = adaptiveSampling
+    var samples: [Double] = adaptiveSampling
         ? mergeWithUniformSamples(sampling.ts, minCount: max(2, sampleCount))
         : sampling.ts
+    samples = injectKeyframeSamples(samples, keyframes: keyframeTs, eps: cfg.tEps)
 
     let count = max(2, samples.count)
 
@@ -589,6 +591,7 @@ public func boundarySoup(
     railEps: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
+    keyframeTs: [Double] = [],
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
@@ -616,6 +619,7 @@ public func boundarySoup(
                 angleIsRelative: true
             )
         },
+        keyframeTs: keyframeTs,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -637,6 +641,7 @@ public func boundarySoupVariableWidth(
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
+    keyframeTs: [Double] = [],
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
@@ -665,6 +670,7 @@ public func boundarySoupVariableWidth(
                 angleIsRelative: true
             )
         },
+        keyframeTs: keyframeTs,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -745,6 +751,7 @@ public func boundarySoupVariableWidthAngleAlpha(
     alphaAtT: @escaping (Double) -> Double,
     alphaStart: Double,
     angleIsRelative: Bool = true,
+    keyframeTs: [Double] = [],
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
@@ -776,6 +783,7 @@ public func boundarySoupVariableWidthAngleAlpha(
                 angleIsRelative: angleIsRelative
             )
         },
+        keyframeTs: keyframeTs,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -905,6 +913,23 @@ private func mergeWithUniformSamples(_ samples: [Double], minCount: Int) -> [Dou
     var last: Double? = nil
     for t in combined {
         if let previous = last, abs(t - previous) <= 1.0e-9 {
+            continue
+        }
+        result.append(t)
+        last = t
+    }
+    return result
+}
+
+func injectKeyframeSamples(_ samples: [Double], keyframes: [Double], eps: Double) -> [Double] {
+    guard !keyframes.isEmpty else { return samples }
+    let clampedKeys = keyframes.map { max(0.0, min(1.0, $0)) }
+    let combined = (samples + clampedKeys).sorted()
+    var result: [Double] = []
+    result.reserveCapacity(combined.count)
+    var last: Double? = nil
+    for t in combined {
+        if let previous = last, abs(t - previous) <= eps {
             continue
         }
         result.append(t)

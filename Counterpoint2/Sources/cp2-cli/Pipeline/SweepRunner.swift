@@ -49,6 +49,7 @@ func runSweep(
                 alphaAtT: plan.alphaAtT,
                 alphaStart: plan.alphaStartGT,
                 angleIsRelative: plan.angleMode == .relative,
+                keyframeTs: plan.paramKeyframeTs,
                 debugSampling: { capturedSampling = $0 },
                 debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
                 debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,

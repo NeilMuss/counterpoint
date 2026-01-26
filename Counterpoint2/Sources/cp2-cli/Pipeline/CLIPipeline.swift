@@ -176,6 +176,13 @@ public func renderSVGString(
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
         }
     }
+    if !soloWhy && options.debugKeyframes {
+        if let params = spec?.strokes?.first?.params {
+            overlays.append(makeKeyframesOverlay(params: params, pathParam: pathParam, plan: plan, labels: options.keyframesLabels))
+        } else {
+            overlays.append(DebugOverlay(svg: "<g id=\"debug-keyframes\"></g>", bounds: AABB.empty))
+        }
+    }
     if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) {
         let ringJumps = (options.debugRingJump || options.debugTraceJumpStep) ? computeRingJumps(rings: result.rings) : []
         for (index, ring) in result.rings.enumerated() {

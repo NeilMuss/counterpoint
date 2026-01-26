@@ -13,6 +13,7 @@ struct StrokeParamFuncs {
     var alphaAtT: (Double) -> Double
     var usesVariableWidthAngleAlpha: Bool
     var angleMode: AngleMode
+    var paramKeyframeTs: [Double]
 }
 
 protocol StrokeParamProvider {

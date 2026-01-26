@@ -20,6 +20,8 @@ public struct CLIOptions {
     var debugSoloWhy: Bool = false
     var debugRingSpine: Bool = false
     var debugRingJump: Bool = false
+    var debugKeyframes: Bool = false
+    var keyframesLabels: Bool = false
     var debugTraceJumpStep: Bool = false
     var debugSoupPreRepair: Bool = false
     var debugDumpCapSegments: Bool = false
@@ -113,6 +115,10 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugRingSpine = true
         } else if arg == "--debug-ring-jump" {
             options.debugRingJump = true
+        } else if arg == "--debug-keyframes" {
+            options.debugKeyframes = true
+        } else if arg == "--keyframes-labels" {
+            options.keyframesLabels = true
         } else if arg == "--debug-trace-jump-step" {
             options.debugTraceJumpStep = true
         } else if arg == "--debug-soup-pre-repair" {
@@ -176,6 +182,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             }
             if tokens.contains("samplingWhy") {
                 options.debugSamplingWhy = true
+            }
+            if tokens.contains("keyframes") {
+                options.debugKeyframes = true
             }
             index += 1
         } else if arg == "--probe-count", index + 1 < args.count {
@@ -296,6 +305,8 @@ Debug flags:
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index
   --debug-dump-rail-corners-index K  Rail corner index (default: 0)
+  --debug-keyframes  Render keyframe markers overlay
+  --keyframes-labels  Label keyframe markers with t values
   --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)

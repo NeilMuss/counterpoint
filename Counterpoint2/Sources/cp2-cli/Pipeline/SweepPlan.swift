@@ -28,6 +28,7 @@ struct SweepPlan {
     var sweepGT: [Double]
     var widths: [Double]
     var angleMode: AngleMode
+    var paramKeyframeTs: [Double]
 }
 
 func makeSweepPlan(
@@ -42,11 +43,9 @@ func makeSweepPlan(
         Double($0) / Double(max(1, sweepSampleCount - 1))
     }
     
-    let warpT: (Double) -> Double = { t in
-        CP2Skeleton.warpT(t: t, alpha: funcs.alphaAtT(t))
-    }
-    
-    let widths = sweepGT.map { funcs.widthAtT(warpT($0)) }
+    let warpT: (Double) -> Double = { t in t }
+
+    let widths = sweepGT.map { funcs.widthAtT($0) }
     let meanWidth = widths.reduce(0.0, +) / Double(max(1, widths.count))
     let widthScale = (options.normalizeWidth && options.example?.lowercased() == "j" && meanWidth > Epsilon.defaultValue)
         ? (baselineWidth / meanWidth)
@@ -87,6 +86,7 @@ func makeSweepPlan(
         scaledWidthRightAtT: scaledWidthRightAtT,
         sweepGT: sweepGT,
         widths: widths,
-        angleMode: funcs.angleMode
+        angleMode: funcs.angleMode,
+        paramKeyframeTs: funcs.paramKeyframeTs
     )
 }

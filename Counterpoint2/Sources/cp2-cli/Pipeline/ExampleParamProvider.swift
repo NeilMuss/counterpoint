@@ -126,7 +126,8 @@ struct ExampleParamProvider: StrokeParamProvider {
             offsetAtT: offsetAtT,
             alphaAtT: alphaAtT,
             usesVariableWidthAngleAlpha: usesVariableWidthAngleAlpha,
-            angleMode: .relative
+            angleMode: .relative,
+            paramKeyframeTs: []
         )
     }
 }

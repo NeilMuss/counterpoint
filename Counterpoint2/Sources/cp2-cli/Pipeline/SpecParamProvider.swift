@@ -7,6 +7,7 @@ struct SpecParamProvider: StrokeParamProvider {
         let alphaStartGT = options.alphaStartGT
         let angleMode = params.angleMode ?? .relative
         let alphaEndValue = options.alphaEnd ?? 0.0
+        let paramKeyframeTs = collectKeyframeTs()
 
         let widthLegacyAtT: (Double) -> Double = { t in
             if let width = params.width { return width.eval(t: t) }
@@ -109,7 +110,31 @@ struct SpecParamProvider: StrokeParamProvider {
             offsetAtT: offsetAtT,
             alphaAtT: alphaAtT,
             usesVariableWidthAngleAlpha: usesVariableWidthAngleAlpha,
-            angleMode: angleMode
+            angleMode: angleMode,
+            paramKeyframeTs: paramKeyframeTs
         )
+    }
+
+    private func collectKeyframeTs() -> [Double] {
+        var ts: [Double] = []
+        if let width = params.width { ts.append(contentsOf: width.keyframes.map { $0.t }) }
+        if let widthLeft = params.widthLeft { ts.append(contentsOf: widthLeft.keyframes.map { $0.t }) }
+        if let widthRight = params.widthRight { ts.append(contentsOf: widthRight.keyframes.map { $0.t }) }
+        if let offset = params.offset { ts.append(contentsOf: offset.keyframes.map { $0.t }) }
+        if let theta = params.theta { ts.append(contentsOf: theta.keyframes.map { $0.t }) }
+        ts.append(contentsOf: [0.0, 1.0])
+        let sorted = ts.sorted()
+        var result: [Double] = []
+        result.reserveCapacity(sorted.count)
+        var last: Double? = nil
+        for t in sorted {
+            let clamped = max(0.0, min(1.0, t))
+            if let previous = last, abs(clamped - previous) <= 1.0e-9 {
+                continue
+            }
+            result.append(clamped)
+            last = clamped
+        }
+        return result
     }
 }

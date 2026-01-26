@@ -67,16 +67,16 @@
             { "t": 0.8, "value": 15  },
             { "t": 0.85, "value": 5  },
             { "t": 0.9, "value": 3 },
-            { "t": 0.96, "value": 6 },
+            { "t": 0.96, "value": 6, "interpToNext": { "alpha": -1.6 }  },
             { "t": 1.0, "value": 30 }
           ]
         },
 
         "widthRight": {
           "keyframes": [
-            { "t": 0.0, "value": 95  },
-            { "t": 0.013, "value": 95, "interpToNext": { "alpha": -2 }  },
-            { "t": 0.2, "value": 35 },
+            { "t": 0.0, "value": 94  },
+            { "t": 0.012, "value": 94, "interpToNext": { "alpha": -1.6 }  },
+            { "t": 0.10, "value": 35 },
             { "t": 0.7, "value": 35},
             { "t": 0.8, "value": 14},
             { "t": 0.9, "value": 3 },

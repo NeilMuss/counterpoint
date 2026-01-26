@@ -22,10 +22,9 @@ func makeCenterlineDebugOverlay(
         let tangent = pathParam.tangent(globalT: t).normalized()
         let normal = Vec2(-tangent.y, tangent.x)
         tableP.append(point)
-        let warped = plan.warpT(t)
-        let halfW = plan.scaledWidthAtT(warped) * 0.5
+        let halfW = plan.scaledWidthAtT(t) * 0.5
         let halfH = plan.sweepHeight * 0.5
-        let angle = plan.thetaAtT(warped)
+        let angle = plan.thetaAtT(t)
         let corners: [Vec2] = [
             Vec2(-halfW, -halfH),
             Vec2(halfW, -halfH),
