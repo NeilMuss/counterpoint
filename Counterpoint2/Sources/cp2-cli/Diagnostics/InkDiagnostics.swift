@@ -6,6 +6,9 @@ enum InkContinuityError: Error, CustomStringConvertible {
     case discontinuity(name: String, index: Int, dist: Double)
     case missingPart(name: String, part: String)
     case cyclicReference(name: String, part: String)
+    case nestedHeartline(name: String, part: String)
+    case emptyHeartline(name: String)
+    case missingInk(name: String)
 
     var description: String {
         switch self {
@@ -16,6 +19,12 @@ enum InkContinuityError: Error, CustomStringConvertible {
             return "heartline missing part: \(name) -> \(part)"
         case .cyclicReference(let name, let part):
             return "heartline cycle detected: \(name) -> \(part)"
+        case .nestedHeartline(let name, let part):
+            return "heartline nested heartline: \(name) -> \(part)"
+        case .emptyHeartline(let name):
+            return "heartline empty resolved path: \(name)"
+        case .missingInk(let name):
+            return "missing ink entry: \(name)"
         }
     }
 
@@ -89,16 +98,15 @@ func resolveHeartline(
     strict: Bool,
     warn: (String) -> Void
 ) throws -> ResolvedHeartline {
+    guard !heartline.parts.isEmpty else {
+        throw InkContinuityError.emptyHeartline(name: name)
+    }
     var parts: [HeartlinePart] = []
     var visited = Set<String>()
     visited.insert(name)
     for partName in heartline.parts {
         guard let primitive = ink.entries[partName] else {
-            if strict {
-                throw InkContinuityError.missingPart(name: name, part: partName)
-            }
-            warn("heartline warning: missing part \(partName) in \(name)")
-            continue
+            throw InkContinuityError.missingPart(name: name, part: partName)
         }
         switch primitive {
         case .line(let line):
@@ -108,10 +116,7 @@ func resolveHeartline(
         case .path(let path):
             parts.append(HeartlinePart(name: partName, segments: path.segments))
         case .heartline:
-            if strict {
-                throw InkContinuityError.cyclicReference(name: name, part: partName)
-            }
-            warn("heartline warning: nested heartline \(partName) ignored in \(name)")
+            throw InkContinuityError.nestedHeartline(name: name, part: partName)
         }
     }
     var subpaths: [[InkSegment]] = []
@@ -141,7 +146,42 @@ func resolveHeartline(
     if !current.isEmpty {
         subpaths.append(current)
     }
+    if subpaths.isEmpty {
+        throw InkContinuityError.emptyHeartline(name: name)
+    }
     return ResolvedHeartline(name: name, subpaths: subpaths, parts: parts)
+}
+
+func resolveInkSegments(
+    name: String,
+    ink: Ink,
+    strict: Bool,
+    warn: (String) -> Void
+) throws -> [InkSegment] {
+    guard let primitive = ink.entries[name] else {
+        throw InkContinuityError.missingInk(name: name)
+    }
+    switch primitive {
+    case .line(let line):
+        return [.line(line)]
+    case .cubic(let cubic):
+        return [.cubic(cubic)]
+    case .path(let path):
+        return path.segments
+    case .heartline(let heartline):
+        let resolved = try resolveHeartline(
+            name: name,
+            heartline: heartline,
+            ink: ink,
+            strict: strict,
+            warn: warn
+        )
+        let segments = resolved.subpaths.flatMap { $0 }
+        if segments.isEmpty {
+            throw InkContinuityError.emptyHeartline(name: name)
+        }
+        return segments
+    }
 }
 
 func buildSkeletonPaths(

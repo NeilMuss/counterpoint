@@ -232,6 +232,66 @@ func debugOverlayForHeartline(_ resolved: ResolvedHeartline, steps: Int) -> Debu
     return DebugOverlay(svg: svg, bounds: bounds)
 }
 
+func debugOverlayForCounters(_ counters: CounterSet, steps: Int, warn: (String) -> Void) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    let stroke = "#d81b60"
+    let strokeWidth = "1.5"
+    let dash = "4,4"
+
+    func addPolyline(_ points: [Vec2]) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" stroke-dasharray=\"\(dash)\" />")
+        for point in points {
+            bounds.expand(by: point)
+        }
+    }
+
+    func polylines(for primitive: InkPrimitive) -> [[Vec2]] {
+        switch primitive {
+        case .line(let line):
+            return [[vec(line.p0), vec(line.p1)]]
+        case .cubic(let cubic):
+            return [sampleInkCubicPoints(cubic, steps: steps)]
+        case .path(let path):
+            var result: [[Vec2]] = []
+            for segment in path.segments {
+                switch segment {
+                case .line(let line):
+                    result.append([vec(line.p0), vec(line.p1)])
+                case .cubic(let cubic):
+                    result.append(sampleInkCubicPoints(cubic, steps: steps))
+                }
+            }
+            return result
+        case .heartline:
+            warn("counter heartline is not supported for overlay")
+            return []
+        }
+    }
+
+    for key in counters.entries.keys.sorted() {
+        guard let primitive = counters.entries[key] else { continue }
+        let lines = polylines(for: primitive)
+        for line in lines {
+            addPolyline(line)
+        }
+    }
+
+    let svg = """
+  <g id="debug-counters">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
 func makeKeyframesOverlay(
     params: StrokeParams,
     pathParam: SkeletonPathParameterization,

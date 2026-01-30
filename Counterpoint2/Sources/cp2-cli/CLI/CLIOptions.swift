@@ -23,6 +23,7 @@ public struct CLIOptions {
     var debugKeyframes: Bool = false
     var keyframesLabels: Bool = false
     var debugParamsPlot: Bool = false
+    var debugCounters: Bool = false
     var debugTraceJumpStep: Bool = false
     var debugSoupPreRepair: Bool = false
     var debugDumpCapSegments: Bool = false
@@ -41,6 +42,8 @@ public struct CLIOptions {
     var debugDumpRailCornersIndex: Int = 0
     var debugCompare: Bool = false
     var debugCompareAll: Bool = false
+    var debugHeartlineResolve: Bool = false
+    var viewCenterlineOnly: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -125,6 +128,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.keyframesLabels = true
         } else if arg == "--debug-params-plot" {
             options.debugParamsPlot = true
+        } else if arg == "--debug-counters" {
+            options.debugCounters = true
         } else if arg == "--debug-trace-jump-step" {
             options.debugTraceJumpStep = true
         } else if arg == "--debug-soup-pre-repair" {
@@ -161,6 +166,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--debug-dump-rail-corners-index", index + 1 < args.count {
             options.debugDumpRailCornersIndex = max(0, Int(args[index + 1]) ?? options.debugDumpRailCornersIndex)
             index += 1
+        } else if arg == "--debug-heartline-resolve" {
+            options.debugHeartlineResolve = true
         } else if arg == "--debug-dump-cap-segments-top", index + 1 < args.count {
             options.debugDumpCapSegmentsTop = max(1, Int(args[index + 1]) ?? options.debugDumpCapSegmentsTop)
             index += 1
@@ -194,6 +201,13 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             }
             if tokens.contains("paramsPlot") {
                 options.debugParamsPlot = true
+            }
+            if tokens.contains("counters") {
+                options.debugCounters = true
+            }
+            if tokens.contains("centerlineOnly") {
+                options.viewCenterlineOnly = true
+                options.debugCenterline = true
             }
             index += 1
         } else if arg == "--probe-count", index + 1 < args.count {
@@ -293,7 +307,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp|e] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -323,10 +337,12 @@ Debug flags:
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index
   --debug-dump-rail-corners-index K  Rail corner index (default: 0)
+  --debug-heartline-resolve  Dump ink keys and heartline resolution summary
   --debug-keyframes  Render keyframe markers overlay
   --keyframes-labels  Label keyframe markers with t values
   --debug-params-plot  Render parameter plot overlay
-  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll)
+  --debug-counters   Render counter paths overlay (no subtraction yet)
+  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll,counters,centerlineOnly)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --allow-fixed-sampling  Allow fixed sampling mode (escape hatch)

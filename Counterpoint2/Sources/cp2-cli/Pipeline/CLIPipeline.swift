@@ -47,11 +47,89 @@ private func formatDegreeHistogram(_ histogram: [Int: Int]) -> String {
     return String(format: "deg0=%d deg1=%d deg2=%d deg3=%d deg4+=%d", deg0, deg1, deg2, deg3, deg4plus)
 }
 
+private func inkPrimitiveSummary(_ primitive: InkPrimitive) -> String {
+    switch primitive {
+    case .line(let line):
+        return "line p0=\(formatVec2(vec(line.p0))) p1=\(formatVec2(vec(line.p1)))"
+    case .cubic(let cubic):
+        return "cubic p0=\(formatVec2(vec(cubic.p0))) p3=\(formatVec2(vec(cubic.p3)))"
+    case .path(let path):
+        if let first = path.segments.first, let last = path.segments.last {
+            return "path segments=\(path.segments.count) start=\(formatVec2(inkSegmentStart(first))) end=\(formatVec2(inkSegmentEnd(last)))"
+        }
+        return "path segments=0"
+    case .heartline(let heartline):
+        return "heartline parts=\(heartline.parts)"
+    }
+}
+
+private func segmentKind(_ segment: InkSegment) -> String {
+    switch segment {
+    case .line:
+        return "line"
+    case .cubic:
+        return "cubic"
+    }
+}
+
+private func dumpHeartlineResolve(
+    specPath: String?,
+    spec: CP2Spec?,
+    options: CLIOptions
+) {
+    let pathText = specPath ?? "none"
+    print("heartlineResolve specPath=\(pathText)")
+    guard let spec else {
+        print("heartlineResolve spec=none")
+        return
+    }
+    guard let ink = spec.ink else {
+        print("heartlineResolve inkKeys=[]")
+        return
+    }
+    let keys = ink.entries.keys.sorted()
+    print("heartlineResolve inkKeys=[\(keys.joined(separator: ", "))]")
+    for key in keys {
+        guard let primitive = ink.entries[key] else { continue }
+        if case .heartline(let heartline) = primitive {
+            print("heartlineResolve name=\(key) parts=\(heartline.parts)")
+            for partName in heartline.parts {
+                if let part = ink.entries[partName] {
+                    print("  part \(partName) RESOLVED \(inkPrimitiveSummary(part))")
+                } else {
+                    print("  part \(partName) MISSING")
+                }
+            }
+        }
+    }
+    if let strokes = spec.strokes {
+        for stroke in strokes {
+            print("strokeResolve id=\(stroke.id) ink=\(stroke.ink)")
+            do {
+                let segments = try resolveInkSegments(
+                    name: stroke.ink,
+                    ink: ink,
+                    strict: options.strictHeartline,
+                    warn: { _ in }
+                )
+                let kinds = segments.map { segmentKind($0) }.joined(separator: ",")
+                print("  resolvedSegments count=\(segments.count) kinds=[\(kinds)]")
+            } catch {
+                print("  resolveError \(error)")
+            }
+        }
+    }
+}
+
 public func renderSVGString(
     options: CLIOptions,
     spec: CP2Spec?,
     warnSink: ((String) -> Void)? = nil
 ) throws -> String {
+    var options = options
+    if options.viewCenterlineOnly {
+        options.debugCenterline = true
+    }
     let warnHandler: (String) -> Void = { message in
         if let warnSink {
             warnSink(message)
@@ -60,108 +138,146 @@ public func renderSVGString(
         }
     }
     
-    // 1. Resolve Settings
-    let (renderSettings, referenceLayer) = resolveEffectiveSettings(options: options, spec: spec)
+    if options.debugHeartlineResolve {
+        dumpHeartlineResolve(specPath: options.specPath, spec: spec, options: options)
+    }
 
-    // 2. Resolve Path & Resolved Heartline
-    let (exampleName, inkPrimitive, path, resolvedHeartline) = try resolveEffectivePath(
+    // 1. Resolve Settings
+    var (renderSettings, referenceLayer) = resolveEffectiveSettings(options: options, spec: spec)
+    if options.viewCenterlineOnly {
+        referenceLayer = nil
+    }
+
+    // 2. Resolve Strokes
+    let (exampleName, resolvedStrokes) = try resolveEffectiveStrokes(
         options: options,
         spec: spec,
         warn: warnHandler
     )
+    let primaryStroke = resolvedStrokes.first!
 
-    // 3. Build Parameterization & Plan
-    let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: options.arcSamples)
-    
-    if options.verbose || options.debugParam {
-        print("param segments=\(path.segments.count) totalLength=\(String(format: "%.6f", pathParam.totalLength)) arcSamples=\(options.arcSamples)")
-        let lengths = path.segments.map { ArcLengthParameterization(path: SkeletonPath($0), samplesPerSegment: options.arcSamples).totalLength }
-        print("param segmentLengths=[\(lengths.map { String(format: "%.6f", $0) }.joined(separator: ", "))]")
-    }
-    
-    var joinGTs: [Double] = []
-    if options.debugSweep, path.segments.count > 1 {
-        let lengths = path.segments.map { ArcLengthParameterization(path: SkeletonPath($0), samplesPerSegment: options.arcSamples).totalLength }
-        let total = max(Epsilon.defaultValue, lengths.reduce(0.0, +))
-        var accumulated = 0.0
-        for i in 0..<lengths.count-1 {
-            accumulated += lengths[i]
-            joinGTs.append(accumulated / total)
-        }
-    }
-
-    if options.debugParam {
-        let count = max(1, options.probeCount)
-        let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
-        for gt in probes {
-            let mapping = pathParam.map(globalT: gt)
-            let pos = pathParam.position(globalT: gt)
-            print(String(format: "param probe gt=%.4f seg=%d u=%.6f pos=(%.6f,%.6f)", gt, mapping.segmentIndex, mapping.localU, pos.x, pos.y))
-        }
-    }
-
-    let provider: StrokeParamProvider
-    if let params = spec?.strokes?.first?.params {
-        provider = SpecParamProvider(params: params)
-    } else {
-        provider = ExampleParamProvider()
-    }
-    let funcs = provider.makeParamFuncs(options: options, exampleName: exampleName, sweepWidth: 20.0)
-    
-    let plan = makeSweepPlan(
-        options: options,
-        funcs: funcs,
-        baselineWidth: 20.0,
-        sweepWidth: 20.0,
-        sweepHeight: 10.0,
-        sweepSampleCount: 64
+    // 3. Build Parameterization & Plan per Stroke
+    typealias StrokeOutput = (
+        stroke: ResolvedStroke,
+        pathParam: SkeletonPathParameterization,
+        plan: SweepPlan,
+        result: SweepResult,
+        joinGTs: [Double]
     )
+    var strokeOutputs: [StrokeOutput] = []
+    var combinedGlyphBounds: AABB? = nil
 
-    if options.verbose || options.debugSVG {
-        if options.adaptiveSampling {
-            print(String(format: "samplingMode=adaptive flatnessEps=%.6f maxDepth=%d maxSamples=%d", options.flatnessEps, options.maxDepth, options.maxSamples))
-        } else {
-            print(String(format: "samplingMode=fixed sampleCount=%d", plan.sweepSampleCount))
+    for (index, stroke) in resolvedStrokes.enumerated() {
+        let path = stroke.path
+        let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: options.arcSamples)
+
+        if index == 0, (options.verbose || options.debugParam) {
+            print("param segments=\(path.segments.count) totalLength=\(String(format: "%.6f", pathParam.totalLength)) arcSamples=\(options.arcSamples)")
+            let lengths = path.segments.map { ArcLengthParameterization(path: SkeletonPath($0), samplesPerSegment: options.arcSamples).totalLength }
+            print("param segmentLengths=[\(lengths.map { String(format: "%.6f", $0) }.joined(separator: ", "))]")
         }
-    }
 
-    if options.debugParams {
-        let count = max(1, options.probeCount)
-        let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
-        for gt in probes {
-            let styleAtGT: (Double) -> SweepStyle = { t in
-                return SweepStyle(
-                    width: plan.scaledWidthAtT(t),
-                    widthLeft: plan.scaledWidthLeftAtT(t),
-                    widthRight: plan.scaledWidthRightAtT(t),
-                    height: plan.sweepHeight,
-                    angle: plan.thetaAtT(t),
-                    offset: plan.offsetAtT(t),
-                    angleIsRelative: plan.angleMode == .relative
-                )
+        var joinGTs: [Double] = []
+        if options.debugSweep, path.segments.count > 1 {
+            let lengths = path.segments.map { ArcLengthParameterization(path: SkeletonPath($0), samplesPerSegment: options.arcSamples).totalLength }
+            let total = max(Epsilon.defaultValue, lengths.reduce(0.0, +))
+            var accumulated = 0.0
+            for i in 0..<lengths.count-1 {
+                accumulated += lengths[i]
+                joinGTs.append(accumulated / total)
             }
-            let frame = railSampleFrameAtGlobalT(
-                param: pathParam,
-                warpGT: plan.warpT,
-                styleAtGT: styleAtGT,
-                gt: gt,
-                index: -1
-            )
-            let thetaDeg = plan.thetaAtT(gt) * 180.0 / Double.pi
-            let widthLegacy = plan.widthAtT(gt)
-            let widthLeft = plan.scaledWidthLeftAtT(gt)
-            let widthRight = plan.scaledWidthRightAtT(gt)
-            let widthLeftAlpha = plan.widthLeftSegmentAlphaAtT(gt)
-            let widthRightAlpha = plan.widthRightSegmentAlphaAtT(gt)
-            let widthSum = widthLeft + widthRight
-            let offset = plan.offsetAtT(gt)
-            let dist = (frame.right - frame.left).length
-            print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f widthLegacy=%.6f widthLeft=%.6f widthRight=%.6f segAlphaL=%.6f segAlphaR=%.6f sumWidth=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, widthLegacy, widthLeft, widthRight, widthLeftAlpha, widthRightAlpha, widthSum, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
+        }
+
+        if index == 0, options.debugParam {
+            let count = max(1, options.probeCount)
+            let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
+            for gt in probes {
+                let mapping = pathParam.map(globalT: gt)
+                let pos = pathParam.position(globalT: gt)
+                print(String(format: "param probe gt=%.4f seg=%d u=%.6f pos=(%.6f,%.6f)", gt, mapping.segmentIndex, mapping.localU, pos.x, pos.y))
+            }
+        }
+
+        let provider: StrokeParamProvider
+        if let params = stroke.params {
+            provider = SpecParamProvider(params: params)
+        } else {
+            provider = ExampleParamProvider()
+        }
+        let funcs = provider.makeParamFuncs(options: options, exampleName: exampleName, sweepWidth: 20.0)
+
+        let plan = makeSweepPlan(
+            options: options,
+            funcs: funcs,
+            baselineWidth: 20.0,
+            sweepWidth: 20.0,
+            sweepHeight: 10.0,
+            sweepSampleCount: 64
+        )
+
+        if index == 0, (options.verbose || options.debugSVG) {
+            if options.adaptiveSampling {
+                print(String(format: "samplingMode=adaptive flatnessEps=%.6f maxDepth=%d maxSamples=%d", options.flatnessEps, options.maxDepth, options.maxSamples))
+            } else {
+                print(String(format: "samplingMode=fixed sampleCount=%d", plan.sweepSampleCount))
+            }
+        }
+
+        if index == 0, options.debugParams {
+            let count = max(1, options.probeCount)
+            let probes = count == 1 ? [0.0] : (0..<count).map { Double($0) / Double(count - 1) }
+            for gt in probes {
+                let styleAtGT: (Double) -> SweepStyle = { t in
+                    return SweepStyle(
+                        width: plan.scaledWidthAtT(t),
+                        widthLeft: plan.scaledWidthLeftAtT(t),
+                        widthRight: plan.scaledWidthRightAtT(t),
+                        height: plan.sweepHeight,
+                        angle: plan.thetaAtT(t),
+                        offset: plan.offsetAtT(t),
+                        angleIsRelative: plan.angleMode == .relative
+                    )
+                }
+                let frame = railSampleFrameAtGlobalT(
+                    param: pathParam,
+                    warpGT: plan.warpT,
+                    styleAtGT: styleAtGT,
+                    gt: gt,
+                    index: -1
+                )
+                let thetaDeg = plan.thetaAtT(gt) * 180.0 / Double.pi
+                let widthLegacy = plan.widthAtT(gt)
+                let widthLeft = plan.scaledWidthLeftAtT(gt)
+                let widthRight = plan.scaledWidthRightAtT(gt)
+                let widthLeftAlpha = plan.widthLeftSegmentAlphaAtT(gt)
+                let widthRightAlpha = plan.widthRightSegmentAlphaAtT(gt)
+                let widthSum = widthLeft + widthRight
+                let offset = plan.offsetAtT(gt)
+                let dist = (frame.right - frame.left).length
+                print(String(format: "paramEval gt=%.2f C=(%.6f,%.6f) T=(%.6f,%.6f) N=(%.6f,%.6f) thetaRawDeg=%.6f thetaEffectiveRad=%.6f widthLegacy=%.6f widthLeft=%.6f widthRight=%.6f segAlphaL=%.6f segAlphaR=%.6f sumWidth=%.6f offset=%.6f vRot=(%.6f,%.6f) L=(%.6f,%.6f) R=(%.6f,%.6f) dist=%.6f", gt, frame.center.x, frame.center.y, frame.tangent.x, frame.tangent.y, frame.normal.x, frame.normal.y, thetaDeg, frame.effectiveAngle, widthLegacy, widthLeft, widthRight, widthLeftAlpha, widthRightAlpha, widthSum, offset, frame.crossAxis.x, frame.crossAxis.y, frame.left.x, frame.left.y, frame.right.x, frame.right.y, dist))
+            }
+        }
+
+        // 4. Run Sweep
+        let result = runSweep(path: path, plan: plan, options: options)
+        strokeOutputs.append((stroke: stroke, pathParam: pathParam, plan: plan, result: result, joinGTs: joinGTs))
+        if let glyphBounds = result.glyphBounds {
+            combinedGlyphBounds = combinedGlyphBounds?.union(glyphBounds) ?? glyphBounds
         }
     }
+    let primaryOutput = strokeOutputs[0]
+    let inkPrimitive = primaryStroke.inkPrimitive
+    let resolvedHeartline = primaryStroke.resolvedHeartline
+    let path = primaryStroke.path
+    let pathParam = primaryOutput.pathParam
+    let plan = primaryOutput.plan
+    let result = primaryOutput.result
+    let joinGTs = primaryOutput.joinGTs
 
-    // 4. Run Sweep
-    let result = runSweep(path: path, plan: plan, options: options)
+    if spec?.counters != nil {
+        // TODO: implement counter subtraction; currently debug-only overlay.
+        warnHandler("counters are debug-only; subtraction not implemented")
+    }
 
     // 5. Diagnostics
     emitSweepDiagnostics(
@@ -222,7 +338,18 @@ public func renderSVGString(
     let soloMaxDots = 200
     let soloLabelDots = 12
     var overlays: [DebugOverlay] = []
-    if !soloWhy && (options.debugSVG || options.debugCenterline || options.debugInkControls) {
+    let centerlineInkSegments: [InkSegment]? = {
+        guard options.viewCenterlineOnly, let inkPrimitive else { return nil }
+        switch inkPrimitive {
+        case .line(let line): return [.line(line)]
+        case .cubic(let cubic): return [.cubic(cubic)]
+        case .path(let path): return path.segments
+        case .heartline: return nil
+        }
+    }()
+    if options.viewCenterlineOnly {
+        overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan, inkSegments: centerlineInkSegments))
+    } else if !soloWhy && (options.debugSVG || options.debugCenterline || options.debugInkControls) {
         if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
             switch inkPrimitive {
             case .path(let inkPath): overlays.append(debugOverlayForInkPath(inkPath, steps: 64))
@@ -233,21 +360,28 @@ public func renderSVGString(
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
         }
     }
-    if !soloWhy && options.debugKeyframes {
-        if let params = spec?.strokes?.first?.params {
+    if !soloWhy && options.debugKeyframes && !options.viewCenterlineOnly {
+        if let params = primaryStroke.params {
             overlays.append(makeKeyframesOverlay(params: params, pathParam: pathParam, plan: plan, labels: options.keyframesLabels))
         } else {
             overlays.append(DebugOverlay(svg: "<g id=\"debug-keyframes\"></g>", bounds: AABB.empty))
         }
     }
-    if !soloWhy && options.debugParamsPlot {
-        if let params = spec?.strokes?.first?.params {
+    if !soloWhy && options.debugParamsPlot && !options.viewCenterlineOnly {
+        if let params = primaryStroke.params {
             overlays.append(makeParamsPlotOverlay(params: params, plan: plan, glyphBounds: result.glyphBounds))
         } else {
             overlays.append(DebugOverlay(svg: "<g id=\"debug-params-plot\"></g>", bounds: AABB.empty))
         }
     }
-    if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) {
+    if !soloWhy && options.debugCounters && !options.viewCenterlineOnly {
+        if let counters = spec?.counters {
+            overlays.append(debugOverlayForCounters(counters, steps: 64, warn: warnHandler))
+        } else {
+            overlays.append(DebugOverlay(svg: "<g id=\"debug-counters\"></g>", bounds: AABB.empty))
+        }
+    }
+    if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) && !options.viewCenterlineOnly {
         let ringJumps = (options.debugRingJump || options.debugTraceJumpStep) ? computeRingJumps(rings: result.rings) : []
         for (index, ring) in result.rings.enumerated() {
             let closure = ring.count > 1 ? (ring.last! - ring.first!).length : 0.0
@@ -442,7 +576,7 @@ public func renderSVGString(
             overlays.append(makeRingJumpOverlay(jumps: ringJumps))
         }
     }
-    if wantsSamplingWhy {
+    if wantsSamplingWhy && !options.viewCenterlineOnly {
         if let sampling = result.sampling {
             let dotsAll = samplingWhyDots(
                 result: sampling,
@@ -499,7 +633,7 @@ public func renderSVGString(
     
     let frame = resolveWorldFrame(
         settings: renderSettings,
-        glyphBounds: result.glyphBounds,
+        glyphBounds: combinedGlyphBounds,
         referenceBounds: referenceBoundsAABB,
         debugBounds: debugOverlay?.bounds
     )
@@ -515,7 +649,24 @@ public func renderSVGString(
     }
 
     let viewMinX = frame.minX, viewMinY = frame.minY, viewWidth = frame.width, viewHeight = frame.height
-    let pathData = svgPath(for: result.ring)
+    let strokeInkContent: String = {
+        if strokeOutputs.count == 1, strokeOutputs[0].stroke.id == nil {
+            let pathData = svgPath(for: strokeOutputs[0].result.ring)
+            return "    <path d=\"\(pathData)\" fill=\"black\" stroke=\"none\" />"
+        }
+        var parts: [String] = []
+        for output in strokeOutputs {
+            let pathData = svgPath(for: output.result.ring)
+            let rawId = output.stroke.id ?? output.stroke.inkName ?? "stroke"
+            let idToken = rawId.replacingOccurrences(of: " ", with: "-")
+            parts.append("""
+    <g id=\"stroke-ink-\(idToken)\" data-stroke-id=\"\(rawId)\">
+      <path d=\"\(pathData)\" fill=\"black\" stroke=\"none\" data-stroke-id=\"\(rawId)\" />
+    </g>
+""")
+        }
+        return parts.joined(separator: "\n")
+    }()
     let clipId = "frameClip"
     let clipPath = renderSettings.clipToFrame ? """
   <clipPath id="\(clipId)">
@@ -538,22 +689,24 @@ public func renderSVGString(
               let referenceSVG = referenceSVG else { return "" }
         let transform = svgTransformString(referenceTransformMatrix(referenceLayer!))
         return """
-  <g id="reference-outline" transform="\(transform)" style="fill:none;stroke:cyan;stroke-width:1;vector-effect:non-scaling-stroke">
+  <g id="reference-outline" transform="\(transform)" style="fill:none;stroke:#ff66cc;stroke-width:1;vector-effect:non-scaling-stroke">
 \(referenceSVG)
   </g>
 """
     }()
     
     let debugSVG = debugOverlay?.svg ?? ""
-    let glyphGroup = renderSettings.clipToFrame ? """
+    let glyphGroup = options.viewCenterlineOnly ? "" : (renderSettings.clipToFrame ? """
   <g id="glyph" clip-path="url(#\(clipId))">
-    <path d="\(pathData)" fill="black" stroke="none" />
+    <g id="stroke-ink">
+\(strokeInkContent)
+    </g>
   </g>
 """ : """
   <g id="stroke-ink">
-    <path d="\(pathData)" fill="black" stroke="none" />
+\(strokeInkContent)
   </g>
-"""
+""")
     let debugGroup = renderSettings.clipToFrame ? """
   <g id="debug-overlays" clip-path="url(#\(clipId))">
 \(debugSVG)
@@ -578,26 +731,29 @@ public func renderSVGString(
         if options.debugInkControls { tokens.append("inkControls") }
         if options.debugSVG { tokens.append("debugSVG") }
         if options.debugSoloWhy { tokens.append("soloWhy") }
+        if options.debugCounters { tokens.append("counters") }
         return tokens
     }()
     let viewLabel = viewTokens.isEmpty ? "none" : viewTokens.joined(separator: ",")
     let exampleLabel = exampleName ?? "none"
-    let infoLabel = """
+    let infoLabel = options.viewCenterlineOnly ? "" : """
   <text x="20" y="20" font-size="14" fill="#111">example=\(exampleLabel) view=\(viewLabel) solo=\(options.debugSoloWhy)</text>
 """
     let legendLabel: String = {
-        let wantsLegend = options.debugCompare || options.debugCompareAll || options.debugSVG || options.debugCenterline || options.debugInkControls || options.debugRingSpine || options.debugRingJump || options.debugSamplingWhy
+        if options.viewCenterlineOnly { return "" }
+        let wantsLegend = options.debugCompare || options.debugCompareAll || options.debugSVG || options.debugCenterline || options.debugInkControls || options.debugRingSpine || options.debugRingJump || options.debugSamplingWhy || options.debugCounters
         guard wantsLegend else { return "" }
         var lines: [(String, String)] = []
         if referenceLayer != nil {
             lines.append(("reference fill", "#111"))
-            lines.append(("reference outline", "cyan"))
+            lines.append(("reference outline", "#ff66cc"))
         }
         lines.append(("ink fill", "#111"))
         if options.debugCenterline { lines.append(("centerline", "orange")) }
         if options.debugInkControls { lines.append(("ink controls", "gray")) }
         if options.debugRingSpine { lines.append(("ring spine", "#00c853")) }
         if options.debugRingJump { lines.append(("ring jump", "#ff1744")) }
+        if options.debugCounters { lines.append(("counter paths", "#d81b60")) }
         if options.debugSamplingWhy {
             lines.append(("why: flatness", "red"))
             lines.append(("why: rail deviation", "blue"))
@@ -635,6 +791,9 @@ public func runCLI() {
         if let positional = CommandLine.arguments.dropFirst().first(where: { $0.hasSuffix(".json") && !$0.hasPrefix("--") }) {
             options.specPath = positional
         }
+    }
+    if options.specPath == nil, options.example?.lowercased() == "e" {
+        options.specPath = "Fixtures/glyphs/e.v0.json"
     }
     do {
         try validateSamplingOptions(options)
@@ -719,7 +878,11 @@ private func resolveEffectivePath(
     resolvedHeartline: ResolvedHeartline?
 ) {
     let exampleName = options.example ?? spec?.example
-    let inkSelection = pickInkPrimitive(spec?.ink, name: options.inkName)
+    let preferredInkName = options.inkName ?? spec?.strokes?.first?.ink
+    let inkSelection = pickInkPrimitive(spec?.ink, name: preferredInkName)
+    if let preferredInkName, inkSelection == nil {
+        throw InkContinuityError.missingInk(name: preferredInkName)
+    }
     let inkPrimitive = inkSelection?.primitive
     var inkPaths: [SkeletonPath] = []
     var resolvedHeartline: ResolvedHeartline? = nil
@@ -780,4 +943,96 @@ private func resolveEffectivePath(
     }
     
     return (exampleName, inkPrimitive, path, resolvedHeartline)
+}
+
+private struct ResolvedStroke {
+    let id: String?
+    let inkName: String?
+    let inkPrimitive: InkPrimitive?
+    let resolvedHeartline: ResolvedHeartline?
+    let path: SkeletonPath
+    let params: StrokeParams?
+}
+
+private func resolveEffectiveStrokes(
+    options: CLIOptions,
+    spec: CP2Spec?,
+    warn: (String) -> Void
+) throws -> (
+    exampleName: String?,
+    strokes: [ResolvedStroke]
+) {
+    let exampleName = options.example ?? spec?.example
+    if let strokes = spec?.strokes, !strokes.isEmpty {
+        guard let ink = spec?.ink else {
+            throw InkContinuityError.missingInk(name: strokes[0].ink)
+        }
+        var resolved: [ResolvedStroke] = []
+        for stroke in strokes {
+            guard let primitive = ink.entries[stroke.ink] else {
+                throw InkContinuityError.missingInk(name: stroke.ink)
+            }
+            var resolvedHeartline: ResolvedHeartline? = nil
+            var inkPaths: [SkeletonPath] = []
+            switch primitive {
+            case .heartline(let heartline):
+                let resolvedHL = try resolveHeartline(
+                    name: stroke.ink,
+                    heartline: heartline,
+                    ink: ink,
+                    strict: options.strictHeartline,
+                    warn: warn
+                )
+                resolvedHeartline = resolvedHL
+                for subpath in resolvedHL.subpaths {
+                    let segments = subpath.map { cubicForSegment($0) }
+                    if !segments.isEmpty { inkPaths.append(SkeletonPath(segments: segments)) }
+                }
+            default:
+                inkPaths = try buildSkeletonPaths(
+                    name: stroke.ink,
+                    primitive: primitive,
+                    strict: options.strictInk,
+                    epsilon: 1.0e-4,
+                    warn: warn
+                )
+            }
+
+            guard let path = inkPaths.first else {
+                throw InkContinuityError.emptyHeartline(name: stroke.ink)
+            }
+            if inkPaths.count > 1 {
+                warn("ink continuity warning: \(stroke.ink) multiple subpaths detected; sweeping first only")
+                if options.strictInk || options.strictHeartline {
+                    throw InkContinuityError.discontinuity(name: stroke.ink, index: 0, dist: 0.0)
+                }
+            }
+            resolved.append(
+                ResolvedStroke(
+                    id: stroke.id,
+                    inkName: stroke.ink,
+                    inkPrimitive: primitive,
+                    resolvedHeartline: resolvedHeartline,
+                    path: path,
+                    params: stroke.params
+                )
+            )
+        }
+        return (exampleName, resolved)
+    }
+
+    let (resolvedExample, inkPrimitive, path, resolvedHeartline) = try resolveEffectivePath(
+        options: options,
+        spec: spec,
+        warn: warn
+    )
+    let fallback = ResolvedStroke(
+        id: nil,
+        inkName: nil,
+        inkPrimitive: inkPrimitive,
+        resolvedHeartline: resolvedHeartline,
+        path: path,
+        params: spec?.strokes?.first?.params
+    )
+    return (resolvedExample, [fallback])
 }

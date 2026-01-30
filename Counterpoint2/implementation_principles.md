@@ -1,61 +1,47 @@
-Counterpoint2 implementation notes (principles in practice)
+Counterpoint2 implementation principles (current state)
 
-Overview
-Counterpoint2 is a clean, deterministic geometry engine that implements the reboot
-principles in counterpoint_2_reboot.md. This document maps those principles to
-concrete code in the current Counterpoint2 package.
-
-1) Vector-first, no raster, no union
-- SweepTrace constructs a boundary soup from explicit left/right rails and caps.
-- traceLoops walks the boundary soup into a closed ring (polyline only).
-- There is no rasterization or polygon-union stage in the outline path.
+1) Vector‑first outline construction
+- Boundary soup is built from explicit rail offsets + caps.
+- traceLoops deterministically walks the soup into ordered rings.
+- No rasterization and no polygon union in the critical outline path.
 
 2) Determinism by construction
-- CP2Geometry defines Vec2, AABB, and Epsilon with explicit tolerances.
-- SkeletonPathParameterization uses fixed sampling tables (arcSamples) and
-  deterministic interpolation for arc-length mapping.
-- Adaptive sampling (when enabled) is recursive with strict ordering, epsilon
-  de-dupe, and explicit maxDepth/maxSamples caps.
-- traceLoops uses epsilon-snapped endpoints and deterministic next-edge rules.
+- CP2Geometry provides explicit epsilons and stable Vec2/AABB primitives.
+- Global‑t parameterization uses fixed arc‑length sampling tables.
+- Adaptive sampling is the default mode; sample lists are strictly increasing and epsilon‑deduped.
+- All debug overlays are deterministic (sorted, stable formatting).
 
-3) Tight module boundaries
-- CP2Geometry: pure numeric types (Vec2, AABB, Epsilon).
-- CP2Skeleton: path primitives (CubicBezier2, SkeletonPath) and deterministic
-  parameterization + sampling helpers.
-- cp2-cli: the only place that prints debug output or writes SVGs.
+3) Clean architecture boundaries
+- CP2Geometry: pure numeric types + render settings + ink primitives.
+- CP2Skeleton: path primitives, parameterization, sampling, rails, boundary soup, traceLoops.
+- cp2-cli: JSON parsing, CLI flags, SVG rendering, logging.
 
-4) TDD + invariants
-Core invariants are enforced by tests in CP2SkeletonTests:
-- Single closed ring output (rings == 1).
-- Closed loop with epsilon-closure.
-- Non-zero area.
-- Deterministic vertex list across runs.
-- Arc-length mapping correctness and monotonicity.
+4) Rail model correctness (major fix)
+- Rails are computed from the cross‑axis:
+  left = C + vRot * widthLeft
+  right = C - vRot * widthRight
+- This replaces the earlier diagonal corner selection that caused the J teleport chord.
 
-5) Debug visibility (CLI only)
-cp2-cli provides deterministic debug output:
-- --debug-param: parameterization probes (globalT -> segment + localU + position).
-- --debug-sweep: sweep stats, join probes (if present), bulge metrics,
-  scallop metrics (raw + filtered).
-- --debug-svg: optional overlay of skeleton + sample points.
+5) Param tracks and interpolation
+- widthLeft/widthRight use cubic Hermite with monotone limiting by default.
+- Keyframes can declare knots: smooth / cusp / hold / snap.
+- interpToNext.alpha scales the outgoing tangent (shape change without endpoint drift).
 
-6) Example fixtures as regression harness
-Examples are deterministic and repeatable:
-- line, scurve, fast_scurve, fast_scurve2, twoseg, jstem, j, j_serif_only, poly3,
-  line_end_ramp.
-- Each example has SweepTrace invariants; stress examples have scallop metrics.
+6) Debugging as a first‑class workflow
+- compare / compareAll presets with strict layer ordering:
+  reference fill → ink fill → reference outline → debug overlays
+- keyframe markers (shape‑coded)
+- paramsPlot mini‑graphs for width tracks and knot type
+- ring diagnostics (ringSpine, ringJump, traceJumpStep)
+- sampling diagnostics (samplingWhy + solo mode)
 
-7) Explicit epsilons and numeric stability
-- All comparisons use explicit epsilon values (no hidden globals).
-- AdaptiveSampler ensures endpoint inclusion and strictly increasing sample lists.
-- Scallop metrics are computed on stripped, epsilon-closed rings.
+7) Fixtures and regression harness
+- Deterministic fixtures for line, scurve, fast_scurve, poly3, J stem/hook/serif.
+- Tests assert closed rings, non‑zero area, deterministic vertex lists, bounded scallops.
 
 Current output path
-SkeletonPath -> parameterization -> boundary soup (rails + caps) -> traceLoops
--> single closed ring -> SVG polyline.
+SkeletonPath → parameterization → adaptive sampling → rails → boundary soup → traceLoops → SVG.
 
-Non-goals (still true)
-- No polygon union.
-- No raster passes.
-- No UI layer in core modules.
-*** End Patch"}}
+Known limitations (explicit)
+- Counter subtraction is scaffolded: counters can be parsed and visualized but are not yet subtracted.
+- Terminal/appendage vocabulary (ball/elliptical terminals) is pending.

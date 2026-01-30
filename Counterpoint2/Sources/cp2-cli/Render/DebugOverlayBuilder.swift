@@ -6,8 +6,12 @@ func makeCenterlineDebugOverlay(
     options: CLIOptions,
     path: SkeletonPath,
     pathParam: SkeletonPathParameterization,
-    plan: SweepPlan
+    plan: SweepPlan,
+    inkSegments: [InkSegment]? = nil
 ) -> DebugOverlay {
+    if options.viewCenterlineOnly, let inkSegments {
+        return makeCenterlineOnlyInkOverlay(segments: inkSegments)
+    }
     let count = max(2, plan.sweepSampleCount)
     var left: [Vec2] = []
     var right: [Vec2] = []
@@ -128,6 +132,66 @@ func makeCenterlineDebugOverlay(
 """
         return DebugOverlay(svg: svg, bounds: debugBounds)
     }
+}
+
+private func makeCenterlineOnlyInkOverlay(segments: [InkSegment]) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+
+    func addPoint(_ p: Vec2, radius: Double, fill: String) {
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+        bounds.expand(by: p)
+    }
+
+    func addLine(_ a: Vec2, _ b: Vec2, stroke: String, width: Double) {
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"%@\" stroke-width=\"%.1f\"/>", a.x, a.y, b.x, b.y, stroke, width))
+        bounds.expand(by: a)
+        bounds.expand(by: b)
+    }
+
+    func addCubic(_ p0: Vec2, _ p1: Vec2, _ p2: Vec2, _ p3: Vec2, stroke: String, width: Double) {
+        let pathData = String(
+            format: "M %.4f %.4f C %.4f %.4f %.4f %.4f %.4f %.4f",
+            p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y
+        )
+        svgParts.append(String(format: "<path d=\"%@\" fill=\"none\" stroke=\"%@\" stroke-width=\"%.1f\" />", pathData, stroke, width))
+        bounds.expand(by: p0)
+        bounds.expand(by: p1)
+        bounds.expand(by: p2)
+        bounds.expand(by: p3)
+    }
+
+    for segment in segments {
+        switch segment {
+        case .line(let line):
+            let p0 = vec(line.p0)
+            let p1 = vec(line.p1)
+            addLine(p0, p1, stroke: "orange", width: 0.8)
+            addPoint(p0, radius: 2.0, fill: "blue")
+            addPoint(p1, radius: 2.0, fill: "blue")
+        case .cubic(let cubic):
+            let p0 = vec(cubic.p0)
+            let p1 = vec(cubic.p1)
+            let p2 = vec(cubic.p2)
+            let p3 = vec(cubic.p3)
+            addLine(p0, p1, stroke: "#cccccc", width: 0.5)
+            addLine(p3, p2, stroke: "#cccccc", width: 0.5)
+            addCubic(p0, p1, p2, p3, stroke: "orange", width: 0.8)
+            addPoint(p0, radius: 2.0, fill: "blue")
+            addPoint(p3, radius: 2.0, fill: "blue")
+            addPoint(p1, radius: 2.0, fill: "red")
+            addPoint(p2, radius: 2.0, fill: "red")
+        @unknown default:
+            preconditionFailure("Unsupported ink segment type in centerline-only view.")
+        }
+    }
+
+    let svg = """
+  <g id="debug">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
 }
 
 func makeSamplingWhyOverlay(

@@ -31,8 +31,8 @@
     "hook": {
       "type": "cubic",
       "p0": { "x": 138, "y": 350 },
-      "p1": { "x": 138, "y": 470 },
-      "p2": { "x": 0, "y": 480 },
+      "p1": { "x": 138, "y": 490 },
+      "p2": { "x": -10, "y": 470 },
       "p3": { "x": 30, "y": 420 }
     },
 
@@ -61,11 +61,11 @@
         "widthLeft": {
           "keyframes": [
             { "t": 0.0, "value": 99 },
-            { "t": 0.013, "value": 99, "interpToNext": { "alpha": -1.5 }  },
-            { "t": 0.1, "value": 35 },
-            { "t": 0.7, "value": 35  },
+            { "t": 0.013, "value": 99, "knot": "cusp", "interpToNext": { "alpha": -1.9 }   },
+            { "t": 0.08, "value": 35 },
+            { "t": 0.6, "value": 35, "interpToNext": { "alpha": 5.5 }  },
             { "t": 0.9, "value": 3 },
-            { "t": 0.96, "value": 6, "interpToNext": { "alpha": -1.6 }  },
+            { "t": 0.975, "value": 7, "knot": "cusp" },
             { "t": 1.0, "value": 30 }
           ]
         },
@@ -73,12 +73,12 @@
         "widthRight": {
           "keyframes": [
             { "t": 0.0, "value": 94  },
-            { "t": 0.012, "value": 94, "interpToNext": { "alpha": -1.5 }  },
+            { "t": 0.013, "value": 94, "knot": "cusp", "interpToNext": { "alpha": -1.9 }   },
             { "t": 0.1, "value": 35 },
-            { "t": 0.7, "value": 35 },
+            { "t": 0.65, "value": 35, "interpToNext": { "alpha": -2.5 }  },
             { "t": 0.9, "value": 3 },
-            { "t": 0.95, "value": 10 },
-            { "t": 1.0, "value": 33 }
+            { "t": 0.95, "value": 11},
+            { "t": 1.0, "value": 35 }
           ]
         }
         ,
@@ -86,6 +86,8 @@
         "offset": {
           "keyframes": [
             { "t": 0.0, "value": 0 },
+            { "t": 0.65, "value": 0 },
+            { "t": 0.9, "value": 3 },
             { "t": 1.0, "value": 0 }
           ]
         },

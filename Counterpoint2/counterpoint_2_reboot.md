@@ -1,131 +1,38 @@
-# Counterpoint2 — Reboot Context (Jan 2026)
+# Counterpoint2 — Project status & direction
 
-## Why we restarted
+## Why the reboot still stands
+The legacy engine’s final outline depended on polygon union behavior that could hang or skip unpredictably. Counterpoint2 exists to make the geometry correct first: deterministic, vector‑first, test‑locked.
 
-The original Counterpoint engine reached a structural failure mode:
+## What exists now (as implemented)
+- Deterministic pipeline:
+  SkeletonPath → global‑t (arc‑length) → adaptive sampling → rails → boundary soup → traceLoops → SVG
+- No rasterization, no polygon union in the critical outline path.
+- Multi‑segment skeletons, heartlines, and named ink parts (spine/hook/etc.).
 
-- The *final outline* depended on polygon union behavior that could **hang, skip, or become nondeterministic** (notably via the `iOverlay` adapter).
-- Attempts to retrofit a **raster → trace silhouette path** inside the existing architecture produced unusable output and increased complexity.
-- Debugging became reactive and local: we were patching symptoms rather than enforcing global guarantees.
+### Key fixes completed
+- J bottom cut‑off traced to **diagonal nib corner selection** → fixed by cross‑axis rail offsets.
+- Adaptive sampling now **includes keyframe t’s** and **rail‑aware refinement**, eliminating faceting at sharp ramps.
+- Param tracks upgraded to **cubic Hermite (monotone)** by default with optional knot semantics.
 
-**Conclusion:**  
-The codebase had fallen into a local minimum. The only viable path forward was a clean rebuild with strict invariants, deterministic geometry, and tests at every layer.
+### Debug workflow (deterministic)
+- compare / compareAll presets with strict layer ordering:
+  reference fill → ink fill → reference outline → debug overlays
+- ring diagnostics: ringSpine + ringJump + traceJumpStep
+- sampling diagnostics: samplingWhy + solo mode
+- keyframe markers and paramsPlot overlays
 
----
+## Where we are now
+- Big Caslon J is typographically convincing.
+- Remaining mismatch is terminal vocabulary (ball/elliptical terminal) which will be added as a first‑class appendage shape (not hacked via width).
+- CLI is sufficient for engine validation; GUI/micro‑editing is the current bottleneck.
 
-## New direction: Counterpoint2
+## Next up: Big Caslon “e”
+We are starting a new scaffolded workstream:
+1) **Self‑overlap correctness** (no unintended white holes; winding preserved)
+2) **Counter subtraction** (non‑ink hole); currently stubbed as debug overlay only
+3) **Lower‑lip rounding vocabulary** (future terminal/appendage system)
 
-Counterpoint2 is a **from-scratch implementation** living alongside (but not coupled to) the original engine.
-
-### Core philosophy
-
-- **Vector-first, Lee-style direct silhouette generation**
-- Build a *boundary soup* (explicit envelope boundary segments)
-- **Deterministically trace closed loops**
-- **No rasterization**
-- **No polygon union** in the critical path
-- Tight module boundaries
-- Deterministic behavior by construction
-- Test-driven development at every step
-
-This is a geometry engine, not a UI system and not a patch on the old one.
-
----
-
-## What exists now (working baseline)
-
-A new SwiftPM package at `Counterpoint2/` with the following modules:
-
-### CP2Geometry
-
-- `Vec2`, `AABB`, `Epsilon`
-- Fully tested
-- Explicit tolerances, no hidden globals
-
-### CP2Skeleton
-
-- `CubicBezier2`
-  - evaluate
-  - derivative
-  - tangent
-- `SkeletonPath`
-  - currently: single cubic
-- Deterministic **arc-length parameterization**
-  - sampling table
-  - tests enforce stability
-
-### SweepTrace
-
-- Lee-style boundary soup construction
-- Sweeps a **rectangular counterpoint** along the skeleton
-- For each sample:
-  - compute left/right support points
-- Adds simple caps
-- Endpoint snapping via epsilon
-- Deterministic segment walking
-- Produces **exactly one closed ring**
-- Deterministic ordering
-
-### Tests (SweepTraceTests)
-
-Hard invariants enforced by tests:
-
-- exactly one ring
-- closed loop
-- non-zero area
-- deterministic output (bit-identical vertex lists across runs)
-
-### cp2-cli
-
-- Minimal CLI for rendering
-- Current demo: straight-line skeleton → `line.svg`
-- Output is clean, rectangular, and visually correct
-
----
-
-## Current status
-
-```bash
-cd Counterpoint2
-swift test
-swift run cp2-cli --out out/line.svg
-```
-
-All tests pass. Output is clean and deterministic.
-
-This is a **known-good foundation**.
-
----
-
-## Immediate next steps (agreed plan)
-
-1. **Multi-cubic skeleton paths**
-   - Preserve determinism
-   - Preserve global parameterization
-   - No per-segment hacks
-
-2. **Curved skeleton sweep**
-   - S-curve fixture
-   - Same boundary-soup + trace method
-   - No special cases
-
-3. **Incremental Big Caslon J**
-   - Stem first
-   - Then hook
-   - Each addition gated by tests + invariants
-
-4. *(Optional, later)*  
-   Add `CP2CLITests` to assert SVG structure (e.g. single closed path). Non-blocking.
-
----
-
-## Non-goals (for now)
-
-- No polygon union
-- No raster passes
-- No adaptive heuristics without proofs
-- No UI abstractions
-- No compatibility shims for the old engine
-
-Counterpoint2 exists to **make the geometry correct first**.
-
+## Constraints we keep
+- Determinism: same input JSON → same SVG bytes.
+- Adaptive sampling is the only normal mode.
+- Clean architecture boundaries are respected; IO/debug in CLI only.

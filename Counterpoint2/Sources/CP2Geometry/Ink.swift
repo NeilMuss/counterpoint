@@ -221,3 +221,38 @@ public struct Ink: Codable, Equatable {
         }
     }
 }
+
+public struct CounterSet: Codable, Equatable {
+    public var entries: [String: InkPrimitive]
+
+    public init(entries: [String: InkPrimitive]) {
+        self.entries = entries
+    }
+
+    private struct DynamicKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        var map: [String: InkPrimitive] = [:]
+        for key in container.allKeys {
+            let primitive = try container.decode(InkPrimitive.self, forKey: key)
+            map[key.stringValue] = primitive
+        }
+        self.entries = map
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: DynamicKey.self)
+        for key in entries.keys.sorted() {
+            if let value = entries[key], let codingKey = DynamicKey(stringValue: key) {
+                try container.encode(value, forKey: codingKey)
+            }
+        }
+    }
+}

@@ -7,6 +7,7 @@ public struct CP2Spec: Codable {
     var render: RenderSettings?
     var reference: ReferenceLayer?
     var ink: Ink?
+    var counters: CounterSet? = nil
     var strokes: [StrokeSpec]?
 }
 
