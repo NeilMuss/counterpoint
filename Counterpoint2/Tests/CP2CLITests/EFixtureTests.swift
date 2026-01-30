@@ -9,8 +9,7 @@ final class EFixtureTests: XCTestCase {
         options.example = "e"
         let svg = try renderSVGString(options: options, spec: spec)
         XCTAssertTrue(svg.contains("<g id=\"stroke-ink\">"))
-        XCTAssertTrue(svg.contains("id=\"stroke-ink-e-bowl\""))
-        XCTAssertTrue(svg.contains("id=\"stroke-ink-e-cross\""))
+        XCTAssertTrue(svg.contains("id=\"ink-compound\""))
         XCTAssertTrue(svg.contains("path d=\""))
     }
 

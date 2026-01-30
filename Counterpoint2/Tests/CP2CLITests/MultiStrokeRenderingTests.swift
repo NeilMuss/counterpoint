@@ -21,9 +21,8 @@ final class MultiStrokeRenderingTests: XCTestCase {
         )
 
         let svg = try renderSVGString(options: CLIOptions(), spec: spec)
-        XCTAssertTrue(svg.contains("id=\"stroke-ink-stroke-a\""))
-        XCTAssertTrue(svg.contains("id=\"stroke-ink-stroke-b\""))
+        XCTAssertTrue(svg.contains("id=\"ink-compound\""))
         let pathCount = svg.components(separatedBy: "<path ").count - 1
-        XCTAssertEqual(pathCount, 2)
+        XCTAssertEqual(pathCount, 1)
     }
 }
