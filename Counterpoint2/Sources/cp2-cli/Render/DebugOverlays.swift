@@ -256,7 +256,7 @@ func debugOverlayForCounters(_ counters: CounterSet, steps: Int, warn: (String) 
     for key in counters.entries.keys.sorted() {
         guard let primitive = counters.entries[key] else { continue }
         switch primitive {
-        case .ink(let inkPrimitive):
+        case .ink(let inkPrimitive, _):
             let lines = polylines(for: inkPrimitive, steps: steps, warn: warn)
             for line in lines {
                 addPolyline(line)

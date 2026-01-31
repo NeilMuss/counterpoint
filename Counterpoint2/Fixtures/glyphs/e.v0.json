@@ -57,7 +57,8 @@
       "rx": 55,
       "ry":50,
       "rotateDeg": 0,
-      "offset": { "t": 0, "n": -100 }
+      "offset": { "t": 0, "n": -100 },
+      "appliesTo": ["e-bowl"]
     }
   },
 

@@ -137,25 +137,25 @@ private func counterRings(
     )],
     options: CLIOptions,
     warn: (String) -> Void
-) -> [[Vec2]] {
+) -> [(ring: [Vec2], appliesTo: [String]?)] {
     let steps = max(8, options.arcSamples)
     let counterInk = Ink(stem: nil, entries: counters.entries.compactMapValues { primitive in
-        if case .ink(let ink) = primitive { return ink }
+        if case .ink(let ink, _) = primitive { return ink }
         return nil
     })
-    var rings: [[Vec2]] = []
+    var rings: [(ring: [Vec2], appliesTo: [String]?)] = []
     for key in counters.entries.keys.sorted() {
         guard let primitive = counters.entries[key] else { continue }
         switch primitive {
-        case .ink(let inkPrimitive):
+        case .ink(let inkPrimitive, let appliesTo):
             switch inkPrimitive {
             case .line(let line):
-                rings.append(ensureClosedRing([vec(line.p0), vec(line.p1)]))
+                rings.append((ensureClosedRing([vec(line.p0), vec(line.p1)]), appliesTo))
             case .cubic(let cubic):
-                rings.append(ensureClosedRing(sampleInkCubicPoints(cubic, steps: steps)))
+                rings.append((ensureClosedRing(sampleInkCubicPoints(cubic, steps: steps)), appliesTo))
             case .path(let path):
                 let ring = ringFromSegments(path.segments, steps: steps)
-                if !ring.isEmpty { rings.append(ring) }
+                if !ring.isEmpty { rings.append((ring, appliesTo)) }
             case .heartline(let heartline):
                 do {
                     let resolved = try resolveHeartline(
@@ -167,7 +167,7 @@ private func counterRings(
                     )
                     for subpath in resolved.subpaths {
                         let ring = ringFromSegments(subpath, steps: steps)
-                        if !ring.isEmpty { rings.append(ring) }
+                        if !ring.isEmpty { rings.append((ring, appliesTo)) }
                     }
                 } catch {
                     warn("counter heartline resolve failed: \(key) error=\(error)")
@@ -175,7 +175,7 @@ private func counterRings(
             }
         case .ellipse(let ellipse):
             if let ring = ellipseRing(ellipse, strokeOutputs: strokeOutputs, warn: warn) {
-                rings.append(ring)
+                rings.append((ring, ellipse.appliesTo))
             }
         }
     }
@@ -475,18 +475,20 @@ public func renderSVGString(
     let result = primaryOutput.result
     let joinGTs = primaryOutput.joinGTs
 
-    let inkRingsNormalized: [[Vec2]] = strokeOutputs.compactMap { output in
-        output.result.ring.isEmpty ? nil : normalizedRing(output.result.ring, clockwise: true)
+    let strokeEntries: [(index: Int, stroke: ResolvedStroke, ring: [Vec2])] = strokeOutputs.enumerated().compactMap { index, output in
+        guard !output.result.ring.isEmpty else { return nil }
+        return (index, output.stroke, normalizedRing(output.result.ring, clockwise: true))
     }
-    var counterRingsNormalized: [[Vec2]] = []
+    let inkRingsNormalized: [[Vec2]] = strokeEntries.map { $0.ring }
+    var counterRingsNormalized: [(ring: [Vec2], appliesTo: [String]?)] = []
     if let counters = spec?.counters, !options.viewCenterlineOnly {
         let counterOutputs = strokeOutputs.map { (stroke: $0.stroke, pathParam: $0.pathParam, plan: $0.plan) }
         let rawCounters = counterRings(counters: counters, strokeOutputs: counterOutputs, options: options, warn: warnHandler)
         counterRingsNormalized = rawCounters
-            .filter { !$0.isEmpty }
-            .map { normalizedRing($0, clockwise: false) }
+            .filter { !$0.ring.isEmpty }
+            .map { (normalizedRing($0.ring, clockwise: false), $0.appliesTo) }
         for (index, ring) in counterRingsNormalized.enumerated() {
-            if !counterIsInsideInk(counter: ring, inkRings: inkRingsNormalized) {
+            if !counterIsInsideInk(counter: ring.ring, inkRings: inkRingsNormalized) {
                 warnHandler("counter ring \(index) is not inside ink")
             }
         }
@@ -863,34 +865,118 @@ public func renderSVGString(
 
     let viewMinX = frame.minX, viewMinY = frame.minY, viewWidth = frame.width, viewHeight = frame.height
     let strokeInkContent: String = {
-        let inkPathData = inkRingsNormalized
-            .map { svgPath(for: $0) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        let counterPathData = counterRingsNormalized
-            .map { svgPath(for: $0) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        if strokeEntries.isEmpty { return "" }
 
-        if options.clipCountersToInk, !inkPathData.isEmpty, !counterPathData.isEmpty {
-            return """
-    <path id="ink-shape" d="\(inkPathData)" fill="black" stroke="none" fill-rule="nonzero" />
+        let counterGroups: [(key: String, appliesTo: [String]?, counters: [[Vec2]])] = {
+            guard !counterRingsNormalized.isEmpty else { return [] }
+            var map: [String: (appliesTo: [String]?, rings: [[Vec2]])] = [:]
+            for item in counterRingsNormalized {
+                let appliesTo = item.appliesTo?.sorted()
+                let key = appliesTo?.joined(separator: "|") ?? "*"
+                if var existing = map[key] {
+                    existing.rings.append(item.ring)
+                    map[key] = existing
+                } else {
+                    map[key] = (appliesTo, [item.ring])
+                }
+            }
+            return map.keys.sorted().compactMap { key in
+                guard let value = map[key] else { return nil }
+                return (key, value.appliesTo, value.rings)
+            }
+        }()
+
+        var usedStrokeIndices: Set<Int> = []
+        var parts: [String] = []
+        var groupIndex = 0
+
+        func emitCompound(
+            inkRings: [[Vec2]],
+            counterRings: [[Vec2]],
+            idSuffix: String
+        ) {
+            let inkPathData = inkRings
+                .map { svgPath(for: $0) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            let counterPathData = counterRings
+                .map { svgPath(for: $0) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+
+            if options.clipCountersToInk, !inkPathData.isEmpty, !counterPathData.isEmpty {
+                let inkId = idSuffix.isEmpty ? "ink-shape" : "ink-shape-\(idSuffix)"
+                let clipId = idSuffix.isEmpty ? "clip-ink" : "clip-ink-\(idSuffix)"
+                let counterId = idSuffix.isEmpty ? "counter-shape" : "counter-shape-\(idSuffix)"
+                parts.append("""
+    <path id="\(inkId)" d="\(inkPathData)" fill="black" stroke="none" fill-rule="nonzero" />
     <defs>
-      <clipPath id="clip-ink">
-        <use href="#ink-shape" />
+      <clipPath id="\(clipId)">
+        <use href="#\(inkId)" />
       </clipPath>
     </defs>
-    <path id="counter-shape" d="\(counterPathData)" fill="white" stroke="none" clip-path="url(#clip-ink)" />
-"""
+    <path id="\(counterId)" d="\(counterPathData)" fill="white" stroke="none" clip-path="url(#\(clipId))" />
+""")
+                return
+            }
+
+            let compoundRings = inkRings + counterRings
+            let compoundPathData = compoundRings
+                .map { svgPath(for: $0) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            if compoundPathData.isEmpty { return }
+            let idToken = idSuffix.isEmpty ? "ink-compound" : "ink-compound-\(idSuffix)"
+            parts.append("    <path id=\"\(idToken)\" d=\"\(compoundPathData)\" fill=\"black\" stroke=\"none\" fill-rule=\"nonzero\" />")
         }
 
-        let compoundRings = inkRingsNormalized + counterRingsNormalized
-        let compoundPathData = compoundRings
-            .map { svgPath(for: $0) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        if compoundPathData.isEmpty { return "" }
-        return "    <path id=\"ink-compound\" d=\"\(compoundPathData)\" fill=\"black\" stroke=\"none\" fill-rule=\"nonzero\" />"
+        if counterGroups.isEmpty {
+            emitCompound(inkRings: strokeEntries.map { $0.ring }, counterRings: [], idSuffix: "")
+            return parts.joined(separator: "\n")
+        }
+
+        for group in counterGroups {
+            let targetIds = group.appliesTo
+            var groupStrokeIndices: [Int] = []
+            if let targetIds {
+                let set = Set(targetIds)
+                groupStrokeIndices = strokeEntries.filter { entry in
+                    if let id = entry.stroke.id { return set.contains(id) }
+                    return false
+                }.map { $0.index }
+                let missing = targetIds.filter { id in !strokeEntries.contains(where: { $0.stroke.id == id }) }
+                if !missing.isEmpty {
+                    warnHandler("counter appliesTo missing stroke ids: \(missing.joined(separator: ", "))")
+                }
+            } else {
+                groupStrokeIndices = strokeEntries.map { $0.index }
+            }
+
+            let freshIndices = groupStrokeIndices.filter { !usedStrokeIndices.contains($0) }
+            if freshIndices.count != groupStrokeIndices.count {
+                warnHandler("counter appliesTo overlaps previously scoped strokes; rendering first occurrence only")
+            }
+            if freshIndices.isEmpty { continue }
+            for index in freshIndices { usedStrokeIndices.insert(index) }
+
+            let groupInkRings = strokeEntries.filter { freshIndices.contains($0.index) }.map { $0.ring }
+            emitCompound(
+                inkRings: groupInkRings,
+                counterRings: group.counters,
+                idSuffix: groupIndex == 0 ? "" : "g\(groupIndex)"
+            )
+            groupIndex += 1
+        }
+
+        let remaining = strokeEntries.filter { !usedStrokeIndices.contains($0.index) }
+        for entry in remaining {
+            let rawId = entry.stroke.id ?? entry.stroke.inkName ?? "stroke-\(entry.index)"
+            let idToken = rawId.replacingOccurrences(of: " ", with: "-")
+            let pathData = svgPath(for: entry.ring)
+            parts.append("    <path id=\"stroke-ink-\(idToken)\" d=\"\(pathData)\" fill=\"black\" stroke=\"none\" data-stroke-id=\"\(rawId)\" />")
+        }
+
+        return parts.joined(separator: "\n")
     }()
     let clipId = "frameClip"
     let clipPath = renderSettings.clipToFrame ? """
