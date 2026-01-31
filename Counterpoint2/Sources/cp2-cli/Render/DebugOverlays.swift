@@ -253,34 +253,16 @@ func debugOverlayForCounters(_ counters: CounterSet, steps: Int, warn: (String) 
         }
     }
 
-    func polylines(for primitive: InkPrimitive) -> [[Vec2]] {
-        switch primitive {
-        case .line(let line):
-            return [[vec(line.p0), vec(line.p1)]]
-        case .cubic(let cubic):
-            return [sampleInkCubicPoints(cubic, steps: steps)]
-        case .path(let path):
-            var result: [[Vec2]] = []
-            for segment in path.segments {
-                switch segment {
-                case .line(let line):
-                    result.append([vec(line.p0), vec(line.p1)])
-                case .cubic(let cubic):
-                    result.append(sampleInkCubicPoints(cubic, steps: steps))
-                }
-            }
-            return result
-        case .heartline:
-            warn("counter heartline is not supported for overlay")
-            return []
-        }
-    }
-
     for key in counters.entries.keys.sorted() {
         guard let primitive = counters.entries[key] else { continue }
-        let lines = polylines(for: primitive)
-        for line in lines {
-            addPolyline(line)
+        switch primitive {
+        case .ink(let inkPrimitive):
+            let lines = polylines(for: inkPrimitive, steps: steps, warn: warn)
+            for line in lines {
+                addPolyline(line)
+            }
+        case .ellipse:
+            warn("counter ellipse is not supported for overlay")
         }
     }
 
@@ -291,6 +273,30 @@ func debugOverlayForCounters(_ counters: CounterSet, steps: Int, warn: (String) 
 """
     return DebugOverlay(svg: svg, bounds: bounds)
 }
+
+private func polylines(for primitive: InkPrimitive, steps: Int, warn: (String) -> Void) -> [[Vec2]] {
+    switch primitive {
+    case .line(let line):
+        return [[vec(line.p0), vec(line.p1)]]
+    case .cubic(let cubic):
+        return [sampleInkCubicPoints(cubic, steps: steps)]
+    case .path(let path):
+        var result: [[Vec2]] = []
+        for segment in path.segments {
+            switch segment {
+            case .line(let line):
+                result.append([vec(line.p0), vec(line.p1)])
+            case .cubic(let cubic):
+                result.append(sampleInkCubicPoints(cubic, steps: steps))
+            }
+        }
+        return result
+    case .heartline:
+        warn("counter heartline is not supported for overlay")
+        return []
+    }
+}
+
 
 func makeKeyframesOverlay(
     params: StrokeParams,

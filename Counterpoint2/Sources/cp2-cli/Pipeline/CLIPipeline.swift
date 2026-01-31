@@ -130,162 +130,123 @@ private func ringFromSegments(_ segments: [InkSegment], steps: Int) -> [Vec2] {
 
 private func counterRings(
     counters: CounterSet,
+    strokeOutputs: [(
+        stroke: ResolvedStroke,
+        pathParam: SkeletonPathParameterization,
+        plan: SweepPlan
+    )],
     options: CLIOptions,
     warn: (String) -> Void
 ) -> [[Vec2]] {
     let steps = max(8, options.arcSamples)
-    let counterInk = Ink(stem: nil, entries: counters.entries)
+    let counterInk = Ink(stem: nil, entries: counters.entries.compactMapValues { primitive in
+        if case .ink(let ink) = primitive { return ink }
+        return nil
+    })
     var rings: [[Vec2]] = []
     for key in counters.entries.keys.sorted() {
         guard let primitive = counters.entries[key] else { continue }
         switch primitive {
-        case .line(let line):
-            rings.append(ensureClosedRing([vec(line.p0), vec(line.p1)]))
-        case .cubic(let cubic):
-            rings.append(ensureClosedRing(sampleInkCubicPoints(cubic, steps: steps)))
-        case .path(let path):
-            let ring = ringFromSegments(path.segments, steps: steps)
-            if !ring.isEmpty { rings.append(ring) }
-        case .heartline(let heartline):
-            do {
-                let resolved = try resolveHeartline(
-                    name: key,
-                    heartline: heartline,
-                    ink: counterInk,
-                    strict: options.strictHeartline,
-                    warn: warn
-                )
-                for subpath in resolved.subpaths {
-                    let ring = ringFromSegments(subpath, steps: steps)
-                    if !ring.isEmpty { rings.append(ring) }
+        case .ink(let inkPrimitive):
+            switch inkPrimitive {
+            case .line(let line):
+                rings.append(ensureClosedRing([vec(line.p0), vec(line.p1)]))
+            case .cubic(let cubic):
+                rings.append(ensureClosedRing(sampleInkCubicPoints(cubic, steps: steps)))
+            case .path(let path):
+                let ring = ringFromSegments(path.segments, steps: steps)
+                if !ring.isEmpty { rings.append(ring) }
+            case .heartline(let heartline):
+                do {
+                    let resolved = try resolveHeartline(
+                        name: key,
+                        heartline: heartline,
+                        ink: counterInk,
+                        strict: options.strictHeartline,
+                        warn: warn
+                    )
+                    for subpath in resolved.subpaths {
+                        let ring = ringFromSegments(subpath, steps: steps)
+                        if !ring.isEmpty { rings.append(ring) }
+                    }
+                } catch {
+                    warn("counter heartline resolve failed: \(key) error=\(error)")
                 }
-            } catch {
-                warn("counter heartline resolve failed: \(key) error=\(error)")
+            }
+        case .ellipse(let ellipse):
+            if let ring = ellipseRing(ellipse, strokeOutputs: strokeOutputs, warn: warn) {
+                rings.append(ring)
             }
         }
     }
     return rings
 }
 
-private func ensureClosedRing(_ ring: [Vec2]) -> [Vec2] {
-    guard !ring.isEmpty else { return [] }
-    if let first = ring.first, let last = ring.last, !Epsilon.approxEqual(first, last) {
-        return ring + [first]
-    }
-    return ring
-}
-
-private func normalizedRing(_ ring: [Vec2], clockwise: Bool) -> [Vec2] {
-    let closed = ensureClosedRing(ring)
-    guard closed.count >= 3 else { return closed }
-    let area = signedArea(closed)
-    if clockwise {
-        if area > Epsilon.defaultValue { return closed.reversed() }
+private func ellipseRing(
+    _ ellipse: CounterEllipse,
+    strokeOutputs: [(
+        stroke: ResolvedStroke,
+        pathParam: SkeletonPathParameterization,
+        plan: SweepPlan
+    )],
+    warn: (String) -> Void
+) -> [Vec2]? {
+    let target: (
+        pathParam: SkeletonPathParameterization,
+        plan: SweepPlan
+    )?
+    if let strokeId = ellipse.at.stroke {
+        target = strokeOutputs.first(where: { $0.stroke.id == strokeId }).map { ($0.pathParam, $0.plan) }
+    } else if let inkName = ellipse.at.ink {
+        target = strokeOutputs.first(where: { $0.stroke.inkName == inkName }).map { ($0.pathParam, $0.plan) }
     } else {
-        if area < -Epsilon.defaultValue { return closed.reversed() }
+        warn("counter ellipse missing stroke or ink anchor")
+        return nil
     }
-    return closed
-}
-
-private func ringCentroid(_ ring: [Vec2]) -> Vec2 {
-    guard !ring.isEmpty else { return Vec2(0, 0) }
-    var sum = Vec2(0, 0)
-    for point in ring {
-        sum = sum + point
+    guard let target else {
+        warn("counter ellipse anchor not found")
+        return nil
     }
-    let denom = Double(ring.count)
-    return Vec2(sum.x / denom, sum.y / denom)
-}
 
-private func pointInRing(_ point: Vec2, ring: [Vec2]) -> Bool {
-    guard ring.count >= 3 else { return false }
-    var inside = false
-    var j = ring.count - 1
-    for i in 0..<ring.count {
-        let pi = ring[i]
-        let pj = ring[j]
-        let denom = max(Epsilon.defaultValue, (pj.y - pi.y))
-        let intersects = ((pi.y > point.y) != (pj.y > point.y))
-            && (point.x < (pj.x - pi.x) * (point.y - pi.y) / denom + pi.x)
-        if intersects {
-            inside.toggle()
-        }
-        j = i
+    let gt = max(0.0, min(1.0, ellipse.at.t))
+    let styleAtGT: (Double) -> SweepStyle = { t in
+        SweepStyle(
+            width: target.plan.scaledWidthAtT(t),
+            widthLeft: target.plan.scaledWidthLeftAtT(t),
+            widthRight: target.plan.scaledWidthRightAtT(t),
+            height: target.plan.sweepHeight,
+            angle: target.plan.thetaAtT(t),
+            offset: target.plan.offsetAtT(t),
+            angleIsRelative: target.plan.angleMode == .relative
+        )
     }
-    return inside
-}
-
-private func counterIsInsideInk(counter: [Vec2], inkRings: [[Vec2]]) -> Bool {
-    guard !counter.isEmpty, !inkRings.isEmpty else { return false }
-    let probe = ringCentroid(counter)
-    for ring in inkRings {
-        if pointInRing(probe, ring: ring) { return true }
-    }
-    return false
-}
-
-private func sampleRingPoints(for segment: InkSegment, steps: Int) -> [Vec2] {
-    switch segment {
-    case .line(let line):
-        return [vec(line.p0), vec(line.p1)]
-    case .cubic(let cubic):
-        return sampleInkCubicPoints(cubic, steps: steps)
-    }
-}
-
-private func ringFromSegments(_ segments: [InkSegment], steps: Int) -> [Vec2] {
+    let frame = railSampleFrameAtGlobalT(
+        param: target.pathParam,
+        warpGT: target.plan.warpT,
+        styleAtGT: styleAtGT,
+        gt: gt,
+        index: -1
+    )
+    let offset = ellipse.offset ?? CounterOffset(t: 0.0, n: 0.0)
+    let center = frame.center + frame.tangent * offset.t + frame.normal * offset.n
+    let angle = ellipse.rotateDeg * Double.pi / 180.0
+    let cosR = cos(angle)
+    let sinR = sin(angle)
+    let sampleCount = 64
     var points: [Vec2] = []
-    for segment in segments {
-        let segmentPoints = sampleRingPoints(for: segment, steps: steps)
-        if points.isEmpty {
-            points.append(contentsOf: segmentPoints)
-        } else if let last = points.last, let first = segmentPoints.first, Epsilon.approxEqual(last, first) {
-            points.append(contentsOf: segmentPoints.dropFirst())
-        } else {
-            points.append(contentsOf: segmentPoints)
-        }
+    points.reserveCapacity(sampleCount)
+    for i in 0..<sampleCount {
+        let theta = (Double(i) / Double(sampleCount)) * Double.pi * 2.0
+        let x = ellipse.rx * cos(theta)
+        let y = ellipse.ry * sin(theta)
+        let xr = x * cosR - y * sinR
+        let yr = x * sinR + y * cosR
+        let point = center + frame.tangent * xr + frame.normal * yr
+        points.append(point)
     }
     return ensureClosedRing(points)
 }
 
-private func counterRings(
-    counters: CounterSet,
-    options: CLIOptions,
-    warn: (String) -> Void
-) -> [[Vec2]] {
-    let steps = max(8, options.arcSamples)
-    let counterInk = Ink(stem: nil, entries: counters.entries)
-    var rings: [[Vec2]] = []
-    for key in counters.entries.keys.sorted() {
-        guard let primitive = counters.entries[key] else { continue }
-        switch primitive {
-        case .line(let line):
-            rings.append(ensureClosedRing([vec(line.p0), vec(line.p1)]))
-        case .cubic(let cubic):
-            rings.append(ensureClosedRing(sampleInkCubicPoints(cubic, steps: steps)))
-        case .path(let path):
-            let ring = ringFromSegments(path.segments, steps: steps)
-            if !ring.isEmpty { rings.append(ring) }
-        case .heartline(let heartline):
-            do {
-                let resolved = try resolveHeartline(
-                    name: key,
-                    heartline: heartline,
-                    ink: counterInk,
-                    strict: options.strictHeartline,
-                    warn: warn
-                )
-                for subpath in resolved.subpaths {
-                    let ring = ringFromSegments(subpath, steps: steps)
-                    if !ring.isEmpty { rings.append(ring) }
-                }
-            } catch {
-                warn("counter heartline resolve failed: \(key) error=\(error)")
-            }
-        }
-    }
-    return rings
-}
 
 private func inkPrimitiveSummary(_ primitive: InkPrimitive) -> String {
     switch primitive {
@@ -519,7 +480,8 @@ public func renderSVGString(
     }
     var counterRingsNormalized: [[Vec2]] = []
     if let counters = spec?.counters, !options.viewCenterlineOnly {
-        let rawCounters = counterRings(counters: counters, options: options, warn: warnHandler)
+        let counterOutputs = strokeOutputs.map { (stroke: $0.stroke, pathParam: $0.pathParam, plan: $0.plan) }
+        let rawCounters = counterRings(counters: counters, strokeOutputs: counterOutputs, options: options, warn: warnHandler)
         counterRingsNormalized = rawCounters
             .filter { !$0.isEmpty }
             .map { normalizedRing($0, clockwise: false) }
@@ -901,13 +863,34 @@ public func renderSVGString(
 
     let viewMinX = frame.minX, viewMinY = frame.minY, viewWidth = frame.width, viewHeight = frame.height
     let strokeInkContent: String = {
-        let compoundRings = inkRingsNormalized + counterRingsNormalized
-        let pathData = compoundRings
+        let inkPathData = inkRingsNormalized
             .map { svgPath(for: $0) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        if pathData.isEmpty { return "" }
-        return "    <path id=\"ink-compound\" d=\"\(pathData)\" fill=\"black\" stroke=\"none\" fill-rule=\"nonzero\" />"
+        let counterPathData = counterRingsNormalized
+            .map { svgPath(for: $0) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        if options.clipCountersToInk, !inkPathData.isEmpty, !counterPathData.isEmpty {
+            return """
+    <path id="ink-shape" d="\(inkPathData)" fill="black" stroke="none" fill-rule="nonzero" />
+    <defs>
+      <clipPath id="clip-ink">
+        <use href="#ink-shape" />
+      </clipPath>
+    </defs>
+    <path id="counter-shape" d="\(counterPathData)" fill="white" stroke="none" clip-path="url(#clip-ink)" />
+"""
+        }
+
+        let compoundRings = inkRingsNormalized + counterRingsNormalized
+        let compoundPathData = compoundRings
+            .map { svgPath(for: $0) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if compoundPathData.isEmpty { return "" }
+        return "    <path id=\"ink-compound\" d=\"\(compoundPathData)\" fill=\"black\" stroke=\"none\" fill-rule=\"nonzero\" />"
     }()
     let clipId = "frameClip"
     let clipPath = renderSettings.clipToFrame ? """

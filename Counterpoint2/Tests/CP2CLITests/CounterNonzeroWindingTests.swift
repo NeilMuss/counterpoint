@@ -18,7 +18,7 @@ final class CounterNonzeroWindingTests: XCTestCase {
         ])
 
         let ink = Ink(stem: nil, entries: ["outer": .path(outerPath)])
-        let counters = CounterSet(entries: ["hole": .path(innerPath)])
+        let counters = CounterSet(entries: ["hole": .ink(.path(innerPath))])
         let params = StrokeParams(
             angleMode: .relative,
             theta: KeyframedScalar(keyframes: [Keyframe(t: 0.0, value: 0.0), Keyframe(t: 1.0, value: 0.0)]),

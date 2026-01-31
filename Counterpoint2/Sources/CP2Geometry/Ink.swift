@@ -223,9 +223,9 @@ public struct Ink: Codable, Equatable {
 }
 
 public struct CounterSet: Codable, Equatable {
-    public var entries: [String: InkPrimitive]
+    public var entries: [String: CounterPrimitive]
 
-    public init(entries: [String: InkPrimitive]) {
+    public init(entries: [String: CounterPrimitive]) {
         self.entries = entries
     }
 
@@ -239,9 +239,9 @@ public struct CounterSet: Codable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DynamicKey.self)
-        var map: [String: InkPrimitive] = [:]
+        var map: [String: CounterPrimitive] = [:]
         for key in container.allKeys {
-            let primitive = try container.decode(InkPrimitive.self, forKey: key)
+            let primitive = try container.decode(CounterPrimitive.self, forKey: key)
             map[key.stringValue] = primitive
         }
         self.entries = map
@@ -253,6 +253,133 @@ public struct CounterSet: Codable, Equatable {
             if let value = entries[key], let codingKey = DynamicKey(stringValue: key) {
                 try container.encode(value, forKey: codingKey)
             }
+        }
+    }
+}
+
+public struct CounterOffset: Codable, Equatable {
+    public var t: Double
+    public var n: Double
+
+    public init(t: Double, n: Double) {
+        self.t = t
+        self.n = n
+    }
+}
+
+public struct CounterAnchor: Codable, Equatable {
+    public var stroke: String?
+    public var ink: String?
+    public var t: Double
+
+    public init(stroke: String? = nil, ink: String? = nil, t: Double) {
+        self.stroke = stroke
+        self.ink = ink
+        self.t = t
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case stroke
+        case ink
+        case inkPath
+        case t
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.stroke = try container.decodeIfPresent(String.self, forKey: .stroke)
+        self.ink = try container.decodeIfPresent(String.self, forKey: .ink)
+        if self.ink == nil {
+            self.ink = try container.decodeIfPresent(String.self, forKey: .inkPath)
+        }
+        self.t = try container.decode(Double.self, forKey: .t)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(stroke, forKey: .stroke)
+        if stroke == nil {
+            try container.encodeIfPresent(ink, forKey: .ink)
+        }
+        try container.encode(t, forKey: .t)
+    }
+}
+
+public struct CounterEllipse: Codable, Equatable {
+    public var at: CounterAnchor
+    public var rx: Double
+    public var ry: Double
+    public var rotateDeg: Double
+    public var offset: CounterOffset?
+
+    public init(at: CounterAnchor, rx: Double, ry: Double, rotateDeg: Double, offset: CounterOffset? = nil) {
+        self.at = at
+        self.rx = rx
+        self.ry = ry
+        self.rotateDeg = rotateDeg
+        self.offset = offset
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case at
+        case rx
+        case ry
+        case rotateDeg
+        case offset
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.at = try container.decode(CounterAnchor.self, forKey: .at)
+        self.rx = try container.decode(Double.self, forKey: .rx)
+        self.ry = try container.decode(Double.self, forKey: .ry)
+        self.rotateDeg = try container.decodeIfPresent(Double.self, forKey: .rotateDeg) ?? 0.0
+        self.offset = try container.decodeIfPresent(CounterOffset.self, forKey: .offset)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode("ellipse", forKey: .type)
+        try container.encode(at, forKey: .at)
+        try container.encode(rx, forKey: .rx)
+        try container.encode(ry, forKey: .ry)
+        if rotateDeg != 0.0 { try container.encode(rotateDeg, forKey: .rotateDeg) }
+        try container.encodeIfPresent(offset, forKey: .offset)
+    }
+}
+
+public enum CounterPrimitive: Codable, Equatable {
+    case ink(InkPrimitive)
+    case ellipse(CounterEllipse)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        switch type.lowercased() {
+        case "ellipse":
+            self = .ellipse(try CounterEllipse(from: decoder))
+        case "line", "cubic", "path", "heartline":
+            self = .ink(try InkPrimitive(from: decoder))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Unknown counter primitive type: \(type)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .ellipse(let ellipse):
+            try ellipse.encode(to: encoder)
+        case .ink(let primitive):
+            try primitive.encode(to: encoder)
         }
     }
 }

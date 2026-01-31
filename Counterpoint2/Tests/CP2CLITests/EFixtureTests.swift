@@ -15,14 +15,14 @@ final class EFixtureTests: XCTestCase {
 
     func testCountersOverlayEmitsGroup() throws {
         let counters = CounterSet(entries: [
-            "counter": InkPrimitive.cubic(
+            "counter": .ink(.cubic(
                 InkCubic(
                     p0: InkPoint(x: 50, y: 50),
                     p1: InkPoint(x: 20, y: 80),
                     p2: InkPoint(x: 80, y: 120),
                     p3: InkPoint(x: 50, y: 150)
                 )
-            )
+            ))
         ])
         let spec = CP2Spec(example: nil, render: nil, reference: nil, ink: nil, counters: counters, strokes: nil)
         var options = CLIOptions()

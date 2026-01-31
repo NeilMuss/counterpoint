@@ -44,6 +44,7 @@ public struct CLIOptions {
     var debugCompareAll: Bool = false
     var debugHeartlineResolve: Bool = false
     var viewCenterlineOnly: Bool = false
+    var clipCountersToInk: Bool = false
     var probeCount: Int = 5
     var arcSamples: Int = 256
     var normalizeWidth: Bool = false
@@ -168,6 +169,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             index += 1
         } else if arg == "--debug-heartline-resolve" {
             options.debugHeartlineResolve = true
+        } else if arg == "--clip-counters-to-ink" {
+            options.clipCountersToInk = true
         } else if arg == "--debug-dump-cap-segments-top", index + 1 < args.count {
             options.debugDumpCapSegmentsTop = max(1, Int(args[index + 1]) ?? options.debugDumpCapSegmentsTop)
             index += 1
@@ -338,6 +341,7 @@ Debug flags:
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index
   --debug-dump-rail-corners-index K  Rail corner index (default: 0)
   --debug-heartline-resolve  Dump ink keys and heartline resolution summary
+  --clip-counters-to-ink  Clip counter preview to ink shape (SVG-only)
   --debug-keyframes  Render keyframe markers overlay
   --keyframes-labels  Label keyframe markers with t values
   --debug-params-plot  Render parameter plot overlay
