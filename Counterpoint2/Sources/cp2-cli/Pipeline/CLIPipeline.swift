@@ -38,6 +38,24 @@ private func dumpSoupNode(
     }
 }
 
+private func emitSoupNeighborhood(_ report: SoupNeighborhoodReport, label: String) {
+    print(String(format: "soupNeighborhood label=%@ center=(%.6f,%.6f) r=%.6f nodes=%d collisions=%d", label, report.center.x, report.center.y, report.radius, report.nodes.count, report.collisions.count))
+    for node in report.nodes {
+        print(String(format: "  node key=(%d,%d) pos=(%.6f,%.6f) degree=%d", node.key.x, node.key.y, node.pos.x, node.pos.y, node.degree))
+        for edge in node.edges {
+            let segIndexText = edge.segmentIndex.map(String.init) ?? "none"
+            print(String(format: "    out -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f dir=(%.6f,%.6f) src=%@ segIndex=%@", edge.toKey.x, edge.toKey.y, edge.toPos.x, edge.toPos.y, edge.len, edge.dir.x, edge.dir.y, edge.source.description, segIndexText))
+        }
+    }
+    if !report.collisions.isEmpty {
+        print(String(format: "soupNeighborhood collisions=%d", report.collisions.count))
+        for collision in report.collisions {
+            let positions = collision.positions.map { String(format: "(%.6f,%.6f)", $0.x, $0.y) }.joined(separator: ", ")
+            print(String(format: "  collision key=(%d,%d) positions=[%@]", collision.key.x, collision.key.y, positions))
+        }
+    }
+}
+
 private func formatDegreeHistogram(_ histogram: [Int: Int]) -> String {
     let deg0 = histogram[0, default: 0]
     let deg1 = histogram[1, default: 0]
@@ -460,7 +478,8 @@ public func renderSVGString(
         }
 
         // 4. Run Sweep
-        let result = runSweep(path: path, plan: plan, options: options)
+        let capNamespace = stroke.id ?? stroke.inkName ?? "stroke-\(index)"
+        let result = runSweep(path: path, plan: plan, options: options, capNamespace: capNamespace)
         strokeOutputs.append((stroke: stroke, pathParam: pathParam, plan: plan, result: result, joinGTs: joinGTs))
         if let glyphBounds = result.glyphBounds {
             combinedGlyphBounds = combinedGlyphBounds?.union(glyphBounds) ?? glyphBounds
@@ -627,6 +646,20 @@ public func renderSVGString(
                 } else {
                     print(String(format: "traceJumpStep ring=%d k=%d len=%.6f candidates=0 (no step info)", jump.ringIndex, jump.maxSegIndex, jump.length))
                 }
+                let pReport = computeSoupNeighborhood(
+                    segments: result.segmentsUsed,
+                    eps: 1.0e-6,
+                    center: jump.a,
+                    radius: 5.0
+                )
+                emitSoupNeighborhood(pReport, label: "jumpP")
+                let qReport = computeSoupNeighborhood(
+                    segments: result.segmentsUsed,
+                    eps: 1.0e-6,
+                    center: jump.b,
+                    radius: 5.0
+                )
+                emitSoupNeighborhood(qReport, label: "jumpQ")
             }
         }
         if options.debugDumpCapSegments {

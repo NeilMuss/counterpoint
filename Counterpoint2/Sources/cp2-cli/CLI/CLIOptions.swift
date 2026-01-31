@@ -26,6 +26,8 @@ public struct CLIOptions {
     var debugCounters: Bool = false
     var debugTraceJumpStep: Bool = false
     var debugSoupPreRepair: Bool = false
+    var debugSoupNeighborhoodCenter: Vec2? = nil
+    var debugSoupNeighborhoodRadius: Double = 5.0
     var debugDumpCapSegments: Bool = false
     var debugDumpCapSegmentsTop: Int = 10
     var debugDumpCapEndpoints: Bool = false
@@ -135,6 +137,14 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugTraceJumpStep = true
         } else if arg == "--debug-soup-pre-repair" {
             options.debugSoupPreRepair = true
+        } else if arg == "--debug-soup-neighborhood", index + 3 < args.count {
+            if let x = Double(args[index + 1]),
+               let y = Double(args[index + 2]),
+               let r = Double(args[index + 3]) {
+                options.debugSoupNeighborhoodCenter = Vec2(x, y)
+                options.debugSoupNeighborhoodRadius = r
+                index += 3
+            }
         } else if arg == "--debug-dump-cap-segments" {
             options.debugDumpCapSegments = true
         } else if arg == "--debug-dump-cap-endpoints" {
@@ -326,6 +336,7 @@ Debug flags:
   --debug-ring-jump  Highlight longest ring segment (teleport diagnostic)
   --debug-trace-jump-step  Dump trace decision for max jump segment
   --debug-soup-pre-repair  Dump soup degree stats before any repair
+  --debug-soup-neighborhood x y r  Dump soup nodes within radius r of (x,y)
   --debug-dump-cap-segments  Dump cap segments (matches jump if present)
   --debug-dump-cap-endpoints  Dump cap endpoint selection (intended vs emitted)
   --debug-dump-cap-segments-top N  Limit cap segment dump (default: 10)

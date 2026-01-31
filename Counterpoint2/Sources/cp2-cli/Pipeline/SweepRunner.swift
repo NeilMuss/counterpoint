@@ -15,10 +15,29 @@ struct SweepResult {
     var railCornerDebug: RailCornerDebug?
 }
 
+private func emitSoupNeighborhood(_ report: SoupNeighborhoodReport, label: String) {
+    print(String(format: "soupNeighborhood label=%@ center=(%.6f,%.6f) r=%.6f nodes=%d collisions=%d", label, report.center.x, report.center.y, report.radius, report.nodes.count, report.collisions.count))
+    for node in report.nodes {
+        print(String(format: "  node key=(%d,%d) pos=(%.6f,%.6f) degree=%d", node.key.x, node.key.y, node.pos.x, node.pos.y, node.degree))
+        for edge in node.edges {
+            let segIndexText = edge.segmentIndex.map(String.init) ?? "none"
+            print(String(format: "    out -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f dir=(%.6f,%.6f) src=%@ segIndex=%@", edge.toKey.x, edge.toKey.y, edge.toPos.x, edge.toPos.y, edge.len, edge.dir.x, edge.dir.y, edge.source.description, segIndexText))
+        }
+    }
+    if !report.collisions.isEmpty {
+        print(String(format: "soupNeighborhood collisions=%d", report.collisions.count))
+        for collision in report.collisions {
+            let positions = collision.positions.map { String(format: "(%.6f,%.6f)", $0.x, $0.y) }.joined(separator: ", ")
+            print(String(format: "  collision key=(%d,%d) positions=[%@]", collision.key.x, collision.key.y, positions))
+        }
+    }
+}
+
 func runSweep(
     path: SkeletonPath,
     plan: SweepPlan,
-    options: CLIOptions
+    options: CLIOptions,
+    capNamespace: String
 ) -> SweepResult {
     var capturedSampling: SamplingResult? = nil
     var traceSteps: [TraceStepInfo] = []
@@ -55,7 +74,9 @@ func runSweep(
                 debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
                 debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
                 debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
-                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil
+                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil,
+                capNamespace: capNamespace,
+                capLocalIndex: 0
             )
         } else {
             return boundarySoup(
@@ -75,10 +96,22 @@ func runSweep(
                 debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
                 debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
                 debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
-                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil
+                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil,
+                capNamespace: capNamespace,
+                capLocalIndex: 0
             )
         }
     }()
+
+    if let center = options.debugSoupNeighborhoodCenter {
+        let report = computeSoupNeighborhood(
+            segments: segmentsUsed,
+            eps: 1.0e-6,
+            center: center,
+            radius: options.debugSoupNeighborhoodRadius
+        )
+        emitSoupNeighborhood(report, label: "manual")
+    }
 
     let rings = traceLoops(
         segments: segmentsUsed,

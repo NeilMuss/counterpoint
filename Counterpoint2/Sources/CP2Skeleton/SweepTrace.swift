@@ -359,7 +359,10 @@ public struct SweepStyle: Equatable, Codable {
 public func buildCaps(
     leftRail: [Vec2],
     rightRail: [Vec2],
-    capIndexBase: Int = 0
+    capNamespace: String = "stroke",
+    capLocalIndex: Int = 0,
+    widthStart: Double,
+    widthEnd: Double
 ) -> [Segment2] {
     guard let leftStart = leftRail.first, let leftEnd = leftRail.last else {
         return []
@@ -369,17 +372,38 @@ public func buildCaps(
     }
 
     let startDistance = (leftStart - rightStart).length
+    let endDistance = (leftEnd - rightEnd).length
     let startAltDistance = (leftStart - rightEnd).length
-    let useReversedRight = startAltDistance + Epsilon.defaultValue < startDistance
+    let endAltDistance = (leftEnd - rightStart).length
+    let sumDirect = startDistance + endDistance
+    let sumSwap = startAltDistance + endAltDistance
+    let useReversedRight = sumSwap + Epsilon.defaultValue < sumDirect
 
     let rightForStart = useReversedRight ? rightEnd : rightStart
     let rightForEnd = useReversedRight ? rightStart : rightEnd
 
-    let detail = "capIndex=\(capIndexBase)"
-    return [
-        Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: detail)),
-        Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: detail))
-    ]
+    func shouldEmitCapJoin(kind: String, left: Vec2, right: Vec2, widthScale: Double) -> Bool {
+        let len = (left - right).length
+        let limit = widthScale * 3.0
+        if len <= limit { return true }
+        let detail = "stroke=\(capNamespace) cap=\(kind) idx=\(capLocalIndex)"
+        print(String(format: "capJoinInvariant FAIL %@ len=%.6f width=%.6f limit=%.6f L=(%.6f,%.6f) R=(%.6f,%.6f) reversedRight=%@", detail, len, widthScale, limit, left.x, left.y, right.x, right.y, useReversedRight.description))
+        #if DEBUG
+        assertionFailure("capJoinInvariant violated: \(detail)")
+        #endif
+        return false
+    }
+
+    var caps: [Segment2] = []
+    let startDetail = "stroke=\(capNamespace) cap=start idx=\(capLocalIndex)"
+    let endDetail = "stroke=\(capNamespace) cap=end idx=\(capLocalIndex)"
+    if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
+        caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
+    }
+    if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
+        caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
+    }
+    return caps
 }
 
 /// General boundary soup generator that supports:
@@ -404,7 +428,9 @@ public func boundarySoupGeneral(
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
-    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    capNamespace: String = "stroke",
+    capLocalIndex: Int = 0
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -565,7 +591,21 @@ public func boundarySoupGeneral(
     for i in stride(from: count - 1, to: 0, by: -1) {
         segments.append(Segment2(right[i], right[i - 1], source: .railRight))
     }
-    let caps = buildCaps(leftRail: left, rightRail: right, capIndexBase: 0)
+    func widthScale(_ style: SweepStyle) -> Double {
+        let sum = style.widthLeft + style.widthRight
+        let maxSide = max(style.widthLeft, style.widthRight)
+        return max(sum, 2.0 * maxSide)
+    }
+    let startStyle = styleAtGT(warpGT(0.0))
+    let endStyle = styleAtGT(warpGT(1.0))
+    let caps = buildCaps(
+        leftRail: left,
+        rightRail: right,
+        capNamespace: capNamespace,
+        capLocalIndex: capLocalIndex,
+        widthStart: widthScale(startStyle),
+        widthEnd: widthScale(endStyle)
+    )
     segments.append(contentsOf: caps)
     if let debugCapEndpoints, let capInfo = computeCapEndpointsDebug(
         leftRail: left,
@@ -597,7 +637,9 @@ public func boundarySoup(
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
-    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    capNamespace: String = "stroke",
+    capLocalIndex: Int = 0
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -625,7 +667,9 @@ public func boundarySoup(
         debugRailSummary: debugRailSummary,
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
-        debugRailCorner: debugRailCorner
+        debugRailCorner: debugRailCorner,
+        capNamespace: capNamespace,
+        capLocalIndex: capLocalIndex
     )
 }
 
@@ -647,7 +691,9 @@ public func boundarySoupVariableWidth(
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
-    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    capNamespace: String = "stroke",
+    capLocalIndex: Int = 0
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -676,7 +722,9 @@ public func boundarySoupVariableWidth(
         debugRailSummary: debugRailSummary,
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
-        debugRailCorner: debugRailCorner
+        debugRailCorner: debugRailCorner,
+        capNamespace: capNamespace,
+        capLocalIndex: capLocalIndex
     )
 }
 
@@ -699,7 +747,9 @@ public func boundarySoupVariableWidthAngle(
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
-    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    capNamespace: String = "stroke",
+    capLocalIndex: Int = 0
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -729,7 +779,9 @@ public func boundarySoupVariableWidthAngle(
         debugRailSummary: debugRailSummary,
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
-        debugRailCorner: debugRailCorner
+        debugRailCorner: debugRailCorner,
+        capNamespace: capNamespace,
+        capLocalIndex: capLocalIndex
     )
 }
 
@@ -757,7 +809,9 @@ public func boundarySoupVariableWidthAngleAlpha(
     debugRailSummary: ((RailDebugSummary) -> Void)? = nil,
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
-    debugRailCorner: ((RailCornerDebug) -> Void)? = nil
+    debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    capNamespace: String = "stroke",
+    capLocalIndex: Int = 0
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -789,7 +843,9 @@ public func boundarySoupVariableWidthAngleAlpha(
         debugRailSummary: debugRailSummary,
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
-        debugRailCorner: debugRailCorner
+        debugRailCorner: debugRailCorner,
+        capNamespace: capNamespace,
+        capLocalIndex: capLocalIndex
     )
 }
 
@@ -1029,7 +1085,7 @@ public func traceLoops(
     guard !segments.isEmpty else { return [] }
 
     let graph = buildSoupGraph(segments: segments, eps: eps)
-    var adjacency = graph.adjacency
+    let adjacency = graph.adjacency
     var edges = graph.edges
     let pointForKey = graph.pointForKey
     let edgeSources = graph.edgeSources
@@ -1118,6 +1174,62 @@ public struct SoupNeighborEdge: Equatable {
         self.toPos = toPos
         self.len = len
         self.source = source
+    }
+}
+
+public struct SoupNeighborhoodEdge: Equatable, Sendable {
+    public let toKey: SnapKey
+    public let toPos: Vec2
+    public let len: Double
+    public let dir: Vec2
+    public let source: EdgeSource
+    public let segmentIndex: Int?
+
+    public init(toKey: SnapKey, toPos: Vec2, len: Double, dir: Vec2, source: EdgeSource, segmentIndex: Int?) {
+        self.toKey = toKey
+        self.toPos = toPos
+        self.len = len
+        self.dir = dir
+        self.source = source
+        self.segmentIndex = segmentIndex
+    }
+}
+
+public struct SoupNeighborhoodNode: Equatable, Sendable {
+    public let key: SnapKey
+    public let pos: Vec2
+    public let degree: Int
+    public let edges: [SoupNeighborhoodEdge]
+
+    public init(key: SnapKey, pos: Vec2, degree: Int, edges: [SoupNeighborhoodEdge]) {
+        self.key = key
+        self.pos = pos
+        self.degree = degree
+        self.edges = edges
+    }
+}
+
+public struct SoupKeyCollision: Equatable, Sendable {
+    public let key: SnapKey
+    public let positions: [Vec2]
+
+    public init(key: SnapKey, positions: [Vec2]) {
+        self.key = key
+        self.positions = positions
+    }
+}
+
+public struct SoupNeighborhoodReport: Equatable, Sendable {
+    public let center: Vec2
+    public let radius: Double
+    public let nodes: [SoupNeighborhoodNode]
+    public let collisions: [SoupKeyCollision]
+
+    public init(center: Vec2, radius: Double, nodes: [SoupNeighborhoodNode], collisions: [SoupKeyCollision]) {
+        self.center = center
+        self.radius = radius
+        self.nodes = nodes
+        self.collisions = collisions
     }
 }
 
@@ -1468,6 +1580,93 @@ public func computeSoupDegreeStats(
         edgeCount: graph.edges.count,
         degreeHistogram: histogram,
         anomalies: anomalies
+    )
+}
+
+public func computeSoupNeighborhood(
+    segments: [Segment2],
+    eps: Double,
+    center: Vec2,
+    radius: Double
+) -> SoupNeighborhoodReport {
+    var pointForKey: [SnapKey: Vec2] = [:]
+    var adjacency: [SnapKey: [SnapKey]] = [:]
+    var edgeSources: [EdgeKey: EdgeSource] = [:]
+    var keyPositions: [SnapKey: [Vec2]] = [:]
+
+    func addPosition(_ key: SnapKey, _ pos: Vec2) {
+        var list = keyPositions[key] ?? []
+        let exists = list.contains(where: { Epsilon.approxEqual($0, pos, eps: eps) })
+        if !exists {
+            list.append(pos)
+        }
+        keyPositions[key] = list
+    }
+
+    for seg in segments {
+        let aKey = Epsilon.snapKey(seg.a, eps: eps)
+        let bKey = Epsilon.snapKey(seg.b, eps: eps)
+        pointForKey[aKey] = pointForKey[aKey] ?? seg.a
+        pointForKey[bKey] = pointForKey[bKey] ?? seg.b
+        addPosition(aKey, seg.a)
+        addPosition(bKey, seg.b)
+        adjacency[aKey, default: []].append(bKey)
+        adjacency[bKey, default: []].append(aKey)
+        let edge = EdgeKey(aKey, bKey)
+        if let existing = edgeSources[edge] {
+            edgeSources[edge] = mergeEdgeSource(existing: existing, new: seg.source)
+        } else {
+            edgeSources[edge] = seg.source
+        }
+    }
+
+    for (key, list) in adjacency {
+        let sorted = list.sorted(by: snapKeyLess)
+        var unique: [SnapKey] = []
+        unique.reserveCapacity(sorted.count)
+        var last: SnapKey? = nil
+        for item in sorted {
+            if let last, last == item { continue }
+            unique.append(item)
+            last = item
+        }
+        adjacency[key] = unique
+    }
+
+    let collisions = keyPositions.compactMap { key, positions -> SoupKeyCollision? in
+        guard positions.count > 1 else { return nil }
+        return SoupKeyCollision(key: key, positions: positions)
+    }.sorted { snapKeyLess($0.key, $1.key) }
+
+    var nodes: [SoupNeighborhoodNode] = []
+    for (key, pos) in pointForKey {
+        if (pos - center).length > radius { continue }
+        let neighbors = adjacency[key] ?? []
+        let degree = neighbors.count
+        let edges = neighbors.sorted(by: snapKeyLess).map { neighbor -> SoupNeighborhoodEdge in
+            let toPos = pointForKey[neighbor] ?? Vec2(0, 0)
+            let delta = toPos - pos
+            let len = delta.length
+            let dir = len > Epsilon.defaultValue ? delta * (1.0 / len) : Vec2(0, 0)
+            let source = edgeSources[EdgeKey(key, neighbor)] ?? .unknown("missing")
+            return SoupNeighborhoodEdge(
+                toKey: neighbor,
+                toPos: toPos,
+                len: len,
+                dir: dir,
+                source: source,
+                segmentIndex: nil
+            )
+        }
+        nodes.append(SoupNeighborhoodNode(key: key, pos: pos, degree: degree, edges: edges))
+    }
+    nodes.sort { snapKeyLess($0.key, $1.key) }
+
+    return SoupNeighborhoodReport(
+        center: center,
+        radius: radius,
+        nodes: nodes,
+        collisions: collisions
     )
 }
 
