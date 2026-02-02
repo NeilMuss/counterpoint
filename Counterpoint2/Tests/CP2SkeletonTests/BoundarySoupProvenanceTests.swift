@@ -123,8 +123,23 @@ final class BoundarySoupProvenanceTests: XCTestCase {
         let left = [Vec2(0, 1), Vec2(10, 1)]
         let right = [Vec2(0, -1), Vec2(10, -1)]
 
-        let caps = buildCaps(leftRail: left, rightRail: right, capIndexBase: 0)
-        let join = caps.first { $0.source == .capStartEdge(role: .joinLR, detail: "capIndex=0") }
+        let result = buildCaps(
+            leftRail: left,
+            rightRail: right,
+            capNamespace: "capIndex",
+            capLocalIndex: 0,
+            widthStart: 2.0,
+            widthEnd: 2.0,
+            startCap: .butt,
+            endCap: .butt,
+            capFilletArcSegments: 8,
+            debugFillet: nil,
+            debugCapBoundary: nil
+        )
+        let join = result.segments.first {
+            if case .capStartEdge(let role, _) = $0.source { return role == .joinLR }
+            return false
+        }
 
         XCTAssertNotNil(join)
         let endpoints = [join!.a, join!.b]
@@ -137,8 +152,23 @@ final class BoundarySoupProvenanceTests: XCTestCase {
         let left = [Vec2(0, 1), Vec2(10, 1)]
         let right = [Vec2(0, -1), Vec2(10, -1)]
 
-        let caps = buildCaps(leftRail: left, rightRail: right, capIndexBase: 0)
-        let join = caps.first { $0.source == .capEndEdge(role: .joinLR, detail: "capIndex=0") }
+        let result = buildCaps(
+            leftRail: left,
+            rightRail: right,
+            capNamespace: "capIndex",
+            capLocalIndex: 0,
+            widthStart: 2.0,
+            widthEnd: 2.0,
+            startCap: .butt,
+            endCap: .butt,
+            capFilletArcSegments: 8,
+            debugFillet: nil,
+            debugCapBoundary: nil
+        )
+        let join = result.segments.first {
+            if case .capEndEdge(let role, _) = $0.source { return role == .joinLR }
+            return false
+        }
 
         XCTAssertNotNil(join)
         let endpoints = [join!.a, join!.b]
@@ -152,9 +182,27 @@ final class BoundarySoupProvenanceTests: XCTestCase {
         let right = [Vec2(0, -1), Vec2(10, -1)]
         let rightReversed = right.reversed()
 
-        let caps = buildCaps(leftRail: left, rightRail: Array(rightReversed), capIndexBase: 0)
-        let startJoin = caps.first { $0.source == .capStartEdge(role: .joinLR, detail: "capIndex=0") }
-        let endJoin = caps.first { $0.source == .capEndEdge(role: .joinLR, detail: "capIndex=0") }
+        let result = buildCaps(
+            leftRail: left,
+            rightRail: Array(rightReversed),
+            capNamespace: "capIndex",
+            capLocalIndex: 0,
+            widthStart: 2.0,
+            widthEnd: 2.0,
+            startCap: .butt,
+            endCap: .butt,
+            capFilletArcSegments: 8,
+            debugFillet: nil,
+            debugCapBoundary: nil
+        )
+        let startJoin = result.segments.first {
+            if case .capStartEdge(let role, _) = $0.source { return role == .joinLR }
+            return false
+        }
+        let endJoin = result.segments.first {
+            if case .capEndEdge(let role, _) = $0.source { return role == .joinLR }
+            return false
+        }
 
         XCTAssertNotNil(startJoin)
         XCTAssertNotNil(endJoin)

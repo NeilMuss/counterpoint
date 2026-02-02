@@ -35,11 +35,14 @@ public struct CLIOptions {
     var debugDumpRailEndpointsPrefix: Int = 5
     var debugDumpRailFrames: Bool = false
     var debugDumpRailFramesPrefix: Int = 6
+    var debugCapBoundary: Bool = false
     var debugRailInvariants: Bool = false
     var debugRailInvariantsOnlyFails: Bool = false
     var debugRailWidthEps: Double = 1.0e-3
     var debugRailPerpEps: Double = 1.0e-3
     var debugRailUnitEps: Double = 1.0e-3
+    var capFilletArcSegments: Int = 8
+    var capFilletFixtureOverlays: Bool = false
     var debugDumpRailCorners: Bool = false
     var debugDumpRailCornersIndex: Int = 0
     var debugCompare: Bool = false
@@ -159,6 +162,8 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--debug-dump-rail-frames-prefix", index + 1 < args.count {
             options.debugDumpRailFramesPrefix = max(1, Int(args[index + 1]) ?? options.debugDumpRailFramesPrefix)
             index += 1
+        } else if arg == "--debug-cap-boundary" {
+            options.debugCapBoundary = true
         } else if arg == "--debug-rail-invariants" {
             options.debugRailInvariants = true
         } else if arg == "--debug-rail-invariants-only-fails" {
@@ -172,6 +177,20 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--debug-rail-unit-eps", index + 1 < args.count {
             options.debugRailUnitEps = Double(args[index + 1]) ?? options.debugRailUnitEps
             index += 1
+        } else if arg == "--cap-fillet-arc-segments", index + 1 < args.count {
+            if let value = Int(args[index + 1]) {
+                options.capFilletArcSegments = max(2, value)
+                index += 1
+            }
+        } else if arg == "--cap-fillet-fixture-overlays", index + 1 < args.count {
+            let value = args[index + 1].lowercased()
+            if value == "on" {
+                options.capFilletFixtureOverlays = true
+                index += 1
+            } else if value == "off" {
+                options.capFilletFixtureOverlays = false
+                index += 1
+            }
         } else if arg == "--debug-dump-rail-corners" {
             options.debugDumpRailCorners = true
         } else if arg == "--debug-dump-rail-corners-index", index + 1 < args.count {
@@ -344,11 +363,14 @@ Debug flags:
   --debug-dump-rail-endpoints-prefix N  Rail prefix count (default: 5)
   --debug-dump-rail-frames  Dump rail frames (center/tangent/normal/width)
   --debug-dump-rail-frames-prefix N  Rail frame prefix count (default: 6)
+  --debug-cap-boundary  Dump cap boundary chain + chosen corners
   --debug-rail-invariants  Print rail invariant checks
   --debug-rail-invariants-only-fails  Only print invariant failures
   --debug-rail-width-eps N  Width error epsilon (default: 1e-3)
   --debug-rail-perp-eps N   Perp dot epsilon (default: 1e-3)
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
+  --cap-fillet-arc-segments N  Fillet arc segments (default: 8)
+  --cap-fillet-fixture-overlays {off|on}  Cap fillet fixture-only overlays (default: off)
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index
   --debug-dump-rail-corners-index K  Rail corner index (default: 0)
   --debug-heartline-resolve  Dump ink keys and heartline resolution summary

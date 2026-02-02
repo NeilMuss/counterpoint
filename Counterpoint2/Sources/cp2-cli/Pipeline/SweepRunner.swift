@@ -11,6 +11,7 @@ struct SweepResult {
     var traceSteps: [TraceStepInfo]
     var capEndpointsDebug: CapEndpointsDebug?
     var capFillets: [CapFilletDebug]
+    var capBoundaryDebugs: [CapBoundaryDebug]
     var railDebugSummary: RailDebugSummary?
     var railFrames: [RailSampleFrame]?
     var railCornerDebug: RailCornerDebug?
@@ -46,6 +47,7 @@ func runSweep(
     var traceSteps: [TraceStepInfo] = []
     var capEndpointsDebug: CapEndpointsDebug? = nil
     var capFillets: [CapFilletDebug] = []
+    var capBoundaryDebugs: [CapBoundaryDebug] = []
     var railDebugSummary: RailDebugSummary? = nil
     var railFrames: [RailSampleFrame]? = nil
     var railCornerDebug: RailCornerDebug? = nil
@@ -91,10 +93,12 @@ func runSweep(
                         }
                     }
                 },
+                debugCapBoundary: options.debugCapBoundary ? { capBoundaryDebugs.append($0) } : nil,
                 capNamespace: capNamespace,
                 capLocalIndex: 0,
                 startCap: startCap,
-                endCap: endCap
+                endCap: endCap,
+                capFilletArcSegments: options.capFilletArcSegments
             )
         } else {
             return boundarySoup(
@@ -127,13 +131,93 @@ func runSweep(
                         }
                     }
                 },
+                debugCapBoundary: options.debugCapBoundary ? { capBoundaryDebugs.append($0) } : nil,
                 capNamespace: capNamespace,
                 capLocalIndex: 0,
                 startCap: startCap,
-                endCap: endCap
+                endCap: endCap,
+                capFilletArcSegments: options.capFilletArcSegments
             )
         }
     }()
+
+    if capNamespace == "fillet", case .fillet = endCap {
+        let endLeft = capFillets.first { $0.kind == "end" && $0.side == "left" && $0.success }
+        let endRight = capFillets.first { $0.kind == "end" && $0.side == "right" && $0.success }
+        if let left = endLeft, let right = endRight {
+            let midA = right.p
+            let midB = left.q
+            let midAText = String(format: "(%.3f,%.3f)", midA.x, midA.y)
+            let midBText = String(format: "(%.3f,%.3f)", midB.x, midB.y)
+            var midMatches: [Segment2] = []
+            for seg in segmentsUsed {
+                let direct = Epsilon.approxEqual(seg.a, midA) && Epsilon.approxEqual(seg.b, midB)
+                let reverse = Epsilon.approxEqual(seg.a, midB) && Epsilon.approxEqual(seg.b, midA)
+                if direct || reverse {
+                    midMatches.append(seg)
+                }
+            }
+            print("capFilletMidSegmentFound count=\(midMatches.count) midA=\(midAText) midB=\(midBText)")
+            for seg in midMatches {
+                let len = (seg.a - seg.b).length
+                print(String(format: "  mid len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+            }
+            let bypassA = left.corner
+            let bypassB = right.corner
+            let bypassAText = String(format: "(%.3f,%.3f)", bypassA.x, bypassA.y)
+            let bypassBText = String(format: "(%.3f,%.3f)", bypassB.x, bypassB.y)
+            var bypassMatches: [Segment2] = []
+            for seg in segmentsUsed {
+                let direct = Epsilon.approxEqual(seg.a, bypassA) && Epsilon.approxEqual(seg.b, bypassB)
+                let reverse = Epsilon.approxEqual(seg.a, bypassB) && Epsilon.approxEqual(seg.b, bypassA)
+                if direct || reverse {
+                    bypassMatches.append(seg)
+                }
+            }
+            print("capFilletBypassEdgesFound count=\(bypassMatches.count) cornerA=\(bypassAText) cornerB=\(bypassBText)")
+            for seg in bypassMatches {
+                let len = (seg.a - seg.b).length
+                print(String(format: "  bypass len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+            }
+            let arcSteps = max(8, options.capFilletArcSegments)
+            var arcInterior: [Vec2] = []
+            if let bridge = left.bridge {
+                let count = max(2, arcSteps + 1)
+                let points = (0..<count).map { i -> Vec2 in
+                    let t = Double(i) / Double(count - 1)
+                    return bridge.evaluate(t)
+                }
+                arcInterior.append(contentsOf: points.dropFirst().dropLast())
+            }
+            if let bridge = right.bridge {
+                let count = max(2, arcSteps + 1)
+                let points = (0..<count).map { i -> Vec2 in
+                    let t = Double(i) / Double(count - 1)
+                    return bridge.evaluate(t)
+                }
+                arcInterior.append(contentsOf: points.dropFirst().dropLast())
+            }
+            if !arcInterior.isEmpty {
+                let ok = soupConnectivity(segments: segmentsUsed, eps: 1.0e-6, from: midA, targets: arcInterior)
+                print("capFilletConnectivity ok=\(ok)")
+            }
+            let eps = 1.0e-6
+            let epsText = String(format: "%.1e", eps)
+            var touchingX: [Segment2] = []
+            for seg in segmentsUsed {
+                let aNear = abs(seg.a.x - 200.0) <= eps
+                let bNear = abs(seg.b.x - 200.0) <= eps
+                if aNear || bNear {
+                    touchingX.append(seg)
+                }
+            }
+            print("capFilletXTouch count=\(touchingX.count) x=200 eps=\(epsText)")
+            for seg in touchingX {
+                let len = (seg.a - seg.b).length
+                print(String(format: "  xTouch len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+            }
+        }
+    }
 
     if let center = options.debugSoupNeighborhoodCenter {
         let report = computeSoupNeighborhood(
@@ -162,6 +246,7 @@ func runSweep(
         traceSteps: traceSteps,
         capEndpointsDebug: capEndpointsDebug,
         capFillets: capFillets,
+        capBoundaryDebugs: capBoundaryDebugs,
         railDebugSummary: railDebugSummary,
         railFrames: railFrames,
         railCornerDebug: railCornerDebug

@@ -583,6 +583,7 @@ public func renderSVGString(
     let soloMaxDots = 200
     let soloLabelDots = 12
     var overlays: [DebugOverlay] = []
+    var capFilletOverlay: DebugOverlay? = nil
     let centerlineInkSegments: [InkSegment]? = {
         guard options.viewCenterlineOnly, let inkPrimitive else { return nil }
         switch inkPrimitive {
@@ -595,7 +596,7 @@ public func renderSVGString(
     if options.viewCenterlineOnly {
         overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan, inkSegments: centerlineInkSegments))
         if !primaryOutput.result.capFillets.isEmpty {
-            overlays.append(debugOverlayForCapFillets(primaryOutput.result.capFillets, steps: 32))
+            capFilletOverlay = debugOverlayForCapFillets(primaryOutput.result.capFillets, steps: 32)
         }
     } else if !soloWhy && (options.debugSVG || options.debugCenterline || options.debugInkControls) {
         if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
@@ -605,7 +606,7 @@ public func renderSVGString(
             default: overlays.append(debugOverlayForInk(inkPrimitive, steps: 64))
             }
             if options.debugCenterline, !primaryOutput.result.capFillets.isEmpty {
-                overlays.append(debugOverlayForCapFillets(primaryOutput.result.capFillets, steps: 32))
+                capFilletOverlay = debugOverlayForCapFillets(primaryOutput.result.capFillets, steps: 32)
             }
         } else {
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
@@ -630,6 +631,63 @@ public func renderSVGString(
             overlays.append(debugOverlayForCounters(counters, steps: 64, warn: warnHandler))
         } else {
             overlays.append(DebugOverlay(svg: "<g id=\"debug-counters\"></g>", bounds: AABB.empty))
+        }
+    }
+    if let capFilletOverlay {
+        overlays.append(capFilletOverlay)
+    }
+    if options.debugCapBoundary {
+        let debugCaps = strokeOutputs.flatMap { $0.result.capBoundaryDebugs }
+        if !debugCaps.isEmpty {
+            overlays.append(debugOverlayForCapBoundary(debugCaps))
+        }
+    }
+    if spec?.example?.lowercased() == "cap_fillet_line", options.capFilletFixtureOverlays {
+        for (index, output) in strokeOutputs.enumerated() {
+            let label = output.stroke.id ?? "stroke-\(index)"
+            overlays.append(overlayForRailsAndHeartline(pathParam: output.pathParam, plan: output.plan, sampleCount: 64, label: label))
+            let fillets = output.result.capFillets.filter { $0.success }
+            if !fillets.isEmpty {
+                overlays.append(overlayForCapFilletArcPoints(fillets: fillets, label: label))
+            }
+        }
+        if let filletOutput = strokeOutputs.first(where: { ($0.stroke.id ?? "").lowercased() == "fillet" }) {
+            let endLeft = filletOutput.result.capFillets.first { $0.kind == "end" && $0.side == "left" && $0.success }
+            let endRight = filletOutput.result.capFillets.first { $0.kind == "end" && $0.side == "right" && $0.success }
+            if let left = endLeft, let right = endRight {
+                let endpoint = (left.corner + right.corner) * 0.5
+                let radius = max(left.radius, right.radius)
+                let window = radius * 2.0
+                var printedAny = false
+                for (ringIndex, ring) in filletOutput.result.rings.enumerated() {
+                    let near = ring.filter { ( $0 - endpoint).length <= window }
+                    if !near.isEmpty {
+                        let head = near.prefix(6).map { String(format: "(%.3f,%.3f)", $0.x, $0.y) }.joined(separator: ", ")
+                        print("capFilletRingNeighborhood ring=\(ringIndex) center=(\(String(format: "%.3f", endpoint.x)),\(String(format: "%.3f", endpoint.y))) r=\(String(format: "%.3f", window)) count=\(near.count) head=[\(head)]")
+                        printedAny = true
+                    }
+                }
+                if !printedAny {
+                    print("capFilletRingNeighborhood ring=none center=(\(String(format: "%.3f", endpoint.x)),\(String(format: "%.3f", endpoint.y))) r=\(String(format: "%.3f", window)) count=0")
+                }
+                let chordA = right.p
+                let chordB = left.q
+                let chordAText = String(format: "(%.3f,%.3f)", chordA.x, chordA.y)
+                let chordBText = String(format: "(%.3f,%.3f)", chordB.x, chordB.y)
+                let capEdges = filletOutput.result.segmentsUsed.filter { seg in
+                    if case .capEndEdge = seg.source { return true }
+                    return false
+                }
+                if !capEdges.isEmpty {
+                    print("capFilletEndcapEdges count=\(capEdges.count) chordA=\(chordAText) chordB=\(chordBText)")
+                    for (edgeIndex, seg) in capEdges.enumerated() {
+                        let len = (seg.a - seg.b).length
+                        print(String(format: "  edge[%d] len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", edgeIndex, len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+                    }
+                }
+            } else {
+                print("capFilletRingNeighborhood missing end fillets left=\(endLeft != nil) right=\(endRight != nil)")
+            }
         }
     }
     if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) && !options.viewCenterlineOnly {

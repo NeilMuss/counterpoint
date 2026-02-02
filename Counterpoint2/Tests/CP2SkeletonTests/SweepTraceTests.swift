@@ -947,13 +947,19 @@ private func leftRailPoints(segments: [Segment2], sampleCount: Int) -> [Vec2] {
 
 private func railPoints(segments: [Segment2], sampleCount: Int) -> (left: [Vec2], right: [Vec2]) {
     let count = max(2, sampleCount)
-    guard segments.count >= (count - 1) * 2 else {
+    let leftSegments = segments.filter {
+        if case .railLeft = $0.source { return true }
+        return false
+    }
+    let rightSegments = segments.filter {
+        if case .railRight = $0.source { return true }
+        return false
+    }
+    guard leftSegments.count >= (count - 1), rightSegments.count >= (count - 1) else {
         return ([], [])
     }
-    let leftSegments = Array(segments.prefix(count - 1))
-    let rightSegments = Array(segments.dropFirst(count - 1).prefix(count - 1))
-    let leftPoints = leftRailPoints(segments: leftSegments, sampleCount: count)
-    let rightPointsReversed = leftRailPoints(segments: rightSegments, sampleCount: count)
+    let leftPoints = leftRailPoints(segments: Array(leftSegments.prefix(count - 1)), sampleCount: count)
+    let rightPointsReversed = leftRailPoints(segments: Array(rightSegments.prefix(count - 1)), sampleCount: count)
     let rightPoints = rightPointsReversed.reversed()
     return (leftPoints, Array(rightPoints))
 }

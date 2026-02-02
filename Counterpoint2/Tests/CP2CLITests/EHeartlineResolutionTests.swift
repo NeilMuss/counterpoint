@@ -9,17 +9,17 @@ final class EHeartlineResolutionTests: XCTestCase {
             XCTFail("expected ink in spec")
             return
         }
-        XCTAssertNotNil(ink.entries["loop"])
-        XCTAssertNotNil(ink.entries["cross"])
-        XCTAssertNotNil(ink.entries["e_heartline"])
+        XCTAssertNotNil(ink.entries["upper_loop"])
+        XCTAssertNotNil(ink.entries["lower_loop"])
+        XCTAssertNotNil(ink.entries["e_bowl"])
 
-        guard case .heartline(let heartline)? = ink.entries["e_heartline"] else {
-            XCTFail("expected e_heartline to be a heartline")
+        guard case .heartline(let heartline)? = ink.entries["e_bowl"] else {
+            XCTFail("expected e_bowl to be a heartline")
             return
         }
 
         let resolved = try resolveHeartline(
-            name: "e_heartline",
+            name: "e_bowl",
             heartline: heartline,
             ink: ink,
             strict: true,
@@ -28,8 +28,8 @@ final class EHeartlineResolutionTests: XCTestCase {
         let segments = resolved.subpaths.flatMap { $0 }
         XCTAssertTrue(segments.contains { if case .cubic = $0 { return true } else { return false } })
 
-        let crossA = Vec2(80, 450)
-        let crossB = Vec2(320, 450)
+        let crossA = Vec2(75, 166)
+        let crossB = Vec2(375, 166)
         let eps = 1.0e-6
         for segment in segments {
             if case .line(let line) = segment {
@@ -48,21 +48,21 @@ final class EHeartlineResolutionTests: XCTestCase {
             XCTFail("expected ink in spec")
             return
         }
-        ink.entries["e_heartline"] = .heartline(Heartline(parts: ["missing_part"]))
-        guard case .heartline(let heartline)? = ink.entries["e_heartline"] else {
-            XCTFail("expected e_heartline to be a heartline")
+        ink.entries["e_bowl"] = .heartline(Heartline(parts: ["missing_part"]))
+        guard case .heartline(let heartline)? = ink.entries["e_bowl"] else {
+            XCTFail("expected e_bowl to be a heartline")
             return
         }
         XCTAssertThrowsError(
             try resolveHeartline(
-                name: "e_heartline",
+                name: "e_bowl",
                 heartline: heartline,
                 ink: ink,
                 strict: true,
                 warn: { _ in }
             )
         ) { error in
-            guard case InkContinuityError.missingPart(name: "e_heartline", part: "missing_part") = error else {
+            guard case InkContinuityError.missingPart(name: "e_bowl", part: "missing_part") = error else {
                 XCTFail("unexpected error: \(error)")
                 return
             }

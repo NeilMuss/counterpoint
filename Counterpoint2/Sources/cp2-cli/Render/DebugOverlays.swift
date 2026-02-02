@@ -275,6 +275,20 @@ func debugOverlayForCapFillets(_ fillets: [CapFilletDebug], steps: Int) -> Debug
             localParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
             bounds.expand(by: p)
         }
+        func addQuarterCircle(corner: Vec2, a: Vec2, c: Vec2, radius: Double, stroke: String, opacity: Double) {
+            let u = (corner - a).normalized()
+            let v = (c - corner).normalized()
+            if u.length <= 1.0e-6 || v.length <= 1.0e-6 {
+                return
+            }
+            let start = corner + u * radius
+            let end = corner + v * radius
+            let cross = u.x * v.y - u.y * v.x
+            let sweep = cross >= 0 ? 1 : 0
+            localParts.append(String(format: "<path d=\"M %.4f %.4f A %.2f %.2f 0 0 %d %.4f %.4f\" fill=\"none\" stroke=\"%@\" stroke-width=\"2.4\" opacity=\"%.2f\"/>", start.x, start.y, radius, radius, sweep, end.x, end.y, stroke, opacity))
+            bounds.expand(by: start)
+            bounds.expand(by: end)
+        }
         func addLocalPolyline(_ points: [Vec2], stroke: String, width: Double) {
             guard let first = points.first else { return }
             var parts: [String] = []
@@ -290,23 +304,29 @@ func debugOverlayForCapFillets(_ fillets: [CapFilletDebug], steps: Int) -> Debug
             }
         }
         addLocalPoint(fillet.corner, radius: 3.0, fill: "#ff1744")
+        let label = "FILLET MARKER \(fillet.kind) \(fillet.side.uppercased())"
         if fillet.success, let bridge = fillet.bridge {
             let samples = (0...steps).map { t -> Vec2 in
                 let u = Double(t) / Double(steps)
                 return bridge.evaluate(u)
             }
+            addQuarterCircle(corner: fillet.corner, a: fillet.a, c: fillet.c, radius: 10.0, stroke: "#2e7d32", opacity: 1.0)
             addLocalPolyline(samples, stroke: "#ff6f00", width: 1.6)
             addLocalPoint(fillet.p, radius: 3.0, fill: "#00c853")
             addLocalPoint(fillet.q, radius: 3.0, fill: "#00c853")
-            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#2e7d32\">fillet ok</text>", fillet.corner.x + 6.0, fillet.corner.y - 6.0))
+            localParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"#1565c0\" stroke-width=\"1.6\"/>", fillet.p.x, fillet.p.y, fillet.q.x, fillet.q.y))
+            let mid = Vec2((fillet.p.x + fillet.q.x) * 0.5, (fillet.p.y + fillet.q.y) * 0.5)
+            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#1565c0\">P→Q</text>", mid.x + 4.0, mid.y - 4.0))
+            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#2e7d32\">%@</text>", fillet.corner.x + 6.0, fillet.corner.y - 6.0, label))
         } else if let failure = fillet.failureReason {
+            addQuarterCircle(corner: fillet.corner, a: fillet.a, c: fillet.c, radius: 10.0, stroke: "#b0bec5", opacity: 0.6)
             let size: Double = 6.0
             let x0 = fillet.corner.x - size
             let y0 = fillet.corner.y - size
             let x1 = fillet.corner.x + size
             let y1 = fillet.corner.y + size
             localParts.append(String(format: "<path d=\"M %.4f %.4f L %.4f %.4f M %.4f %.4f L %.4f %.4f\" fill=\"none\" stroke=\"#d32f2f\" stroke-width=\"1.8\"/>", x0, y0, x1, y1, x0, y1, x1, y0))
-            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#d32f2f\">fillet fail: %@</text>", fillet.corner.x + 6.0, fillet.corner.y - 6.0, failure))
+            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#d32f2f\">%@ fail: %@</text>", fillet.corner.x + 6.0, fillet.corner.y - 6.0, label, failure))
         }
         svgParts.append("""
     <g id="\(groupId)">
@@ -316,6 +336,163 @@ func debugOverlayForCapFillets(_ fillets: [CapFilletDebug], steps: Int) -> Debug
     }
     let svg = """
   <g id="debug-cap-fillet">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForCapBoundary(_ boundaries: [CapBoundaryDebug]) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    func addPolyline(_ points: [Vec2], stroke: String, width: Double) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        let strokeWidth = String(format: "%.1f", width)
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
+        for point in points { bounds.expand(by: point) }
+    }
+    func addPoint(_ p: Vec2, radius: Double, fill: String) {
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+        bounds.expand(by: p)
+    }
+    for boundary in boundaries {
+        addPolyline(boundary.simplified, stroke: "#455a64", width: 1.0)
+        for (index, corner) in boundary.corners.enumerated() {
+            if boundary.chosenIndices.contains(corner.index) {
+                addPoint(corner.point, radius: 3.0, fill: "#d32f2f")
+                let label = String(format: "%@ i=%d θ=%.1f", boundary.endpoint, corner.index, corner.theta * 180.0 / Double.pi)
+                svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#d32f2f\">%@</text>", corner.point.x + 4.0, corner.point.y - 4.0, label))
+            } else if index == corner.index {
+                addPoint(corner.point, radius: 2.0, fill: "#78909c")
+            }
+        }
+        for point in boundary.trimPoints {
+            addPoint(point, radius: 2.4, fill: "#1e88e5")
+        }
+        for point in boundary.arcPoints {
+            addPoint(point, radius: 1.5, fill: "#43a047")
+        }
+    }
+    let svg = """
+  <g id="debug-cap-boundary">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func overlayForRailsAndHeartline(pathParam: SkeletonPathParameterization, plan: SweepPlan, sampleCount: Int, label: String) -> DebugOverlay {
+    let count = max(2, sampleCount)
+    let styleAtGT: (Double) -> SweepStyle = { t in
+        SweepStyle(
+            width: plan.scaledWidthAtT(t),
+            widthLeft: plan.scaledWidthLeftAtT(t),
+            widthRight: plan.scaledWidthRightAtT(t),
+            height: plan.sweepHeight,
+            angle: plan.thetaAtT(t),
+            offset: plan.offsetAtT(t),
+            angleIsRelative: plan.angleMode == .relative
+        )
+    }
+    var centerPts: [Vec2] = []
+    var leftPts: [Vec2] = []
+    var rightPts: [Vec2] = []
+    centerPts.reserveCapacity(count)
+    leftPts.reserveCapacity(count)
+    rightPts.reserveCapacity(count)
+    var bounds = AABB.empty
+    for i in 0..<count {
+        let t = Double(i) / Double(count - 1)
+        let frame = railSampleFrameAtGlobalT(
+            param: pathParam,
+            warpGT: plan.warpT,
+            styleAtGT: styleAtGT,
+            gt: t,
+            index: i
+        )
+        centerPts.append(frame.center)
+        leftPts.append(frame.left)
+        rightPts.append(frame.right)
+        bounds.expand(by: frame.center)
+        bounds.expand(by: frame.left)
+        bounds.expand(by: frame.right)
+    }
+    func pathData(_ points: [Vec2]) -> String {
+        guard let first = points.first else { return "" }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for p in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", p.x, p.y))
+        }
+        return parts.joined(separator: " ")
+    }
+    let centerPath = pathData(centerPts)
+    let leftPath = pathData(leftPts)
+    let rightPath = pathData(rightPts)
+    let labelText = label == "butt" ? "BUTT" : (label == "fillet" ? "FILLET" : label.uppercased())
+    let labelPos = centerPts.first ?? Vec2(0, 0)
+    let svg = """
+  <g id="cap-fillet-line-aids-\(label)">
+    <path d="\(centerPath)" fill="none" stroke="#111111" stroke-width="0.8" />
+    <path d="\(leftPath)" fill="none" stroke="#d32f2f" stroke-width="0.6" />
+    <path d="\(rightPath)" fill="none" stroke="#1976d2" stroke-width="0.6" />
+    <text x="\(String(format: "%.4f", labelPos.x - 40.0))" y="\(String(format: "%.4f", labelPos.y - 10.0))" font-size="10" fill="#000000">\(labelText)</text>
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func overlayForCapFilletArcPoints(fillets: [CapFilletDebug], label: String) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    let groupId = "cap-fillet-line-arc-points-\(label)"
+
+    func addPolyline(_ points: [Vec2], stroke: String, width: Double) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        let strokeWidth = String(format: "%.1f", width)
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
+        for point in points {
+            bounds.expand(by: point)
+        }
+    }
+
+    func addPoints(_ points: [Vec2], fill: String) {
+        for point in points {
+            svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"1.6\" fill=\"%@\" stroke=\"none\"/>", point.x, point.y, fill))
+            bounds.expand(by: point)
+        }
+    }
+
+    for fillet in fillets where fillet.success {
+        guard let bridge = fillet.bridge else { continue }
+        let strokeColor = fillet.side == "left" ? "#1b5e20" : "#0d47a1"
+        let dotColor = fillet.side == "left" ? "#43a047" : "#42a5f5"
+        let steps = max(8, fillet.arcSegments)
+        let count = max(2, steps + 1)
+        var points: [Vec2] = []
+        points.reserveCapacity(count)
+        for i in 0..<count {
+            let t = Double(i) / Double(count - 1)
+            points.append(bridge.evaluate(t))
+        }
+        addPolyline(points, stroke: strokeColor, width: 1.6)
+        addPoints(points, fill: dotColor)
+    }
+
+    let svg = """
+  <g id="\(groupId)">
     \(svgParts.joined(separator: "\n    "))
   </g>
 """

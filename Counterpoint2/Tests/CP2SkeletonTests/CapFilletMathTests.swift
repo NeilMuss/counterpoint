@@ -14,10 +14,16 @@ final class CapFilletMathTests: XCTestCase {
         }
         XCTAssertTrue(approxEqual(splice.p, Vec2(8, 0), eps: 1.0e-6))
         XCTAssertTrue(approxEqual(splice.q, Vec2(10, 2), eps: 1.0e-6))
+        let inDir = (b - a).normalized()
+        let outDir = (c - b).normalized()
+        XCTAssertGreaterThan((splice.p - b).normalized().dot(inDir * -1.0), 0.999)
+        XCTAssertGreaterThan((splice.q - b).normalized().dot(outDir), 0.999)
         let startTangent = (splice.bridge.p1 - splice.bridge.p0).normalized()
         let endTangent = (splice.bridge.p3 - splice.bridge.p2).normalized()
         XCTAssertGreaterThan(startTangent.dot(Vec2(1, 0)), 0.99)
         XCTAssertGreaterThan(endTangent.dot(Vec2(0, 1)), 0.99)
+        XCTAssertTrue(approxEqual(splice.bridge.evaluate(0.0), splice.p, eps: 1.0e-9))
+        XCTAssertTrue(approxEqual(splice.bridge.evaluate(1.0), splice.q, eps: 1.0e-9))
     }
 
     func testRadiusTooLargeRejects() {

@@ -1,0 +1,59 @@
+{
+  "example": "cap_fillet_line",
+  "render": {
+    "canvasPx": { "width": 1200, "height": 500 },
+    "fitMode": "none",
+    "paddingWorld": 0,
+    "clipToFrame": false,
+    "worldFrame": {
+      "minX": -50,
+      "minY": -180,
+      "maxX": 520,
+      "maxY": 180
+    }
+  },
+
+  "ink": {
+    "line_a": {
+      "type": "line",
+      "p0": { "x": 0, "y": 70 },
+      "p1": { "x": 200, "y": 70 }
+    },
+    "line_b": {
+      "type": "line",
+      "p0": { "x": 0, "y": -70 },
+      "p1": { "x": 200, "y": -70 }
+    }
+  },
+
+  "strokes": [
+    {
+      "id": "butt",
+      "type": "stroke",
+      "ink": "line_a",
+      "params": {
+        "angleMode": "relative",
+        "theta": { "keyframes": [ { "t": 0.0, "value": 0 }, { "t": 1.0, "value": 0 } ] },
+        "widthLeft": { "keyframes": [ { "t": 0.0, "value": 40 }, { "t": 1.0, "value": 40 } ] },
+        "widthRight": { "keyframes": [ { "t": 0.0, "value": 40 }, { "t": 1.0, "value": 40 } ] },
+        "offset": { "keyframes": [ { "t": 0.0, "value": 0 }, { "t": 1.0, "value": 0 } ] },
+        "startCap": { "type": "butt" },
+        "endCap": { "type": "butt" }
+      }
+    },
+    {
+      "id": "fillet",
+      "type": "stroke",
+      "ink": "line_b",
+      "params": {
+        "angleMode": "relative",
+        "theta": { "keyframes": [ { "t": 0.0, "value": 0 }, { "t": 1.0, "value": 0 } ] },
+        "widthLeft": { "keyframes": [ { "t": 0.0, "value": 40 }, { "t": 1.0, "value": 40 } ] },
+        "widthRight": { "keyframes": [ { "t": 0.0, "value": 40 }, { "t": 1.0, "value": 40 } ] },
+        "offset": { "keyframes": [ { "t": 0.0, "value": 0 }, { "t": 1.0, "value": 0 } ] },
+        "startCap": { "type": "butt" },
+        "endCap": { "type": "fillet", "radius": 5, "corner": "both" }
+      }
+    }
+  ]
+}

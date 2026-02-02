@@ -25,7 +25,7 @@ final class CapFilletCornerSelectionTests: XCTestCase {
             return
         }
         XCTAssertTrue(right.success)
-        XCTAssertLessThan((right.corner - rightRail[0]).length, 1.0e-6)
+        XCTAssertLessThan((right.corner - leftRail[0]).length, 1.0e-6)
 
         var leftFillets: [CapFilletDebug] = []
         _ = buildCaps(
@@ -45,7 +45,7 @@ final class CapFilletCornerSelectionTests: XCTestCase {
             return
         }
         XCTAssertTrue(left.success)
-        XCTAssertLessThan((left.corner - leftRail[0]).length, 1.0e-6)
+        XCTAssertLessThan((left.corner - rightRail[0]).length, 1.0e-6)
         XCTAssertGreaterThan((left.corner - right.corner).length, 1.0e-3)
     }
 }
