@@ -38,8 +38,16 @@ public func simplifyOpenPolylineForCorners(
         let prev = cleaned[i - 1]
         let current = cleaned[i]
         let next = cleaned[i + 1]
-        let u = (current - prev).normalized()
-        let v = (next - current).normalized()
+        let uVec = current - prev
+        let vVec = next - current
+        let lenU = uVec.length
+        let lenV = vVec.length
+        if lenU <= epsLen || lenV <= epsLen {
+            simplified.append(current)
+            continue
+        }
+        let u = uVec * (1.0 / lenU)
+        let v = vVec * (1.0 / lenV)
         let dot = max(-1.0, min(1.0, u.dot(v)))
         let angle = acos(dot)
         if abs(Double.pi - angle) < epsAngleRad || angle < epsAngleRad {
