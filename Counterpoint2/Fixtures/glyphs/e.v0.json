@@ -106,7 +106,9 @@
             { "t": 0.0, "value": 0 },
             { "t": 1.0, "value": 0 }
           ]
-        }
+        },
+        "startCap": { "type": "fillet", "radius": 18 },
+        "endCap": { "type": "fillet", "radius": 12, "corner": "both" }
       }
     },
 

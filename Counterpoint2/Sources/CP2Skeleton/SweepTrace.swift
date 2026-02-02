@@ -356,19 +356,30 @@ public struct SweepStyle: Equatable, Codable {
     }
 }
 
+public struct CapBuildResult: Equatable, Sendable {
+    public let segments: [Segment2]
+    public let startLeftTrim: Vec2?
+    public let endLeftTrim: Vec2?
+    public let startRightTrim: Vec2?
+    public let endRightTrim: Vec2?
+}
+
 public func buildCaps(
     leftRail: [Vec2],
     rightRail: [Vec2],
     capNamespace: String = "stroke",
     capLocalIndex: Int = 0,
     widthStart: Double,
-    widthEnd: Double
-) -> [Segment2] {
+    widthEnd: Double,
+    startCap: CapStyle,
+    endCap: CapStyle,
+    debugFillet: ((CapFilletDebug) -> Void)? = nil
+) -> CapBuildResult {
     guard let leftStart = leftRail.first, let leftEnd = leftRail.last else {
-        return []
+        return CapBuildResult(segments: [], startLeftTrim: nil, endLeftTrim: nil, startRightTrim: nil, endRightTrim: nil)
     }
     guard let rightStart = rightRail.first, let rightEnd = rightRail.last else {
-        return []
+        return CapBuildResult(segments: [], startLeftTrim: nil, endLeftTrim: nil, startRightTrim: nil, endRightTrim: nil)
     }
 
     let startDistance = (leftStart - rightStart).length
@@ -381,6 +392,8 @@ public func buildCaps(
 
     let rightForStart = useReversedRight ? rightEnd : rightStart
     let rightForEnd = useReversedRight ? rightStart : rightEnd
+    let rightNeighborStart = useReversedRight ? rightRail[rightRail.count - 2] : rightRail[1]
+    let rightNeighborEnd = useReversedRight ? rightRail[1] : rightRail[rightRail.count - 2]
 
     func shouldEmitCapJoin(kind: String, left: Vec2, right: Vec2, widthScale: Double) -> Bool {
         let len = (left - right).length
@@ -395,15 +408,475 @@ public func buildCaps(
     }
 
     var caps: [Segment2] = []
+    var startLeftTrim: Vec2? = nil
+    var endLeftTrim: Vec2? = nil
+    var startRightTrim: Vec2? = nil
+    var endRightTrim: Vec2? = nil
     let startDetail = "stroke=\(capNamespace) cap=start idx=\(capLocalIndex)"
     let endDetail = "stroke=\(capNamespace) cap=end idx=\(capLocalIndex)"
-    if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
+    func failureReason(_ error: FilletError) -> String {
+        switch error {
+        case .degenerateAngle: return "degenerateAngle"
+        case .radiusTooLarge: return "radiusTooLarge"
+        case .cornerNotFound: return "cornerNotFound"
+        case .cornerOverlap: return "cornerOverlap"
+        }
+    }
+
+    func pickCornerIndex(_ polyline: [Vec2], target: Vec2, eps: Double) -> Int? {
+        var bestIndex: Int? = nil
+        var bestDist = Double.greatestFiniteMagnitude
+        for (index, point) in polyline.enumerated() {
+            let dist = (point - target).length
+            if dist < bestDist {
+                bestDist = dist
+                bestIndex = index
+            }
+        }
+        guard let index = bestIndex, bestDist <= eps else { return nil }
+        return index
+    }
+
+    let epsCornerPick = max(1.0e-3, Epsilon.defaultValue * 10.0)
+
+    // Start cap fillets (plan-first on base polyline)
+    var startCapEdgeFrom = leftStart
+    var startCapEdgeTo = rightForStart
+    var startHadFillet = false
+    let startPolyline = [leftRail[1], leftStart, rightForStart, rightNeighborStart]
+    if case .fillet(let radius, let corner) = startCap, leftRail.count > 1, rightRail.count > 1 {
+        let iL = pickCornerIndex(startPolyline, target: leftStart, eps: epsCornerPick)
+        let iR = pickCornerIndex(startPolyline, target: rightForStart, eps: epsCornerPick)
+        if corner == .both, let iL, let iR, iL == iR {
+            debugFillet?(CapFilletDebug(
+                kind: "start",
+                side: "left",
+                radius: radius,
+                theta: 0,
+                d: 0,
+                corner: leftStart,
+                p: leftStart,
+                q: leftStart,
+                bridge: nil,
+                success: false,
+                failureReason: failureReason(.cornerOverlap)
+            ))
+            debugFillet?(CapFilletDebug(
+                kind: "start",
+                side: "right",
+                radius: radius,
+                theta: 0,
+                d: 0,
+                corner: rightForStart,
+                p: rightForStart,
+                q: rightForStart,
+                bridge: nil,
+                success: false,
+                failureReason: failureReason(.cornerOverlap)
+            ))
+        } else {
+            if corner == .left || corner == .both {
+                if let index = iL, index > 0, index < startPolyline.count - 1 {
+                    let fillet = filletCorner(
+                        a: startPolyline[index - 1],
+                        b: startPolyline[index],
+                        c: startPolyline[index + 1],
+                        radius: radius
+                    )
+                    switch fillet {
+                    case .success(let splice):
+                        startHadFillet = true
+                        startLeftTrim = splice.p
+                        startCapEdgeFrom = splice.q
+                        debugFillet?(CapFilletDebug(
+                            kind: "start",
+                            side: "left",
+                            radius: radius,
+                            theta: splice.theta,
+                            d: splice.d,
+                            corner: splice.b,
+                            p: splice.p,
+                            q: splice.q,
+                            bridge: splice.bridge,
+                            success: true,
+                            failureReason: nil
+                        ))
+                        let arcSegments = sampleCubicSegments(
+                            splice.bridge,
+                            segments: 8,
+                            source: .capStartEdge(role: .joinLR, detail: "\(startDetail) fillet-left")
+                        )
+                        caps.append(contentsOf: arcSegments)
+                    case .failure(let reason):
+                        debugFillet?(CapFilletDebug(
+                            kind: "start",
+                            side: "left",
+                            radius: radius,
+                            theta: 0,
+                            d: 0,
+                            corner: startPolyline[index],
+                            p: startPolyline[index],
+                            q: startPolyline[index],
+                            bridge: nil,
+                            success: false,
+                            failureReason: failureReason(reason)
+                        ))
+                    }
+                } else {
+                    debugFillet?(CapFilletDebug(
+                        kind: "start",
+                        side: "left",
+                        radius: radius,
+                        theta: 0,
+                        d: 0,
+                        corner: leftStart,
+                        p: leftStart,
+                        q: leftStart,
+                        bridge: nil,
+                        success: false,
+                        failureReason: failureReason(.cornerNotFound)
+                    ))
+                }
+            }
+            if corner == .right || corner == .both {
+                if let index = iR, index > 0, index < startPolyline.count - 1 {
+                    let fillet = filletCorner(
+                        a: startPolyline[index - 1],
+                        b: startPolyline[index],
+                        c: startPolyline[index + 1],
+                        radius: radius
+                    )
+                    switch fillet {
+                    case .success(let splice):
+                        startHadFillet = true
+                        startRightTrim = splice.p
+                        startCapEdgeTo = splice.q
+                        debugFillet?(CapFilletDebug(
+                            kind: "start",
+                            side: "right",
+                            radius: radius,
+                            theta: splice.theta,
+                            d: splice.d,
+                            corner: splice.b,
+                            p: splice.p,
+                            q: splice.q,
+                            bridge: splice.bridge,
+                            success: true,
+                            failureReason: nil
+                        ))
+                        let arcSegments = sampleCubicSegments(
+                            splice.bridge,
+                            segments: 8,
+                            source: .capStartEdge(role: .joinLR, detail: "\(startDetail) fillet-right")
+                        )
+                        caps.append(contentsOf: arcSegments)
+                    case .failure(let reason):
+                        debugFillet?(CapFilletDebug(
+                            kind: "start",
+                            side: "right",
+                            radius: radius,
+                            theta: 0,
+                            d: 0,
+                            corner: startPolyline[index],
+                            p: startPolyline[index],
+                            q: startPolyline[index],
+                            bridge: nil,
+                            success: false,
+                            failureReason: failureReason(reason)
+                        ))
+                    }
+                } else {
+                    debugFillet?(CapFilletDebug(
+                        kind: "start",
+                        side: "right",
+                        radius: radius,
+                        theta: 0,
+                        d: 0,
+                        corner: rightForStart,
+                        p: rightForStart,
+                        q: rightForStart,
+                        bridge: nil,
+                        success: false,
+                        failureReason: failureReason(.cornerNotFound)
+                    ))
+                }
+            }
+        }
+        if (startCapEdgeFrom - startCapEdgeTo).length > Epsilon.defaultValue {
+            if shouldEmitCapJoin(kind: "start", left: startCapEdgeFrom, right: startCapEdgeTo, widthScale: widthStart) {
+                caps.append(Segment2(startCapEdgeFrom, startCapEdgeTo, source: .capStartEdge(role: .joinLR, detail: "\(startDetail) fillet-cap")))
+            }
+        } else if !startHadFillet {
+            if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
+                caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
+            }
+        }
+    } else if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
         caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
     }
-    if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
+
+    // End cap fillets (plan-first on base polyline)
+    var endCapEdgeFrom = rightForEnd
+    var endCapEdgeTo = leftEnd
+    var endHadFillet = false
+    let endPolyline = [leftRail[leftRail.count - 2], leftEnd, rightForEnd, rightNeighborEnd]
+    if case .fillet(let radius, let corner) = endCap, leftRail.count > 1, rightRail.count > 1 {
+        let iL = pickCornerIndex(endPolyline, target: leftEnd, eps: epsCornerPick)
+        let iR = pickCornerIndex(endPolyline, target: rightForEnd, eps: epsCornerPick)
+        if corner == .both, let iL, let iR, iL == iR {
+            debugFillet?(CapFilletDebug(
+                kind: "end",
+                side: "left",
+                radius: radius,
+                theta: 0,
+                d: 0,
+                corner: leftEnd,
+                p: leftEnd,
+                q: leftEnd,
+                bridge: nil,
+                success: false,
+                failureReason: failureReason(.cornerOverlap)
+            ))
+            debugFillet?(CapFilletDebug(
+                kind: "end",
+                side: "right",
+                radius: radius,
+                theta: 0,
+                d: 0,
+                corner: rightForEnd,
+                p: rightForEnd,
+                q: rightForEnd,
+                bridge: nil,
+                success: false,
+                failureReason: failureReason(.cornerOverlap)
+            ))
+        } else {
+            if corner == .left || corner == .both {
+                if let index = iL, index > 0, index < endPolyline.count - 1 {
+                    let fillet = filletCorner(
+                        a: endPolyline[index - 1],
+                        b: endPolyline[index],
+                        c: endPolyline[index + 1],
+                        radius: radius
+                    )
+                    switch fillet {
+                    case .success(let splice):
+                        endHadFillet = true
+                        endLeftTrim = splice.p
+                        endCapEdgeTo = splice.q
+                        debugFillet?(CapFilletDebug(
+                            kind: "end",
+                            side: "left",
+                            radius: radius,
+                            theta: splice.theta,
+                            d: splice.d,
+                            corner: splice.b,
+                            p: splice.p,
+                            q: splice.q,
+                            bridge: splice.bridge,
+                            success: true,
+                            failureReason: nil
+                        ))
+                        let arcSegments = sampleCubicSegments(
+                            splice.bridge,
+                            segments: 8,
+                            source: .capEndEdge(role: .joinLR, detail: "\(endDetail) fillet-left")
+                        )
+                        caps.append(contentsOf: arcSegments)
+                    case .failure(let reason):
+                        debugFillet?(CapFilletDebug(
+                            kind: "end",
+                            side: "left",
+                            radius: radius,
+                            theta: 0,
+                            d: 0,
+                            corner: endPolyline[index],
+                            p: endPolyline[index],
+                            q: endPolyline[index],
+                            bridge: nil,
+                            success: false,
+                            failureReason: failureReason(reason)
+                        ))
+                    }
+                } else {
+                    debugFillet?(CapFilletDebug(
+                        kind: "end",
+                        side: "left",
+                        radius: radius,
+                        theta: 0,
+                        d: 0,
+                        corner: leftEnd,
+                        p: leftEnd,
+                        q: leftEnd,
+                        bridge: nil,
+                        success: false,
+                        failureReason: failureReason(.cornerNotFound)
+                    ))
+                }
+            }
+            if corner == .right || corner == .both {
+                if let index = iR, index > 0, index < endPolyline.count - 1 {
+                    let fillet = filletCorner(
+                        a: endPolyline[index - 1],
+                        b: endPolyline[index],
+                        c: endPolyline[index + 1],
+                        radius: radius
+                    )
+                    switch fillet {
+                    case .success(let splice):
+                        endHadFillet = true
+                        endRightTrim = splice.p
+                        endCapEdgeFrom = splice.q
+                        debugFillet?(CapFilletDebug(
+                            kind: "end",
+                            side: "right",
+                            radius: radius,
+                            theta: splice.theta,
+                            d: splice.d,
+                            corner: splice.b,
+                            p: splice.p,
+                            q: splice.q,
+                            bridge: splice.bridge,
+                            success: true,
+                            failureReason: nil
+                        ))
+                        let arcSegments = sampleCubicSegments(
+                            splice.bridge,
+                            segments: 8,
+                            source: .capEndEdge(role: .joinLR, detail: "\(endDetail) fillet-right")
+                        )
+                        caps.append(contentsOf: arcSegments)
+                    case .failure(let reason):
+                        debugFillet?(CapFilletDebug(
+                            kind: "end",
+                            side: "right",
+                            radius: radius,
+                            theta: 0,
+                            d: 0,
+                            corner: endPolyline[index],
+                            p: endPolyline[index],
+                            q: endPolyline[index],
+                            bridge: nil,
+                            success: false,
+                            failureReason: failureReason(reason)
+                        ))
+                    }
+                } else {
+                    debugFillet?(CapFilletDebug(
+                        kind: "end",
+                        side: "right",
+                        radius: radius,
+                        theta: 0,
+                        d: 0,
+                        corner: rightForEnd,
+                        p: rightForEnd,
+                        q: rightForEnd,
+                        bridge: nil,
+                        success: false,
+                        failureReason: failureReason(.cornerNotFound)
+                    ))
+                }
+            }
+        }
+        if (endCapEdgeFrom - endCapEdgeTo).length > Epsilon.defaultValue {
+            if shouldEmitCapJoin(kind: "end", left: endCapEdgeTo, right: endCapEdgeFrom, widthScale: widthEnd) {
+                caps.append(Segment2(endCapEdgeFrom, endCapEdgeTo, source: .capEndEdge(role: .joinLR, detail: "\(endDetail) fillet-cap")))
+            }
+        } else if !endHadFillet {
+            if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
+                caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
+            }
+        }
+    } else if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
         caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
     }
-    return caps
+    return CapBuildResult(
+        segments: caps,
+        startLeftTrim: startLeftTrim,
+        endLeftTrim: endLeftTrim,
+        startRightTrim: startRightTrim,
+        endRightTrim: endRightTrim
+    )
+}
+
+public struct FilletSplice: Equatable, Sendable {
+    public let a: Vec2
+    public let b: Vec2
+    public let c: Vec2
+    public let p: Vec2
+    public let q: Vec2
+    public let theta: Double
+    public let d: Double
+    public let bridge: CubicBezier2
+}
+
+public enum FilletError: Error, Equatable {
+    case degenerateAngle
+    case radiusTooLarge
+    case cornerNotFound
+    case cornerOverlap
+}
+
+public enum FilletResult: Equatable {
+    case success(FilletSplice)
+    case failure(FilletError)
+}
+
+public func filletCorner(a: Vec2, b: Vec2, c: Vec2, radius: Double) -> FilletResult {
+    let u = (b - a).normalized()
+    let v = (c - b).normalized()
+    let dot = max(-1.0, min(1.0, (u * -1.0).dot(v)))
+    let theta = acos(dot)
+    if theta <= 1.0e-6 || abs(theta - Double.pi) <= 1.0e-6 {
+        return .failure(.degenerateAngle)
+    }
+    let d = radius * tan(theta * 0.5)
+    let lenA = (b - a).length
+    let lenC = (c - b).length
+    if d > lenA || d > lenC {
+        return .failure(.radiusTooLarge)
+    }
+    let p = b - u * d
+    let q = b + v * d
+    let phi = theta
+    let k = (4.0 / 3.0) * tan(abs(phi) / 4.0)
+    let t0 = u
+    let t1 = v
+    let b0 = p
+    let b1 = p + t0 * (k * radius)
+    let b2 = q - t1 * (k * radius)
+    let b3 = q
+    let bridge = CubicBezier2(p0: b0, p1: b1, p2: b2, p3: b3)
+    return .success(FilletSplice(a: a, b: b, c: c, p: p, q: q, theta: theta, d: d, bridge: bridge))
+}
+
+public struct CapFilletDebug: Equatable, Sendable {
+    public let kind: String
+    public let side: String
+    public let radius: Double
+    public let theta: Double
+    public let d: Double
+    public let corner: Vec2
+    public let p: Vec2
+    public let q: Vec2
+    public let bridge: CubicBezier2?
+    public let success: Bool
+    public let failureReason: String?
+}
+
+private func sampleCubicSegments(_ cubic: CubicBezier2, segments: Int, source: EdgeSource) -> [Segment2] {
+    let count = max(2, segments + 1)
+    var points: [Vec2] = []
+    points.reserveCapacity(count)
+    for i in 0..<count {
+        let t = Double(i) / Double(count - 1)
+        points.append(cubic.evaluate(t))
+    }
+    var segmentsOut: [Segment2] = []
+    for i in 0..<(points.count - 1) {
+        segmentsOut.append(Segment2(points[i], points[i + 1], source: source))
+    }
+    return segmentsOut
 }
 
 /// General boundary soup generator that supports:
@@ -429,8 +902,11 @@ public func boundarySoupGeneral(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
-    capLocalIndex: Int = 0
+    capLocalIndex: Int = 0,
+    startCap: CapStyle = .butt,
+    endCap: CapStyle = .butt
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -584,13 +1060,6 @@ public func boundarySoupGeneral(
     // ---- Stitch boundary soup segments (left forward, right backward, caps) ----
     var segments: [Segment2] = []
     segments.reserveCapacity(count * 2 + 2)
-
-    for i in 0..<(count - 1) {
-        segments.append(Segment2(left[i], left[i + 1], source: .railLeft))
-    }
-    for i in stride(from: count - 1, to: 0, by: -1) {
-        segments.append(Segment2(right[i], right[i - 1], source: .railRight))
-    }
     func widthScale(_ style: SweepStyle) -> Double {
         let sum = style.widthLeft + style.widthRight
         let maxSide = max(style.widthLeft, style.widthRight)
@@ -604,13 +1073,46 @@ public func boundarySoupGeneral(
         capNamespace: capNamespace,
         capLocalIndex: capLocalIndex,
         widthStart: widthScale(startStyle),
-        widthEnd: widthScale(endStyle)
+        widthEnd: widthScale(endStyle),
+        startCap: startCap,
+        endCap: endCap,
+        debugFillet: debugCapFillet
     )
-    segments.append(contentsOf: caps)
+    let startDistance = (left.first! - right.first!).length
+    let endDistance = (left.last! - right.last!).length
+    let startAltDistance = (left.first! - right.last!).length
+    let endAltDistance = (left.last! - right.first!).length
+    let sumDirect = startDistance + endDistance
+    let sumSwap = startAltDistance + endAltDistance
+    let useReversedRight = sumSwap + Epsilon.defaultValue < sumDirect
+    var rightAdjusted = right
+    if let startRightTrim = caps.startRightTrim {
+        let index = useReversedRight ? rightAdjusted.count - 1 : 0
+        rightAdjusted[index] = startRightTrim
+    }
+    if let endRightTrim = caps.endRightTrim {
+        let index = useReversedRight ? 0 : rightAdjusted.count - 1
+        rightAdjusted[index] = endRightTrim
+    }
+    for i in stride(from: count - 1, to: 0, by: -1) {
+        segments.append(Segment2(rightAdjusted[i], rightAdjusted[i - 1], source: .railRight))
+    }
+    let startLeft = caps.startLeftTrim ?? left[0]
+    let endLeft = caps.endLeftTrim ?? left[left.count - 1]
+    if count == 2 {
+        segments.append(Segment2(startLeft, endLeft, source: .railLeft))
+    } else if count > 2 {
+        segments.append(Segment2(startLeft, left[1], source: .railLeft))
+        for i in 1..<(count - 1) {
+            segments.append(Segment2(left[i], left[i + 1], source: .railLeft))
+        }
+        segments.append(Segment2(left[count - 2], endLeft, source: .railLeft))
+    }
+    segments.append(contentsOf: caps.segments)
     if let debugCapEndpoints, let capInfo = computeCapEndpointsDebug(
         leftRail: left,
-        rightRail: right,
-        capSegments: caps,
+        rightRail: rightAdjusted,
+        capSegments: caps.segments,
         eps: Epsilon.defaultValue
     ) {
         debugCapEndpoints(capInfo)
@@ -638,8 +1140,11 @@ public func boundarySoup(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
-    capLocalIndex: Int = 0
+    capLocalIndex: Int = 0,
+    startCap: CapStyle = .butt,
+    endCap: CapStyle = .butt
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -668,8 +1173,11 @@ public func boundarySoup(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugCapFillet: debugCapFillet,
         capNamespace: capNamespace,
-        capLocalIndex: capLocalIndex
+        capLocalIndex: capLocalIndex,
+        startCap: startCap,
+        endCap: endCap
     )
 }
 
@@ -692,8 +1200,11 @@ public func boundarySoupVariableWidth(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
-    capLocalIndex: Int = 0
+    capLocalIndex: Int = 0,
+    startCap: CapStyle = .butt,
+    endCap: CapStyle = .butt
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -723,8 +1234,11 @@ public func boundarySoupVariableWidth(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugCapFillet: debugCapFillet,
         capNamespace: capNamespace,
-        capLocalIndex: capLocalIndex
+        capLocalIndex: capLocalIndex,
+        startCap: startCap,
+        endCap: endCap
     )
 }
 
@@ -748,8 +1262,11 @@ public func boundarySoupVariableWidthAngle(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
-    capLocalIndex: Int = 0
+    capLocalIndex: Int = 0,
+    startCap: CapStyle = .butt,
+    endCap: CapStyle = .butt
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -780,8 +1297,11 @@ public func boundarySoupVariableWidthAngle(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugCapFillet: debugCapFillet,
         capNamespace: capNamespace,
-        capLocalIndex: capLocalIndex
+        capLocalIndex: capLocalIndex,
+        startCap: startCap,
+        endCap: endCap
     )
 }
 
@@ -810,8 +1330,11 @@ public func boundarySoupVariableWidthAngleAlpha(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
-    capLocalIndex: Int = 0
+    capLocalIndex: Int = 0,
+    startCap: CapStyle = .butt,
+    endCap: CapStyle = .butt
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -844,8 +1367,11 @@ public func boundarySoupVariableWidthAngleAlpha(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugCapFillet: debugCapFillet,
         capNamespace: capNamespace,
-        capLocalIndex: capLocalIndex
+        capLocalIndex: capLocalIndex,
+        startCap: startCap,
+        endCap: endCap
     )
 }
 

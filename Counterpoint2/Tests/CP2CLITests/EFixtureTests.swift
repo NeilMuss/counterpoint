@@ -30,4 +30,13 @@ final class EFixtureTests: XCTestCase {
         let svg = try renderSVGString(options: options, spec: spec)
         XCTAssertTrue(svg.contains("id=\"debug-counters\""))
     }
+
+    func testEFixtureEndRightFilletOverlayEmits() throws {
+        let spec = try loadSpecOrThrow(path: "Fixtures/glyphs/e.v0.json")
+        var options = CLIOptions()
+        options.debugCenterline = true
+        let svg = try renderSVGString(options: options, spec: spec)
+        XCTAssertTrue(svg.contains("debug-cap-fillet-end-right"))
+        XCTAssertTrue(svg.contains("debug-cap-fillet-end-left"))
+    }
 }

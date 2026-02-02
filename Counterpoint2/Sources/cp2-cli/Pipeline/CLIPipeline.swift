@@ -278,7 +278,8 @@ private func inkPrimitiveSummary(_ primitive: InkPrimitive) -> String {
         }
         return "path segments=0"
     case .heartline(let heartline):
-        return "heartline parts=\(heartline.parts)"
+        let names = heartline.parts.map { $0.partName }
+        return "heartline parts=\(names)"
     }
 }
 
@@ -311,10 +312,13 @@ private func dumpHeartlineResolve(
     for key in keys {
         guard let primitive = ink.entries[key] else { continue }
         if case .heartline(let heartline) = primitive {
-            print("heartlineResolve name=\(key) parts=\(heartline.parts)")
-            for partName in heartline.parts {
+            let names = heartline.parts.map { $0.partName }
+            print("heartlineResolve name=\(key) parts=\(names)")
+            for partRef in heartline.parts {
+                let partName = partRef.partName
                 if let part = ink.entries[partName] {
-                    print("  part \(partName) RESOLVED \(inkPrimitiveSummary(part))")
+                    let knot = partRef.joinKnot.map { "\($0)" } ?? "none"
+                    print("  part \(partName) joinKnot=\(knot) RESOLVED \(inkPrimitiveSummary(part))")
                 } else {
                     print("  part \(partName) MISSING")
                 }
@@ -479,7 +483,14 @@ public func renderSVGString(
 
         // 4. Run Sweep
         let capNamespace = stroke.id ?? stroke.inkName ?? "stroke-\(index)"
-        let result = runSweep(path: path, plan: plan, options: options, capNamespace: capNamespace)
+        let result = runSweep(
+            path: path,
+            plan: plan,
+            options: options,
+            capNamespace: capNamespace,
+            startCap: stroke.startCap,
+            endCap: stroke.endCap
+        )
         strokeOutputs.append((stroke: stroke, pathParam: pathParam, plan: plan, result: result, joinGTs: joinGTs))
         if let glyphBounds = result.glyphBounds {
             combinedGlyphBounds = combinedGlyphBounds?.union(glyphBounds) ?? glyphBounds
@@ -583,12 +594,18 @@ public func renderSVGString(
     }()
     if options.viewCenterlineOnly {
         overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan, inkSegments: centerlineInkSegments))
+        if !primaryOutput.result.capFillets.isEmpty {
+            overlays.append(debugOverlayForCapFillets(primaryOutput.result.capFillets, steps: 32))
+        }
     } else if !soloWhy && (options.debugSVG || options.debugCenterline || options.debugInkControls) {
         if let inkPrimitive, (options.debugCenterline || options.debugInkControls) {
             switch inkPrimitive {
             case .path(let inkPath): overlays.append(debugOverlayForInkPath(inkPath, steps: 64))
             case .heartline: if let resolved = resolvedHeartline { overlays.append(debugOverlayForHeartline(resolved, steps: 64)) }
             default: overlays.append(debugOverlayForInk(inkPrimitive, steps: 64))
+            }
+            if options.debugCenterline, !primaryOutput.result.capFillets.isEmpty {
+                overlays.append(debugOverlayForCapFillets(primaryOutput.result.capFillets, steps: 32))
             }
         } else {
             overlays.append(makeCenterlineDebugOverlay(options: options, path: path, pathParam: pathParam, plan: plan))
@@ -1296,6 +1313,8 @@ private struct ResolvedStroke {
     let resolvedHeartline: ResolvedHeartline?
     let path: SkeletonPath
     let params: StrokeParams?
+    let startCap: CapStyle
+    let endCap: CapStyle
 }
 
 private func resolveEffectiveStrokes(
@@ -1358,7 +1377,9 @@ private func resolveEffectiveStrokes(
                     inkPrimitive: primitive,
                     resolvedHeartline: resolvedHeartline,
                     path: path,
-                    params: stroke.params
+                    params: stroke.params,
+                    startCap: stroke.params?.startCap ?? .butt,
+                    endCap: stroke.params?.endCap ?? .butt
                 )
             )
         }
@@ -1376,7 +1397,9 @@ private func resolveEffectiveStrokes(
         inkPrimitive: inkPrimitive,
         resolvedHeartline: resolvedHeartline,
         path: path,
-        params: spec?.strokes?.first?.params
+        params: spec?.strokes?.first?.params,
+        startCap: spec?.strokes?.first?.params?.startCap ?? .butt,
+        endCap: spec?.strokes?.first?.params?.endCap ?? .butt
     )
     return (resolvedExample, [fallback])
 }

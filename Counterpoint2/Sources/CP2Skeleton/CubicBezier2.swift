@@ -1,6 +1,6 @@
 import CP2Geometry
 
-public struct CubicBezier2: Equatable, Codable {
+public struct CubicBezier2: Equatable, Codable, Sendable {
     public var p0: Vec2
     public var p1: Vec2
     public var p2: Vec2

@@ -94,11 +94,110 @@ public struct InkPath: Codable, Equatable {
     }
 }
 
+public enum HeartlineJoinKnot: Codable, Equatable {
+    case smooth
+    case cusp
+    case fillet(radius: Double)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case radius
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(), let text = try? single.decode(String.self) {
+            switch text.lowercased() {
+            case "cusp": self = .cusp
+            case "smooth": self = .smooth
+            default: self = .smooth
+            }
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = (try? container.decode(String.self, forKey: .type)) ?? "smooth"
+        switch type.lowercased() {
+        case "cusp":
+            self = .cusp
+        case "fillet":
+            let radius = try container.decode(Double.self, forKey: .radius)
+            self = .fillet(radius: radius)
+        default:
+            self = .smooth
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .smooth:
+            try container.encode("smooth", forKey: .type)
+        case .cusp:
+            try container.encode("cusp", forKey: .type)
+        case .fillet(let radius):
+            try container.encode("fillet", forKey: .type)
+            try container.encode(radius, forKey: .radius)
+        }
+    }
+}
+
+public struct HeartlinePartSpec: Codable, Equatable {
+    public var name: String
+    public var joinKnot: HeartlineJoinKnot?
+
+    public init(name: String, joinKnot: HeartlineJoinKnot? = nil) {
+        self.name = name
+        self.joinKnot = joinKnot
+    }
+}
+
+public enum HeartlinePartRef: Codable, Equatable {
+    case name(String)
+    case spec(HeartlinePartSpec)
+
+    public var partName: String {
+        switch self {
+        case .name(let name): return name
+        case .spec(let spec): return spec.name
+        }
+    }
+
+    public var joinKnot: HeartlineJoinKnot? {
+        switch self {
+        case .name: return nil
+        case .spec(let spec): return spec.joinKnot
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(), let name = try? single.decode(String.self) {
+            self = .name(name)
+            return
+        }
+        let spec = try HeartlinePartSpec(from: decoder)
+        self = .spec(spec)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .name(let name):
+            var container = encoder.singleValueContainer()
+            try container.encode(name)
+        case .spec(let spec):
+            try spec.encode(to: encoder)
+        }
+    }
+}
+
 public struct Heartline: Codable, Equatable {
-    public var parts: [String]
+    public var parts: [HeartlinePartRef]
     public var allowGaps: Bool?
 
     public init(parts: [String], allowGaps: Bool? = nil) {
+        self.parts = parts.map { HeartlinePartRef.name($0) }
+        self.allowGaps = allowGaps
+    }
+
+    public init(parts: [HeartlinePartRef], allowGaps: Bool? = nil) {
         self.parts = parts
         self.allowGaps = allowGaps
     }
@@ -139,7 +238,7 @@ public enum InkPrimitive: Codable, Equatable {
             let segments = try container.decode([InkSegment].self, forKey: .segments)
             self = .path(InkPath(segments: segments))
         case "heartline":
-            let parts = try container.decode([String].self, forKey: .parts)
+            let parts = try container.decode([HeartlinePartRef].self, forKey: .parts)
             let allowGaps = try container.decodeIfPresent(Bool.self, forKey: .allowGaps)
             self = .heartline(Heartline(parts: parts, allowGaps: allowGaps))
         default:

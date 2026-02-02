@@ -1,4 +1,5 @@
 import Foundation
+import CP2Geometry
 
 public struct StrokeSpec: Codable, Equatable {
     public var id: String
@@ -26,6 +27,8 @@ public struct StrokeParams: Codable, Equatable {
     public var widthRight: KeyframedScalar?
     public var offset: KeyframedScalar?
     public var alpha: KeyframedScalar?   // optional for now
+    public var startCap: CapStyle?
+    public var endCap: CapStyle?
 
     public init(
         angleMode: AngleMode? = nil,
@@ -34,7 +37,9 @@ public struct StrokeParams: Codable, Equatable {
         widthLeft: KeyframedScalar? = nil,
         widthRight: KeyframedScalar? = nil,
         offset: KeyframedScalar? = nil,
-        alpha: KeyframedScalar? = nil
+        alpha: KeyframedScalar? = nil,
+        startCap: CapStyle? = nil,
+        endCap: CapStyle? = nil
     ) {
         self.angleMode = angleMode
         self.theta = theta
@@ -43,6 +48,8 @@ public struct StrokeParams: Codable, Equatable {
         self.widthRight = widthRight
         self.offset = offset
         self.alpha = alpha
+        self.startCap = startCap
+        self.endCap = endCap
     }
 }
 

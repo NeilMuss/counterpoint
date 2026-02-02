@@ -224,8 +224,98 @@ func debugOverlayForHeartline(_ resolved: ResolvedHeartline, steps: Int) -> Debu
         }
     }
 
+    for fillet in resolved.fillets {
+        let bridgePoints: [Vec2]
+        switch fillet.bridge {
+        case .line(let line):
+            bridgePoints = [vec(line.p0), vec(line.p1)]
+        case .cubic(let cubic):
+            bridgePoints = sampleInkCubicPoints(cubic, steps: steps)
+        }
+        addPolyline(bridgePoints, stroke: "#6a1b9a", width: 1.6)
+        addPoint(fillet.start, radius: 3.0, fill: "#00c853")
+        addPoint(fillet.end, radius: 3.0, fill: "#00c853")
+        let labelPos = (fillet.start + fillet.end) * 0.5
+        addLabel(String(format: "fillet %.1f", fillet.radius), at: labelPos + Vec2(4.0, -4.0))
+    }
+
     let svg = """
   <g id="debug">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForCapFillets(_ fillets: [CapFilletDebug], steps: Int) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    func addPoint(_ p: Vec2, radius: Double, fill: String) {
+        svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+        bounds.expand(by: p)
+    }
+    func addPolyline(_ points: [Vec2], stroke: String, width: Double) {
+        guard let first = points.first else { return }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for point in points.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        let strokeWidth = String(format: "%.1f", width)
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
+        for point in points {
+            bounds.expand(by: point)
+        }
+    }
+    for fillet in fillets {
+        let groupId = "debug-cap-fillet-\(fillet.kind)-\(fillet.side)"
+        var localParts: [String] = []
+        func addLocalPoint(_ p: Vec2, radius: Double, fill: String) {
+            localParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
+            bounds.expand(by: p)
+        }
+        func addLocalPolyline(_ points: [Vec2], stroke: String, width: Double) {
+            guard let first = points.first else { return }
+            var parts: [String] = []
+            parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+            for point in points.dropFirst() {
+                parts.append(String(format: "L %.4f %.4f", point.x, point.y))
+            }
+            let pathData = parts.joined(separator: " ")
+            let strokeWidth = String(format: "%.1f", width)
+            localParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(strokeWidth)\" />")
+            for point in points {
+                bounds.expand(by: point)
+            }
+        }
+        addLocalPoint(fillet.corner, radius: 3.0, fill: "#ff1744")
+        if fillet.success, let bridge = fillet.bridge {
+            let samples = (0...steps).map { t -> Vec2 in
+                let u = Double(t) / Double(steps)
+                return bridge.evaluate(u)
+            }
+            addLocalPolyline(samples, stroke: "#ff6f00", width: 1.6)
+            addLocalPoint(fillet.p, radius: 3.0, fill: "#00c853")
+            addLocalPoint(fillet.q, radius: 3.0, fill: "#00c853")
+            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#2e7d32\">fillet ok</text>", fillet.corner.x + 6.0, fillet.corner.y - 6.0))
+        } else if let failure = fillet.failureReason {
+            let size: Double = 6.0
+            let x0 = fillet.corner.x - size
+            let y0 = fillet.corner.y - size
+            let x1 = fillet.corner.x + size
+            let y1 = fillet.corner.y + size
+            localParts.append(String(format: "<path d=\"M %.4f %.4f L %.4f %.4f M %.4f %.4f L %.4f %.4f\" fill=\"none\" stroke=\"#d32f2f\" stroke-width=\"1.8\"/>", x0, y0, x1, y1, x0, y1, x1, y0))
+            localParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#d32f2f\">fillet fail: %@</text>", fillet.corner.x + 6.0, fillet.corner.y - 6.0, failure))
+        }
+        svgParts.append("""
+    <g id="\(groupId)">
+      \(localParts.joined(separator: "\n      "))
+    </g>
+""")
+    }
+    let svg = """
+  <g id="debug-cap-fillet">
     \(svgParts.joined(separator: "\n    "))
   </g>
 """

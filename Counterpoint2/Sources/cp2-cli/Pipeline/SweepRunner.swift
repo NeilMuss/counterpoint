@@ -10,6 +10,7 @@ struct SweepResult {
     var sampling: SamplingResult?
     var traceSteps: [TraceStepInfo]
     var capEndpointsDebug: CapEndpointsDebug?
+    var capFillets: [CapFilletDebug]
     var railDebugSummary: RailDebugSummary?
     var railFrames: [RailSampleFrame]?
     var railCornerDebug: RailCornerDebug?
@@ -37,11 +38,14 @@ func runSweep(
     path: SkeletonPath,
     plan: SweepPlan,
     options: CLIOptions,
-    capNamespace: String
+    capNamespace: String,
+    startCap: CapStyle,
+    endCap: CapStyle
 ) -> SweepResult {
     var capturedSampling: SamplingResult? = nil
     var traceSteps: [TraceStepInfo] = []
     var capEndpointsDebug: CapEndpointsDebug? = nil
+    var capFillets: [CapFilletDebug] = []
     var railDebugSummary: RailDebugSummary? = nil
     var railFrames: [RailSampleFrame]? = nil
     var railCornerDebug: RailCornerDebug? = nil
@@ -75,8 +79,22 @@ func runSweep(
                 debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
                 debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
                 debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil,
+                debugCapFillet: {
+                    capFillets.append($0)
+                    if options.debugDumpCapEndpoints || options.debugSweep {
+                        let info = $0
+                        if info.success {
+                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f theta=%.6f d=%.6f corner=(%.6f,%.6f) P=(%.6f,%.6f) Q=(%.6f,%.6f)", info.kind, info.side, info.radius, info.theta, info.d, info.corner.x, info.corner.y, info.p.x, info.p.y, info.q.x, info.q.y))
+                        } else {
+                            let reason = info.failureReason ?? "unknown"
+                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f failed=%@", info.kind, info.side, info.radius, reason))
+                        }
+                    }
+                },
                 capNamespace: capNamespace,
-                capLocalIndex: 0
+                capLocalIndex: 0,
+                startCap: startCap,
+                endCap: endCap
             )
         } else {
             return boundarySoup(
@@ -97,8 +115,22 @@ func runSweep(
                 debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
                 debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
                 debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil,
+                debugCapFillet: {
+                    capFillets.append($0)
+                    if options.debugDumpCapEndpoints || options.debugSweep {
+                        let info = $0
+                        if info.success {
+                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f theta=%.6f d=%.6f corner=(%.6f,%.6f) P=(%.6f,%.6f) Q=(%.6f,%.6f)", info.kind, info.side, info.radius, info.theta, info.d, info.corner.x, info.corner.y, info.p.x, info.p.y, info.q.x, info.q.y))
+                        } else {
+                            let reason = info.failureReason ?? "unknown"
+                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f failed=%@", info.kind, info.side, info.radius, reason))
+                        }
+                    }
+                },
                 capNamespace: capNamespace,
-                capLocalIndex: 0
+                capLocalIndex: 0,
+                startCap: startCap,
+                endCap: endCap
             )
         }
     }()
@@ -129,6 +161,7 @@ func runSweep(
         sampling: capturedSampling,
         traceSteps: traceSteps,
         capEndpointsDebug: capEndpointsDebug,
+        capFillets: capFillets,
         railDebugSummary: railDebugSummary,
         railFrames: railFrames,
         railCornerDebug: railCornerDebug
