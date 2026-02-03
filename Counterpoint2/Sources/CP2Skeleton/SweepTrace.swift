@@ -476,6 +476,13 @@ public func buildCaps(
         return 0.5 * sum
     }
 
+    func averagePoint(_ points: [Vec2]) -> Vec2? {
+        guard !points.isEmpty else { return nil }
+        var sum = Vec2(0, 0)
+        for point in points { sum = sum + point }
+        return sum * (1.0 / Double(points.count))
+    }
+
     func pointInPolygon(_ point: Vec2, polygon: [Vec2]) -> Bool {
         guard polygon.count >= 3 else { return false }
         var inside = false
@@ -549,6 +556,9 @@ public func buildCaps(
     var startMidLeftQ: Vec2? = nil
     var startMidRightP: Vec2? = nil
     var startFailureReason: String? = nil
+    var startFallbackReason: String? = nil
+    var startFallbackPoint: Vec2? = nil
+    var startFallbackCorner: Vec2? = nil
     if case .fillet(let radius, let corner) = startCap, leftRail.count > 1, rightRail.count > 1 {
         let minApproach = max(5.0, radius * 2.0)
         let startPolyline = baseCapPolyline(
@@ -731,21 +741,19 @@ public func buildCaps(
                 emitNoCorner("right", rightForStart)
             }
         }
-        if let debugCapBoundary {
-            debugCapBoundary(CapBoundaryDebug(
-                endpoint: "start",
-                original: startPolyline,
-                simplified: simplified,
-                corners: infos,
-                chosenIndices: selection.chosen.map { $0.index },
-                chosenThetas: selection.chosen.map { $0.theta },
-                trimPoints: startTrimPoints,
-                arcPoints: startArcPoints
-            ))
-        }
         func fallbackStart(_ reason: String) {
             if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
                 caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
+            }
+            startFallbackReason = reason
+            startFallbackPoint = averagePoint(simplified) ?? averagePoint(startPolyline)
+            if corner == .left || corner == .both {
+                startFallbackCorner = leftCorner?.point ?? rightCorner?.point
+            } else {
+                startFallbackCorner = rightCorner?.point ?? leftCorner?.point
+            }
+            if debugCapBoundary != nil {
+                print("CAP_BOUNDARY_INVALID endpoint=start reason=\(reason) points=\(simplified.count) edges=0")
             }
             print("CAP_FILLET_FALLBACK endpoint=start fallback=butt reason=\(reason)")
         }
@@ -773,6 +781,21 @@ public func buildCaps(
                 startHadFillet = false
             }
         }
+        if let debugCapBoundary {
+            debugCapBoundary(CapBoundaryDebug(
+                endpoint: "start",
+                original: startPolyline,
+                simplified: simplified,
+                corners: infos,
+                chosenIndices: selection.chosen.map { $0.index },
+                chosenThetas: selection.chosen.map { $0.theta },
+                trimPoints: startTrimPoints,
+                arcPoints: startArcPoints,
+                fallbackReason: startFallbackReason,
+                fallbackPoint: startFallbackPoint,
+                fallbackCorner: startFallbackCorner
+            ))
+        }
     } else if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
         caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
     }
@@ -782,6 +805,9 @@ public func buildCaps(
     var endMidLeftQ: Vec2? = nil
     var endMidRightP: Vec2? = nil
     var endFailureReason: String? = nil
+    var endFallbackReason: String? = nil
+    var endFallbackPoint: Vec2? = nil
+    var endFallbackCorner: Vec2? = nil
     if case .fillet(let radius, let corner) = endCap, leftRail.count > 1, rightRail.count > 1 {
         let minApproach = max(5.0, radius * 2.0)
         let endPolyline = baseCapPolyline(
@@ -964,21 +990,19 @@ public func buildCaps(
                 emitNoCorner("right", rightForEnd)
             }
         }
-        if let debugCapBoundary {
-            debugCapBoundary(CapBoundaryDebug(
-                endpoint: "end",
-                original: endPolyline,
-                simplified: simplified,
-                corners: infos,
-                chosenIndices: selection.chosen.map { $0.index },
-                chosenThetas: selection.chosen.map { $0.theta },
-                trimPoints: endTrimPoints,
-                arcPoints: endArcPoints
-            ))
-        }
         func fallbackEnd(_ reason: String) {
             if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
                 caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
+            }
+            endFallbackReason = reason
+            endFallbackPoint = averagePoint(simplified) ?? averagePoint(endPolyline)
+            if corner == .left || corner == .both {
+                endFallbackCorner = leftCorner?.point ?? rightCorner?.point
+            } else {
+                endFallbackCorner = rightCorner?.point ?? leftCorner?.point
+            }
+            if debugCapBoundary != nil {
+                print("CAP_BOUNDARY_INVALID endpoint=end reason=\(reason) points=\(simplified.count) edges=0")
             }
             print("CAP_FILLET_FALLBACK endpoint=end fallback=butt reason=\(reason)")
         }
@@ -1005,6 +1029,21 @@ public func buildCaps(
                 fallbackEnd("invalidChain")
                 endHadFillet = false
             }
+        }
+        if let debugCapBoundary {
+            debugCapBoundary(CapBoundaryDebug(
+                endpoint: "end",
+                original: endPolyline,
+                simplified: simplified,
+                corners: infos,
+                chosenIndices: selection.chosen.map { $0.index },
+                chosenThetas: selection.chosen.map { $0.theta },
+                trimPoints: endTrimPoints,
+                arcPoints: endArcPoints,
+                fallbackReason: endFallbackReason,
+                fallbackPoint: endFallbackPoint,
+                fallbackCorner: endFallbackCorner
+            ))
         }
     } else if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
         caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
@@ -1202,6 +1241,9 @@ public struct CapBoundaryDebug: Equatable, Sendable {
     public let chosenThetas: [Double]
     public let trimPoints: [Vec2]
     public let arcPoints: [Vec2]
+    public let fallbackReason: String?
+    public let fallbackPoint: Vec2?
+    public let fallbackCorner: Vec2?
 }
 
 private func sampleCubicSegments(_ cubic: CubicBezier2, segments: Int, source: EdgeSource) -> (segments: [Segment2], points: [Vec2]) {

@@ -361,6 +361,20 @@ func debugOverlayForCapBoundary(_ boundaries: [CapBoundaryDebug]) -> DebugOverla
         svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.1f\" fill=\"%@\" stroke=\"none\"/>", p.x, p.y, radius, fill))
         bounds.expand(by: p)
     }
+    func addCross(_ p: Vec2, size: Double, stroke: String) {
+        let x1 = p.x - size
+        let x2 = p.x + size
+        let y1 = p.y - size
+        let y2 = p.y + size
+        svgParts.append(String(format: "<path d=\"M %.4f %.4f L %.4f %.4f M %.4f %.4f L %.4f %.4f\" fill=\"none\" stroke=\"%@\" stroke-width=\"1.2\"/>", x1, y1, x2, y2, x1, y2, x2, y1, stroke))
+        bounds.expand(by: p)
+    }
+    func averagePoint(_ points: [Vec2]) -> Vec2? {
+        guard !points.isEmpty else { return nil }
+        var sum = Vec2(0, 0)
+        for point in points { sum = sum + point }
+        return sum * (1.0 / Double(points.count))
+    }
     for boundary in boundaries {
         addPolyline(boundary.simplified, stroke: "#455a64", width: 1.0)
         for (index, corner) in boundary.corners.enumerated() {
@@ -377,6 +391,14 @@ func debugOverlayForCapBoundary(_ boundaries: [CapBoundaryDebug]) -> DebugOverla
         }
         for point in boundary.arcPoints {
             addPoint(point, radius: 1.5, fill: "#43a047")
+        }
+        if let reason = boundary.fallbackReason {
+            let anchor = boundary.fallbackPoint ?? averagePoint(boundary.simplified) ?? Vec2(0, 0)
+            let label = "FALLBACK butt: \(reason)"
+            svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#d32f2f\">%@</text>", anchor.x + 4.0, anchor.y - 4.0, label))
+            if let corner = boundary.fallbackCorner {
+                addCross(corner, size: 4.0, stroke: "#d32f2f")
+            }
         }
     }
     let svg = """
