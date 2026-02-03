@@ -44,6 +44,8 @@ public struct CLIOptions {
     var capFilletArcSegments: Int = 8
     var capRoundArcSegments: Int = 64
     var capFilletFixtureOverlays: Bool = false
+    var galleryLinesWavy: Bool = false
+    var galleryLinesBoth: Bool = false
     var debugDumpRailCorners: Bool = false
     var debugDumpRailCornersIndex: Int = 0
     var debugCompare: Bool = false
@@ -190,6 +192,10 @@ func parseArgs(_ args: [String]) -> CLIOptions {
                 options.capRoundArcSegments = max(2, value)
                 index += 1
             }
+        } else if arg == "--gallery-lines-wavy" {
+            options.galleryLinesWavy = true
+        } else if arg == "--gallery-lines-both" {
+            options.galleryLinesBoth = true
         } else if arg == "--cap-fillet-fixture-overlays", index + 1 < args.count {
             let value = args[index + 1].lowercased()
             if value == "on" {
@@ -385,6 +391,8 @@ Debug flags:
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --cap-fillet-arc-segments N  Fillet arc segments (default: 8)
   --cap-round-arc-segments N   Round cap arc segments (default: 64)
+  --gallery-lines-wavy  Render wavy-only line gallery
+  --gallery-lines-both  Render straight + wavy line gallery
   --cap-fillet-fixture-overlays {off|on}  Cap fillet fixture-only overlays (default: off)
   --adaptive-attr-eps N  Adaptive sampling attribute epsilon (default: 0.25)
   --adaptive-attr-eps-angle N  Adaptive sampling angle epsilon in degrees (default: 0.25)

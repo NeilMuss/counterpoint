@@ -1216,9 +1216,17 @@ public func runCLI() {
             options.specPath = positional
         }
     }
-    if options.specPath == nil, options.example?.lowercased() == "gallery_lines" {
+    if options.specPath == nil, options.galleryLinesBoth || options.galleryLinesWavy || options.example?.lowercased() == "gallery_lines" {
         do {
-            try renderGalleryLines(options: options)
+            let mode: GalleryLinesMode
+            if options.galleryLinesBoth {
+                mode = .both
+            } else if options.galleryLinesWavy {
+                mode = .wavy
+            } else {
+                mode = .straight
+            }
+            try renderGalleryLines(options: options, mode: mode)
             exit(0)
         } catch {
             warn("gallery render failed")
@@ -1282,39 +1290,60 @@ public func runCLI() {
     }
 }
 
-private func renderGalleryLines(options: CLIOptions) throws {
+private enum GalleryLinesMode {
+    case straight
+    case wavy
+    case both
+}
+
+private func renderGalleryLines(options: CLIOptions, mode: GalleryLinesMode) throws {
     let galleryDir = "Fixtures/glyphs/gallery_lines"
-    let files = try FileManager.default.contentsOfDirectory(atPath: galleryDir)
+    let allFiles = try FileManager.default.contentsOfDirectory(atPath: galleryDir)
         .filter { $0.hasSuffix(".json") }
         .sorted()
-    if files.isEmpty {
+    if allFiles.isEmpty {
         throw NSError(domain: "cp2-cli.gallery", code: 1, userInfo: [NSLocalizedDescriptionKey: "no gallery fixtures found in \(galleryDir)"])
     }
 
-    let outURL = URL(fileURLWithPath: options.outPath)
-    let outDir: URL
-    if options.outPath.lowercased().hasSuffix(".svg") {
-        outDir = outURL.deletingLastPathComponent().appendingPathComponent("gallery_lines", isDirectory: true)
-    } else {
-        outDir = outURL
+    func renderSubset(files: [String], outDir: URL) throws {
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        for file in files {
+            let path = "\(galleryDir)/\(file)"
+            let spec = try loadSpecOrThrow(path: path)
+            var perOptions = options
+            perOptions.example = nil
+            perOptions.specPath = path
+            let svg = try renderSVGString(options: perOptions, spec: spec)
+            let outPath = outDir.appendingPathComponent(file.replacingOccurrences(of: ".json", with: ".svg"))
+            guard let data = svg.data(using: .utf8) else {
+                throw NSError(domain: "cp2-cli.gallery", code: 2, userInfo: [NSLocalizedDescriptionKey: "failed to encode SVG for \(file)"])
+            }
+            try data.write(to: outPath, options: .atomic)
+            if options.verbose {
+                print("Exported \(data.count) bytes to: \(outPath.path)")
+            }
+        }
     }
-    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
-    for file in files {
-        let path = "\(galleryDir)/\(file)"
-        let spec = try loadSpecOrThrow(path: path)
-        var perOptions = options
-        perOptions.example = nil
-        perOptions.specPath = path
-        let svg = try renderSVGString(options: perOptions, spec: spec)
-        let outPath = outDir.appendingPathComponent(file.replacingOccurrences(of: ".json", with: ".svg"))
-        guard let data = svg.data(using: .utf8) else {
-            throw NSError(domain: "cp2-cli.gallery", code: 2, userInfo: [NSLocalizedDescriptionKey: "failed to encode SVG for \(file)"])
-        }
-        try data.write(to: outPath, options: .atomic)
-        if options.verbose {
-            print("Exported \(data.count) bytes to: \(outPath.path)")
-        }
+    let outURL = URL(fileURLWithPath: options.outPath)
+    let baseOutDir: URL
+    if options.outPath.lowercased().hasSuffix(".svg") {
+        baseOutDir = outURL.deletingLastPathComponent().appendingPathComponent("gallery_lines", isDirectory: true)
+    } else {
+        baseOutDir = outURL
+    }
+
+    let straightFiles = allFiles.filter { !$0.contains("_wavy.v0.json") && !$0.contains("_wavy.json") }
+    let wavyFiles = allFiles.filter { $0.contains("_wavy.v0.json") || $0.contains("_wavy.json") }
+
+    switch mode {
+    case .straight:
+        try renderSubset(files: straightFiles, outDir: baseOutDir)
+    case .wavy:
+        try renderSubset(files: wavyFiles, outDir: baseOutDir)
+    case .both:
+        try renderSubset(files: straightFiles, outDir: baseOutDir.appendingPathComponent("straight", isDirectory: true))
+        try renderSubset(files: wavyFiles, outDir: baseOutDir.appendingPathComponent("wavy", isDirectory: true))
     }
 }
 

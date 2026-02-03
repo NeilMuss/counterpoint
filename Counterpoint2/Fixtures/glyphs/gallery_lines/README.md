@@ -16,6 +16,22 @@ All fixtures share the same render/world frame and a single horizontal heartline
 - line_12_staggered_ramps.v0.json — Staggered left/right ramps (left at t=0.40, right at t=0.60).
 - line_14_offset.v0.json — Constant widths with center offset = 10.
 
+Wavy clones:
+
+- line_01_default_wavy.v0.json — Wavy heartline clone of line_01_default.
+- line_02_roundcap_end_wavy.v0.json — Wavy heartline clone of line_02_roundcap_end.
+- line_03_ramp_symmetric_wavy.v0.json — Wavy heartline clone of line_03_ramp_symmetric.
+- line_04_ramp_left_only_wavy.v0.json — Wavy heartline clone of line_04_ramp_left_only.
+- line_05_piecewise_symmetric_wavy.v0.json — Wavy heartline clone of line_05_piecewise_symmetric.
+- line_06_ramp_alpha_wavy.v0.json — Wavy heartline clone of line_06_ramp_alpha.
+- line_07_piecewise_alpha_middle_wavy.v0.json — Wavy heartline clone of line_07_piecewise_alpha_middle.
+- line_08_fillet_left_wavy.v0.json — Wavy heartline clone of line_08_fillet_left.
+- line_09_fillet_both_wavy.v0.json — Wavy heartline clone of line_09_fillet_both.
+- line_10_mixed_round_fillet_wavy.v0.json — Wavy heartline clone of line_10_mixed_round_fillet.
+- line_11_asym_ramp_fillet_right_wavy.v0.json — Wavy heartline clone of line_11_asym_ramp_fillet_right.
+- line_12_staggered_ramps_wavy.v0.json — Wavy heartline clone of line_12_staggered_ramps.
+- line_14_offset_wavy.v0.json — Wavy heartline clone of line_14_offset.
+
 Render all:
 
 ```bash

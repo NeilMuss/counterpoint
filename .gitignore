@@ -3,3 +3,4 @@
 *.pcm
 .DS_Store
 out/**
+Counterpoint2/out/**
