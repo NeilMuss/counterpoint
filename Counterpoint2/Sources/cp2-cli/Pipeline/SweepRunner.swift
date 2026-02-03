@@ -102,7 +102,8 @@ func runSweep(
                 capLocalIndex: 0,
                 startCap: startCap,
                 endCap: endCap,
-                capFilletArcSegments: options.capFilletArcSegments
+                capFilletArcSegments: options.capFilletArcSegments,
+                capRoundArcSegments: options.capRoundArcSegments
             )
         } else {
                 return boundarySoup(
@@ -144,7 +145,8 @@ func runSweep(
                 capLocalIndex: 0,
                 startCap: startCap,
                 endCap: endCap,
-                capFilletArcSegments: options.capFilletArcSegments
+                capFilletArcSegments: options.capFilletArcSegments,
+                capRoundArcSegments: options.capRoundArcSegments
             )
         }
     }()

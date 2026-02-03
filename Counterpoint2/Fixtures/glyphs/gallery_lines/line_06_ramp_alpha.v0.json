@@ -51,11 +51,16 @@
           "keyframes": [
             {
               "t": 0.0,
-              "value": 50
+              "value": 20
+            },
+            {
+              "t": 0.7,
+              "value": 20,
+              "interpToNext": { "alpha": -3.9 } 
             },
             {
               "t": 1.0,
-              "value": 62.5
+              "value": 100
             }
           ]
         },
@@ -63,11 +68,16 @@
           "keyframes": [
             {
               "t": 0.0,
-              "value": 50
+              "value": 20
+            },
+            {
+              "t": 0.7,
+              "value": 20,
+              "interpToNext": { "alpha": 3.9 } 
             },
             {
               "t": 1.0,
-              "value": 62.5
+              "value": 100
             }
           ]
         },

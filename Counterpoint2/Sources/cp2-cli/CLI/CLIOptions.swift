@@ -42,6 +42,7 @@ public struct CLIOptions {
     var debugRailPerpEps: Double = 1.0e-3
     var debugRailUnitEps: Double = 1.0e-3
     var capFilletArcSegments: Int = 8
+    var capRoundArcSegments: Int = 64
     var capFilletFixtureOverlays: Bool = false
     var debugDumpRailCorners: Bool = false
     var debugDumpRailCornersIndex: Int = 0
@@ -182,6 +183,11 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--cap-fillet-arc-segments", index + 1 < args.count {
             if let value = Int(args[index + 1]) {
                 options.capFilletArcSegments = max(2, value)
+                index += 1
+            }
+        } else if arg == "--cap-round-arc-segments", index + 1 < args.count {
+            if let value = Int(args[index + 1]) {
+                options.capRoundArcSegments = max(2, value)
                 index += 1
             }
         } else if arg == "--cap-fillet-fixture-overlays", index + 1 < args.count {
@@ -378,6 +384,7 @@ Debug flags:
   --debug-rail-perp-eps N   Perp dot epsilon (default: 1e-3)
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --cap-fillet-arc-segments N  Fillet arc segments (default: 8)
+  --cap-round-arc-segments N   Round cap arc segments (default: 64)
   --cap-fillet-fixture-overlays {off|on}  Cap fillet fixture-only overlays (default: off)
   --adaptive-attr-eps N  Adaptive sampling attribute epsilon (default: 0.25)
   --adaptive-attr-eps-angle N  Adaptive sampling angle epsilon in degrees (default: 0.25)

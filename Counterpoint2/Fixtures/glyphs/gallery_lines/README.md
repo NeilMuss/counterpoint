@@ -14,7 +14,6 @@ All fixtures share the same render/world frame and a single horizontal heartline
 - line_10_mixed_round_fillet.v0.json — Start round, end fillet (both).
 - line_11_asym_ramp_fillet_right.v0.json — Left ramp 50 → 70, right constant, end fillet (right).
 - line_12_staggered_ramps.v0.json — Staggered left/right ramps (left at t=0.40, right at t=0.60).
-- line_13_negative_alpha.v0.json — Symmetric ramp with negative alpha.
 - line_14_offset.v0.json — Constant widths with center offset = 10.
 
 Render all:

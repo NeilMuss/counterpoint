@@ -375,6 +375,7 @@ public func buildCaps(
     startCap: CapStyle,
     endCap: CapStyle,
     capFilletArcSegments: Int = 8,
+    capRoundArcSegments: Int = 64,
     debugFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil
 ) -> CapBuildResult {
@@ -414,6 +415,7 @@ public func buildCaps(
     var endRightTrim: Vec2? = nil
     let startDetail = "stroke=\(capNamespace) cap=start idx=\(capLocalIndex)"
     let endDetail = "stroke=\(capNamespace) cap=end idx=\(capLocalIndex)"
+    let roundSegments = max(8, min(512, capRoundArcSegments))
     func failureReason(_ error: FilletError) -> String {
         switch error {
         case .degenerateAngle: return "degenerateAngle"
@@ -641,7 +643,7 @@ public func buildCaps(
             left: leftStart,
             right: rightForStart,
             outward: outward,
-            segments: capFilletArcSegments
+            segments: roundSegments
         )
         if let arcPoints {
             let chainPoints = arcPoints
@@ -987,7 +989,7 @@ public func buildCaps(
             left: leftEnd,
             right: rightForEnd,
             outward: outward,
-            segments: capFilletArcSegments
+            segments: roundSegments
         )
         if let arcPoints {
             let chainPoints = arcPoints
@@ -1568,7 +1570,8 @@ public func boundarySoupGeneral(
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
-    capFilletArcSegments: Int = 8
+    capFilletArcSegments: Int = 8,
+    capRoundArcSegments: Int = 64
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -1766,6 +1769,7 @@ public func boundarySoupGeneral(
         startCap: startCap,
         endCap: endCap,
         capFilletArcSegments: capFilletArcSegments,
+        capRoundArcSegments: capRoundArcSegments,
         debugFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary
     )
@@ -1841,7 +1845,8 @@ public func boundarySoup(
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
-    capFilletArcSegments: Int = 8
+    capFilletArcSegments: Int = 8,
+    capRoundArcSegments: Int = 64
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -1881,7 +1886,8 @@ public func boundarySoup(
         capLocalIndex: capLocalIndex,
         startCap: startCap,
         endCap: endCap,
-        capFilletArcSegments: capFilletArcSegments
+        capFilletArcSegments: capFilletArcSegments,
+        capRoundArcSegments: capRoundArcSegments
     )
 }
 
@@ -1914,7 +1920,8 @@ public func boundarySoupVariableWidth(
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
-    capFilletArcSegments: Int = 8
+    capFilletArcSegments: Int = 8,
+    capRoundArcSegments: Int = 64
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -1955,7 +1962,8 @@ public func boundarySoupVariableWidth(
         capLocalIndex: capLocalIndex,
         startCap: startCap,
         endCap: endCap,
-        capFilletArcSegments: capFilletArcSegments
+        capFilletArcSegments: capFilletArcSegments,
+        capRoundArcSegments: capRoundArcSegments
     )
 }
 
@@ -1989,7 +1997,8 @@ public func boundarySoupVariableWidthAngle(
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
-    capFilletArcSegments: Int = 8
+    capFilletArcSegments: Int = 8,
+    capRoundArcSegments: Int = 64
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -2031,7 +2040,8 @@ public func boundarySoupVariableWidthAngle(
         capLocalIndex: capLocalIndex,
         startCap: startCap,
         endCap: endCap,
-        capFilletArcSegments: capFilletArcSegments
+        capFilletArcSegments: capFilletArcSegments,
+        capRoundArcSegments: capRoundArcSegments
     )
 }
 
@@ -2070,7 +2080,8 @@ public func boundarySoupVariableWidthAngleAlpha(
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
-    capFilletArcSegments: Int = 8
+    capFilletArcSegments: Int = 8,
+    capRoundArcSegments: Int = 64
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -2114,7 +2125,8 @@ public func boundarySoupVariableWidthAngleAlpha(
         capLocalIndex: capLocalIndex,
         startCap: startCap,
         endCap: endCap,
-        capFilletArcSegments: capFilletArcSegments
+        capFilletArcSegments: capFilletArcSegments,
+        capRoundArcSegments: capRoundArcSegments
     )
 }
 

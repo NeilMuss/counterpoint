@@ -1249,6 +1249,9 @@ public func runCLI() {
         let spec: CP2Spec?
         if let path = options.specPath {
             spec = try loadSpecOrThrow(path: path)
+            if let spec {
+                warnKeyframeTimesOutOfRange(spec: spec, warnHandler: warn)
+            }
         } else {
             spec = nil
         }
