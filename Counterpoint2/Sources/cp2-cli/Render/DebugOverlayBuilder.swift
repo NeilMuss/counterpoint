@@ -219,6 +219,8 @@ func makeSamplingWhyOverlay(
         case .flatness: return "#ff3333"
         case .railDeviation: return "#3377ff"
         case .both: return "#9932cc"
+        case .paramDeviation: return "#2e7d32"
+        case .paramAndGeometry: return "#ff8f00"
         case .forcedStop: return "#888888"
         }
     }
@@ -274,6 +276,8 @@ func makeSamplingWhyOverlay(
             case .flatness: return "F"
             case .railDeviation: return "R"
             case .both: return "B"
+            case .paramDeviation: return "P"
+            case .paramAndGeometry: return "M"
             case .forcedStop: return "S"
             }
         }()

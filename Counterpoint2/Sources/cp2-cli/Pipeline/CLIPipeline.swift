@@ -901,15 +901,20 @@ public func renderSVGString(
     }
     if wantsSamplingWhy && !options.viewCenterlineOnly {
         if let sampling = result.sampling {
+            let paramEps = max(options.adaptiveAttrEps, options.adaptiveAttrEpsAngleDeg * Double.pi / 180.0)
             let dotsAll = samplingWhyDots(
                 result: sampling,
                 flatnessEps: options.flatnessEps,
                 railEps: options.flatnessEps,
+                paramEps: paramEps,
                 positionAtS: { pathParam.position(globalT: $0) }
             )
             let worst = dotsAll.max { $0.severity < $1.severity }?.severity ?? 0.0
             let dots: [SamplingWhyDot]
             let labelCount: Int
+            let geomCount = sampling.stats.subdividedByFlatness + sampling.stats.subdividedByRail
+            let attrCount = sampling.stats.subdividedByParam
+            let keyframeHits = sampling.stats.keyframeHits
             if soloWhy {
                 let sorted = dotsAll.sorted {
                     if $0.severity == $1.severity { return $0.s < $1.s }
@@ -917,7 +922,7 @@ public func renderSVGString(
                 }
                 dots = Array(sorted.prefix(soloMaxDots))
                 labelCount = min(soloLabelDots, dots.count)
-                print(String(format: "samplingWhy total=%d drawn=%d labeled=%d worst=%.3f", dotsAll.count, dots.count, labelCount, worst))
+                print(String(format: "samplingWhy total=%d drawn=%d labeled=%d worst=%.3f geometry=%d attr=%d keyframeHits=%d", dotsAll.count, dots.count, labelCount, worst, geomCount, attrCount, keyframeHits))
                 overlays.append(makeSamplingWhyOverlay(
                     dots: dots,
                     labelCount: labelCount,
@@ -930,7 +935,7 @@ public func renderSVGString(
                     addLabelCenters: false
                 ))
             } else {
-                print(String(format: "samplingWhy count=%d worst=%.3f", dotsAll.count, worst))
+                print(String(format: "samplingWhy count=%d worst=%.3f geometry=%d attr=%d keyframeHits=%d", dotsAll.count, worst, geomCount, attrCount, keyframeHits))
                 overlays.append(makeSamplingWhyOverlay(dots: dotsAll))
             }
         } else {
@@ -1219,6 +1224,12 @@ public func runCLI() {
             warn("gallery render failed")
             warn("error: \(error)")
             exit(1)
+        }
+    }
+    if options.specPath == nil, let example = options.example {
+        let galleryPath = "Fixtures/glyphs/gallery_lines/\(example).v0.json"
+        if FileManager.default.fileExists(atPath: galleryPath) {
+            options.specPath = galleryPath
         }
     }
     if options.specPath == nil, options.example?.lowercased() == "e" {

@@ -5,6 +5,10 @@ public struct SamplingConfig: Sendable, Equatable {
     public var flatnessEps: Double = 0.25     // world units
     public var railEps: Double = 0.25         // world units
     public var paramEps: Double? = nil        // dimensionless (optional)
+    public var attrEpsOffset: Double = 0.25   // world units
+    public var attrEpsWidth: Double = 0.25    // world units
+    public var attrEpsAngle: Double = 0.00436 // radians (default ~0.25deg)
+    public var attrEpsAlpha: Double = 0.25    // dimensionless
 
     public var maxDepth: Int = 12
     public var maxSamples: Int = 512
@@ -19,4 +23,3 @@ public struct SamplingConfig: Sendable, Equatable {
 
     public init() {}
 }
-

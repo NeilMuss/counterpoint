@@ -5,6 +5,10 @@ public struct SamplingStats: Sendable, Equatable {
     public var subdividedSegments: Int = 0
     public var forcedStops: Int = 0
     public var maxDepthReached: Int = 0
+    public var subdividedByFlatness: Int = 0
+    public var subdividedByRail: Int = 0
+    public var subdividedByParam: Int = 0
+    public var keyframeHits: Int = 0
 
     // “worst offender” tracking
     public var worstFlatnessErr: Double = 0

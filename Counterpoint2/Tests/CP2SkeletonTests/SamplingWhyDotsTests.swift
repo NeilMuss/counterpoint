@@ -30,15 +30,16 @@ final class SamplingWhyDotsTests: XCTestCase {
             result: result,
             flatnessEps: 0.1,
             railEps: 0.1,
+            paramEps: 0.1,
             positionAtS: { Vec2($0, 0.0) }
         )
 
         XCTAssertEqual(dots.count, 2)
-        XCTAssertEqual(dots[0].reason, .flatness)
+        XCTAssertEqual(dots[0].reason, SamplingWhyReason.flatness)
         XCTAssertGreaterThan(dots[0].severity, 1.0)
         XCTAssertEqual(dots[0].position.x, 0.5, accuracy: 1.0e-9)
 
-        XCTAssertEqual(dots[1].reason, .forcedStop)
+        XCTAssertEqual(dots[1].reason, SamplingWhyReason.forcedStop)
         XCTAssertGreaterThan(dots[1].severity, 0.0)
         XCTAssertEqual(dots[1].position.x, 0.25, accuracy: 1.0e-9)
     }

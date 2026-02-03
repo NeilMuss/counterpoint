@@ -37,6 +37,10 @@ public struct SamplingDebugPoint: Sendable, Equatable {
         reasons.contains { if case .subdividePathFlatness = $0 { return true } else { return false } }
     }
 
+    public var triggersParamChange: Bool {
+        reasons.contains { if case .subdivideParamChange = $0 { return true } else { return false } }
+    }
+
     public var isForcedStop: Bool {
         reasons.contains { $0 == .maxDepthHit || $0 == .maxSamplesHit }
     }

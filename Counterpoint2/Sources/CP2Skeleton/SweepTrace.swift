@@ -483,6 +483,75 @@ public func buildCaps(
         return sum * (1.0 / Double(points.count))
     }
 
+    func normalizeAngle(_ angle: Double) -> Double {
+        var a = angle
+        while a < 0 { a += Double.pi * 2.0 }
+        while a >= Double.pi * 2.0 { a -= Double.pi * 2.0 }
+        return a
+    }
+
+    func angleBetweenCCW(start: Double, end: Double, mid: Double) -> Bool {
+        let a0 = normalizeAngle(start)
+        let a1 = normalizeAngle(end)
+        let am = normalizeAngle(mid)
+        let deltaEnd = normalizeAngle(a1 - a0)
+        let deltaMid = normalizeAngle(am - a0)
+        return deltaMid <= deltaEnd
+    }
+
+    func roundCapArcPoints(left: Vec2, right: Vec2, outward: Vec2, segments: Int) -> [Vec2]? {
+        let span = (right - left)
+        let distance = span.length
+        let radius = 0.5 * distance
+        if radius <= Epsilon.defaultValue { return nil }
+        let center = (left + right) * 0.5
+        let outLen = outward.length
+        if outLen <= Epsilon.defaultValue { return nil }
+        let out = outward * (1.0 / outLen)
+        let a0 = atan2(left.y - center.y, left.x - center.x)
+        let a1 = atan2(right.y - center.y, right.x - center.x)
+        let am = atan2(out.y, out.x)
+        let useCCW = angleBetweenCCW(start: a0, end: a1, mid: am)
+        let steps = max(2, segments + 1)
+        var points: [Vec2] = []
+        points.reserveCapacity(steps)
+        let deltaCCW = normalizeAngle(a1 - a0)
+        let delta = useCCW ? deltaCCW : -normalizeAngle(a0 - a1)
+        for i in 0..<steps {
+            let t = Double(i) / Double(steps - 1)
+            let angle = a0 + delta * t
+            points.append(Vec2(center.x + cos(angle) * radius, center.y + sin(angle) * radius))
+        }
+        if points.count >= 2 {
+            points[0] = left
+            points[points.count - 1] = right
+        }
+        return points
+    }
+
+    func railTangent(atStart: Bool) -> Vec2? {
+        guard leftRail.count > 1, rightRail.count > 1 else { return nil }
+        let leftDir = atStart ? (leftRail[1] - leftRail[0]) : (leftRail[leftRail.count - 1] - leftRail[leftRail.count - 2])
+        let rightDir: Vec2
+        if atStart {
+            rightDir = useReversedRight
+                ? (rightRail[rightRail.count - 2] - rightRail[rightRail.count - 1])
+                : (rightRail[1] - rightRail[0])
+        } else {
+            rightDir = useReversedRight
+                ? (rightRail[1] - rightRail[0])
+                : (rightRail[rightRail.count - 1] - rightRail[rightRail.count - 2])
+        }
+        let dir = leftDir + rightDir
+        let dirLen = dir.length
+        if dirLen > Epsilon.defaultValue { return dir * (1.0 / dirLen) }
+        let leftLen = leftDir.length
+        if leftLen > Epsilon.defaultValue { return leftDir * (1.0 / leftLen) }
+        let rightLen = rightDir.length
+        if rightLen > Epsilon.defaultValue { return rightDir * (1.0 / rightLen) }
+        return nil
+    }
+
     func pointInPolygon(_ point: Vec2, polygon: [Vec2]) -> Bool {
         guard polygon.count >= 3 else { return false }
         var inside = false
@@ -559,7 +628,81 @@ public func buildCaps(
     var startFallbackReason: String? = nil
     var startFallbackPoint: Vec2? = nil
     var startFallbackCorner: Vec2? = nil
-    if case .fillet(let radius, let corner) = startCap, leftRail.count > 1, rightRail.count > 1 {
+    if case .round = startCap, leftRail.count > 1, rightRail.count > 1 {
+        let startPolyline = baseCapPolyline(
+            leftRail: leftRail,
+            rightRail: rightRail,
+            atStart: true,
+            minApproach: 0.0
+        )
+        let tangent = railTangent(atStart: true)
+        let outward = tangent.map { Vec2(-$0.x, -$0.y) } ?? Vec2(0, 0)
+        let arcPoints = roundCapArcPoints(
+            left: leftStart,
+            right: rightForStart,
+            outward: outward,
+            segments: capFilletArcSegments
+        )
+        if let arcPoints {
+            let chainPoints = arcPoints
+            caps.append(contentsOf: segmentsFromPoints(chainPoints, source: .capStartEdge(role: .joinLR, detail: "\(startDetail) round")))
+            startLeftTrim = leftStart
+            startRightTrim = rightForStart
+            if debugCapBoundary != nil {
+                print(String(format: "CAP_KIND endpoint=start kind=round corner=none r=%.6f", 0.5 * (rightForStart - leftStart).length))
+                print("CAP_CHAIN_RAW points=\(chainPoints.count) edges=\(max(0, chainPoints.count - 1))")
+                print("CAP_CHAIN_SIMPLIFIED points=\(chainPoints.count) edges=\(max(0, chainPoints.count - 1))")
+                print("CAP_CHAIN_CONNECTED ok=\(chainPoints.count >= 2)")
+                debugCapBoundary?(CapBoundaryDebug(
+                    endpoint: "start",
+                    original: chainPoints,
+                    simplified: chainPoints,
+                    corners: cornerInfos(for: chainPoints),
+                    chosenIndices: [],
+                    chosenThetas: [],
+                    trimPoints: [leftStart, rightForStart],
+                    arcPoints: arcPoints,
+                    fallbackReason: nil,
+                    fallbackPoint: nil,
+                    fallbackCorner: nil
+                ))
+            }
+        } else {
+            if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
+                caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
+            }
+            print("CAP_ROUND_FALLBACK endpoint=start reason=degenerate")
+            if debugCapBoundary != nil {
+                print("CAP_KIND endpoint=start kind=round corner=none r=0.000000")
+                print("CAP_CHAIN_RAW points=\(startPolyline.count) edges=\(max(0, startPolyline.count - 1))")
+                print("CAP_CHAIN_SIMPLIFIED points=\(startPolyline.count) edges=\(max(0, startPolyline.count - 1))")
+                print("CAP_CHAIN_CONNECTED ok=\(startPolyline.count >= 2)")
+                debugCapBoundary?(CapBoundaryDebug(
+                    endpoint: "start",
+                    original: startPolyline,
+                    simplified: startPolyline,
+                    corners: cornerInfos(for: startPolyline),
+                    chosenIndices: [],
+                    chosenThetas: [],
+                    trimPoints: [leftStart, rightForStart],
+                    arcPoints: [],
+                    fallbackReason: "roundFallback",
+                    fallbackPoint: averagePoint(startPolyline),
+                    fallbackCorner: nil
+                ))
+            }
+        }
+    } else if case .ball = startCap, leftRail.count > 1, rightRail.count > 1 {
+        if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
+            caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
+        }
+        if debugCapBoundary != nil {
+            print("CAP_KIND endpoint=start kind=ball corner=none r=0.000000")
+            print("CAP_CHAIN_RAW points=2 edges=1")
+            print("CAP_CHAIN_SIMPLIFIED points=2 edges=1")
+            print("CAP_CHAIN_CONNECTED ok=true")
+        }
+    } else if case .fillet(let radius, let corner) = startCap, leftRail.count > 1, rightRail.count > 1 {
         let minApproach = max(5.0, radius * 2.0)
         let startPolyline = baseCapPolyline(
             leftRail: leftRail,
@@ -573,6 +716,10 @@ public func buildCaps(
         let minCornerAngle = 10.0 * Double.pi / 180.0
         let selection = chooseCornerPair(from: infos, minAngle: minCornerAngle)
         if debugCapBoundary != nil {
+            print(String(format: "CAP_KIND endpoint=start kind=fillet corner=%@ r=%.6f", corner.rawValue, radius))
+            print("CAP_CHAIN_RAW points=\(startPolyline.count) edges=\(max(0, startPolyline.count - 1))")
+            print("CAP_CHAIN_SIMPLIFIED points=\(simplified.count) edges=\(max(0, simplified.count - 1))")
+            print("CAP_CHAIN_CONNECTED ok=\(simplified.count >= 2)")
             print("CAP_BOUNDARY_RAW endpoint=start n=\(startPolyline.count)")
             for (index, point) in startPolyline.enumerated() {
                 print(String(format: "  i=%d P=(%.6f,%.6f)", index, point.x, point.y))
@@ -798,6 +945,25 @@ public func buildCaps(
         }
     } else if shouldEmitCapJoin(kind: "start", left: leftStart, right: rightForStart, widthScale: widthStart) {
         caps.append(Segment2(leftStart, rightForStart, source: .capStartEdge(role: .joinLR, detail: startDetail)))
+        if debugCapBoundary != nil {
+            print("CAP_KIND endpoint=start kind=butt corner=none r=0.000000")
+            print("CAP_CHAIN_RAW points=2 edges=1")
+            print("CAP_CHAIN_SIMPLIFIED points=2 edges=1")
+            print("CAP_CHAIN_CONNECTED ok=true")
+            debugCapBoundary?(CapBoundaryDebug(
+                endpoint: "start",
+                original: [leftStart, rightForStart],
+                simplified: [leftStart, rightForStart],
+                corners: cornerInfos(for: [leftStart, rightForStart]),
+                chosenIndices: [],
+                chosenThetas: [],
+                trimPoints: [leftStart, rightForStart],
+                arcPoints: [],
+                fallbackReason: nil,
+                fallbackPoint: nil,
+                fallbackCorner: nil
+            ))
+        }
     }
 
     // End cap fillets (plan-first on base polyline)
@@ -808,7 +974,81 @@ public func buildCaps(
     var endFallbackReason: String? = nil
     var endFallbackPoint: Vec2? = nil
     var endFallbackCorner: Vec2? = nil
-    if case .fillet(let radius, let corner) = endCap, leftRail.count > 1, rightRail.count > 1 {
+    if case .round = endCap, leftRail.count > 1, rightRail.count > 1 {
+        let endPolyline = baseCapPolyline(
+            leftRail: leftRail,
+            rightRail: rightRail,
+            atStart: false,
+            minApproach: 0.0
+        )
+        let tangent = railTangent(atStart: false)
+        let outward = tangent ?? Vec2(0, 0)
+        let arcPoints = roundCapArcPoints(
+            left: leftEnd,
+            right: rightForEnd,
+            outward: outward,
+            segments: capFilletArcSegments
+        )
+        if let arcPoints {
+            let chainPoints = arcPoints
+            caps.append(contentsOf: segmentsFromPoints(chainPoints, source: .capEndEdge(role: .joinLR, detail: "\(endDetail) round")))
+            endLeftTrim = leftEnd
+            endRightTrim = rightForEnd
+            if debugCapBoundary != nil {
+                print(String(format: "CAP_KIND endpoint=end kind=round corner=none r=%.6f", 0.5 * (rightForEnd - leftEnd).length))
+                print("CAP_CHAIN_RAW points=\(chainPoints.count) edges=\(max(0, chainPoints.count - 1))")
+                print("CAP_CHAIN_SIMPLIFIED points=\(chainPoints.count) edges=\(max(0, chainPoints.count - 1))")
+                print("CAP_CHAIN_CONNECTED ok=\(chainPoints.count >= 2)")
+                debugCapBoundary?(CapBoundaryDebug(
+                    endpoint: "end",
+                    original: chainPoints,
+                    simplified: chainPoints,
+                    corners: cornerInfos(for: chainPoints),
+                    chosenIndices: [],
+                    chosenThetas: [],
+                    trimPoints: [leftEnd, rightForEnd],
+                    arcPoints: arcPoints,
+                    fallbackReason: nil,
+                    fallbackPoint: nil,
+                    fallbackCorner: nil
+                ))
+            }
+        } else {
+            if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
+                caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
+            }
+            print("CAP_ROUND_FALLBACK endpoint=end reason=degenerate")
+            if debugCapBoundary != nil {
+                print("CAP_KIND endpoint=end kind=round corner=none r=0.000000")
+                print("CAP_CHAIN_RAW points=\(endPolyline.count) edges=\(max(0, endPolyline.count - 1))")
+                print("CAP_CHAIN_SIMPLIFIED points=\(endPolyline.count) edges=\(max(0, endPolyline.count - 1))")
+                print("CAP_CHAIN_CONNECTED ok=\(endPolyline.count >= 2)")
+                debugCapBoundary?(CapBoundaryDebug(
+                    endpoint: "end",
+                    original: endPolyline,
+                    simplified: endPolyline,
+                    corners: cornerInfos(for: endPolyline),
+                    chosenIndices: [],
+                    chosenThetas: [],
+                    trimPoints: [leftEnd, rightForEnd],
+                    arcPoints: [],
+                    fallbackReason: "roundFallback",
+                    fallbackPoint: averagePoint(endPolyline),
+                    fallbackCorner: nil
+                ))
+            }
+        }
+    } else if case .ball = endCap, leftRail.count > 1, rightRail.count > 1 {
+        if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
+            caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
+        }
+        if debugCapBoundary != nil {
+            print("CAP_KIND endpoint=end kind=ball corner=none r=0.000000")
+            print("CAP_CHAIN_RAW points=2 edges=1")
+            print("CAP_CHAIN_SIMPLIFIED points=2 edges=1")
+            print("CAP_CHAIN_CONNECTED ok=true")
+        }
+    } else if case .fillet(let radius, let corner) = endCap, leftRail.count > 1, rightRail.count > 1 {
         let minApproach = max(5.0, radius * 2.0)
         let endPolyline = baseCapPolyline(
             leftRail: leftRail,
@@ -822,6 +1062,10 @@ public func buildCaps(
         let minCornerAngle = 10.0 * Double.pi / 180.0
         let selection = chooseCornerPair(from: infos, minAngle: minCornerAngle)
         if debugCapBoundary != nil {
+            print(String(format: "CAP_KIND endpoint=end kind=fillet corner=%@ r=%.6f", corner.rawValue, radius))
+            print("CAP_CHAIN_RAW points=\(endPolyline.count) edges=\(max(0, endPolyline.count - 1))")
+            print("CAP_CHAIN_SIMPLIFIED points=\(simplified.count) edges=\(max(0, simplified.count - 1))")
+            print("CAP_CHAIN_CONNECTED ok=\(simplified.count >= 2)")
             print("CAP_BOUNDARY_RAW endpoint=end n=\(endPolyline.count)")
             for (index, point) in endPolyline.enumerated() {
                 print(String(format: "  i=%d P=(%.6f,%.6f)", index, point.x, point.y))
@@ -1047,6 +1291,25 @@ public func buildCaps(
         }
     } else if shouldEmitCapJoin(kind: "end", left: leftEnd, right: rightForEnd, widthScale: widthEnd) {
         caps.append(Segment2(rightForEnd, leftEnd, source: .capEndEdge(role: .joinLR, detail: endDetail)))
+        if debugCapBoundary != nil {
+            print("CAP_KIND endpoint=end kind=butt corner=none r=0.000000")
+            print("CAP_CHAIN_RAW points=2 edges=1")
+            print("CAP_CHAIN_SIMPLIFIED points=2 edges=1")
+            print("CAP_CHAIN_CONNECTED ok=true")
+            debugCapBoundary?(CapBoundaryDebug(
+                endpoint: "end",
+                original: [leftEnd, rightForEnd],
+                simplified: [leftEnd, rightForEnd],
+                corners: cornerInfos(for: [leftEnd, rightForEnd]),
+                chosenIndices: [],
+                chosenThetas: [],
+                trimPoints: [leftEnd, rightForEnd],
+                arcPoints: [],
+                fallbackReason: nil,
+                fallbackPoint: nil,
+                fallbackCorner: nil
+            ))
+        }
     }
     return CapBuildResult(
         segments: caps,
@@ -1283,10 +1546,15 @@ public func boundarySoupGeneral(
     adaptiveSampling: Bool = false,
     flatnessEps: Double = 0.25,
     railEps: Double = 0.25,
+    attrEpsOffset: Double = 0.25,
+    attrEpsWidth: Double = 0.25,
+    attrEpsAngle: Double = 0.00436,
+    attrEpsAlpha: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     warpGT: @escaping (Double) -> Double = { $0 },
     styleAtGT: @escaping (Double) -> SweepStyle,
+    alphaAtGT: ((Double) -> Double)? = nil,
     keyframeTs: [Double] = [],
     debugSampling: ((SamplingResult) -> Void)? = nil,
     debugCapEndpoints: ((CapEndpointsDebug) -> Void)? = nil,
@@ -1321,28 +1589,55 @@ public func boundarySoupGeneral(
     }
     cfg.flatnessEps = flatnessEps
     cfg.railEps = railEps
+    cfg.attrEpsOffset = attrEpsOffset
+    cfg.attrEpsWidth = attrEpsWidth
+    cfg.attrEpsAngle = attrEpsAngle
+    cfg.attrEpsAlpha = attrEpsAlpha
+    cfg.paramEps = max(attrEpsOffset, max(attrEpsWidth, max(attrEpsAngle, attrEpsAlpha)))
     cfg.maxDepth = maxDepth
     cfg.maxSamples = maxSamples
 
     let sampler = GlobalTSampler()
+    let paramsAt: (@Sendable (Double) -> GlobalTSampler.StrokeParamsSample?) = { gt in
+        let t = warpGT(gt)
+        let style = styleAtGT(t)
+        let alpha = alphaAtGT?(t) ?? 0.0
+        return GlobalTSampler.StrokeParamsSample(
+            widthLeft: style.widthLeft,
+            widthRight: style.widthRight,
+            theta: style.angle,
+            offset: style.offset,
+            alpha: alpha
+        )
+    }
 
     // IMPORTANT:
     // - When adaptiveSampling is false, we pass railProbe=nil to avoid doing
     //   any extra work or generating trace noise.
+    let paramsAtOpt: (@Sendable (Double) -> GlobalTSampler.StrokeParamsSample?)? =
+        adaptiveSampling ? paramsAt : (nil as (@Sendable (Double) -> GlobalTSampler.StrokeParamsSample?)?)
     let sampling = sampler.sampleGlobalT(
         config: cfg,
         positionAt: positionAtGT,
-        railProbe: adaptiveSampling ? probe : nil
+        railProbe: adaptiveSampling ? probe : nil,
+        paramsAt: paramsAtOpt
     )
 
     // Step 3.5: expose sampling trace to the caller (e.g., cp2-cli debug SVG)
-    debugSampling?(sampling)
+    var samplingOutput = sampling
 
     // Preserve the older behavior: even in adaptive mode, ensure a minimum uniform density.
     var samples: [Double] = adaptiveSampling
         ? mergeWithUniformSamples(sampling.ts, minCount: max(2, sampleCount))
         : sampling.ts
-    samples = injectKeyframeSamples(samples, keyframes: keyframeTs, eps: cfg.tEps)
+    let injected = injectKeyframeSamplesWithCount(samples, keyframes: keyframeTs, eps: cfg.tEps)
+    samples = injected.samples
+    if injected.insertedCount > 0 {
+        var stats = samplingOutput.stats
+        stats.keyframeHits = injected.insertedCount
+        samplingOutput = SamplingResult(ts: samplingOutput.ts, trace: samplingOutput.trace, stats: stats)
+    }
+    debugSampling?(samplingOutput)
 
     let count = max(2, samples.count)
 
@@ -1527,6 +1822,10 @@ public func boundarySoup(
     adaptiveSampling: Bool = false,
     flatnessEps: Double = 0.25,
     railEps: Double = 0.25,
+    attrEpsOffset: Double = 0.25,
+    attrEpsWidth: Double = 0.25,
+    attrEpsAngle: Double = 0.00436,
+    attrEpsAlpha: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     keyframeTs: [Double] = [],
@@ -1551,6 +1850,10 @@ public func boundarySoup(
         adaptiveSampling: adaptiveSampling,
         flatnessEps: flatnessEps,
         railEps: railEps,
+        attrEpsOffset: attrEpsOffset,
+        attrEpsWidth: attrEpsWidth,
+        attrEpsAngle: attrEpsAngle,
+        attrEpsAlpha: attrEpsAlpha,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         styleAtGT: { _ in
@@ -1564,6 +1867,7 @@ public func boundarySoup(
                 angleIsRelative: true
             )
         },
+        alphaAtGT: nil,
         keyframeTs: keyframeTs,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
@@ -1590,6 +1894,10 @@ public func boundarySoupVariableWidth(
     adaptiveSampling: Bool = false,
     flatnessEps: Double = 0.25,
     railEps: Double = 0.25,
+    attrEpsOffset: Double = 0.25,
+    attrEpsWidth: Double = 0.25,
+    attrEpsAngle: Double = 0.00436,
+    attrEpsAlpha: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
@@ -1615,6 +1923,10 @@ public func boundarySoupVariableWidth(
         adaptiveSampling: adaptiveSampling,
         flatnessEps: flatnessEps,
         railEps: railEps,
+        attrEpsOffset: attrEpsOffset,
+        attrEpsWidth: attrEpsWidth,
+        attrEpsAngle: attrEpsAngle,
+        attrEpsAlpha: attrEpsAlpha,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         styleAtGT: { t in
@@ -1629,6 +1941,7 @@ public func boundarySoupVariableWidth(
                 angleIsRelative: true
             )
         },
+        alphaAtGT: nil,
         keyframeTs: keyframeTs,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
@@ -1654,6 +1967,10 @@ public func boundarySoupVariableWidthAngle(
     adaptiveSampling: Bool = false,
     flatnessEps: Double = 0.25,
     railEps: Double = 0.25,
+    attrEpsOffset: Double = 0.25,
+    attrEpsWidth: Double = 0.25,
+    attrEpsAngle: Double = 0.00436,
+    attrEpsAlpha: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
@@ -1681,6 +1998,10 @@ public func boundarySoupVariableWidthAngle(
         adaptiveSampling: adaptiveSampling,
         flatnessEps: flatnessEps,
         railEps: railEps,
+        attrEpsOffset: attrEpsOffset,
+        attrEpsWidth: attrEpsWidth,
+        attrEpsAngle: attrEpsAngle,
+        attrEpsAlpha: attrEpsAlpha,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         styleAtGT: { t in
@@ -1697,6 +2018,7 @@ public func boundarySoupVariableWidthAngle(
                 angleIsRelative: true
             )
         },
+        alphaAtGT: nil,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
         debugRailSummary: debugRailSummary,
@@ -1721,6 +2043,10 @@ public func boundarySoupVariableWidthAngleAlpha(
     adaptiveSampling: Bool = false,
     flatnessEps: Double = 0.25,
     railEps: Double = 0.25,
+    attrEpsOffset: Double = 0.25,
+    attrEpsWidth: Double = 0.25,
+    attrEpsAngle: Double = 0.00436,
+    attrEpsAlpha: Double = 0.25,
     maxDepth: Int = 12,
     maxSamples: Int = 512,
     widthAtT: @escaping (Double) -> Double,
@@ -1753,6 +2079,10 @@ public func boundarySoupVariableWidthAngleAlpha(
         adaptiveSampling: adaptiveSampling,
         flatnessEps: flatnessEps,
         railEps: railEps,
+        attrEpsOffset: attrEpsOffset,
+        attrEpsWidth: attrEpsWidth,
+        attrEpsAngle: attrEpsAngle,
+        attrEpsAlpha: attrEpsAlpha,
         maxDepth: maxDepth,
         maxSamples: maxSamples,
         warpGT: { gt in gt },
@@ -1770,6 +2100,7 @@ public func boundarySoupVariableWidthAngleAlpha(
                 angleIsRelative: angleIsRelative
             )
         },
+        alphaAtGT: alphaAtT,
         keyframeTs: keyframeTs,
         debugSampling: debugSampling,
         debugCapEndpoints: debugCapEndpoints,
@@ -1930,6 +2261,18 @@ func injectKeyframeSamples(_ samples: [Double], keyframes: [Double], eps: Double
         last = t
     }
     return result
+}
+
+func injectKeyframeSamplesWithCount(_ samples: [Double], keyframes: [Double], eps: Double) -> (samples: [Double], insertedCount: Int) {
+    guard !keyframes.isEmpty else { return (samples, 0) }
+    var inserted = 0
+    for key in keyframes {
+        let clamped = max(0.0, min(1.0, key))
+        let exists = samples.contains { abs($0 - clamped) <= eps }
+        if !exists { inserted += 1 }
+    }
+    let merged = injectKeyframeSamples(samples, keyframes: keyframes, eps: eps)
+    return (merged, inserted)
 }
 
 // MARK: - Loop tracing (unchanged from your pasted file)

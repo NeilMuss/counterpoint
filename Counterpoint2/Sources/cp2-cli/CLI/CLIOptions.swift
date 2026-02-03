@@ -63,6 +63,8 @@ public struct CLIOptions {
     var allowFixedSampling: Bool = false
     var arcSamplesWasSet: Bool = false
     var flatnessEps: Double = 0.25
+    var adaptiveAttrEps: Double = 0.25
+    var adaptiveAttrEpsAngleDeg: Double = 0.25
     var maxDepth: Int = 12
     var maxSamples: Int = 512
     var canvasOverride: CanvasSize? = nil
@@ -279,6 +281,12 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--flatness-eps", index + 1 < args.count {
             options.flatnessEps = Double(args[index + 1]) ?? options.flatnessEps
             index += 1
+        } else if arg == "--adaptive-attr-eps", index + 1 < args.count {
+            options.adaptiveAttrEps = Double(args[index + 1]) ?? options.adaptiveAttrEps
+            index += 1
+        } else if arg == "--adaptive-attr-eps-angle", index + 1 < args.count {
+            options.adaptiveAttrEpsAngleDeg = Double(args[index + 1]) ?? options.adaptiveAttrEpsAngleDeg
+            index += 1
         } else if arg == "--max-depth", index + 1 < args.count {
             options.maxDepth = max(0, Int(args[index + 1]) ?? options.maxDepth)
             index += 1
@@ -371,6 +379,8 @@ Debug flags:
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --cap-fillet-arc-segments N  Fillet arc segments (default: 8)
   --cap-fillet-fixture-overlays {off|on}  Cap fillet fixture-only overlays (default: off)
+  --adaptive-attr-eps N  Adaptive sampling attribute epsilon (default: 0.25)
+  --adaptive-attr-eps-angle N  Adaptive sampling angle epsilon in degrees (default: 0.25)
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index
   --debug-dump-rail-corners-index K  Rail corner index (default: 0)
   --debug-heartline-resolve  Dump ink keys and heartline resolution summary

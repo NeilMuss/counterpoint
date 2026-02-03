@@ -5,6 +5,8 @@ public enum SamplingWhyReason: Sendable, Equatable {
     case flatness
     case railDeviation
     case both
+    case paramDeviation
+    case paramAndGeometry
     case forcedStop
 }
 
@@ -40,10 +42,12 @@ public func samplingWhyDots(
     result: SamplingResult,
     flatnessEps: Double,
     railEps: Double,
+    paramEps: Double?,
     positionAtS: (Double) -> Vec2
 ) -> [SamplingWhyDot] {
     let epsFlat = max(flatnessEps, 1.0e-12)
     let epsRail = max(railEps, 1.0e-12)
+    let epsParam = max(paramEps ?? 0.0, 1.0e-12)
 
     return result.debugPoints().compactMap { point -> SamplingWhyDot? in
         let isDecision =
@@ -55,12 +59,17 @@ public func samplingWhyDots(
         let forced = point.action == .forcedStop || point.isForcedStop
         let flat = point.triggersFlatness
         let rail = point.triggersRailDeviation
+        let param = point.triggersParamChange
 
         let reason: SamplingWhyReason
         if forced {
             reason = .forcedStop
+        } else if param && (flat || rail) {
+            reason = .paramAndGeometry
         } else if flat && rail {
             reason = .both
+        } else if param {
+            reason = .paramDeviation
         } else if flat {
             reason = .flatness
         } else if rail {
@@ -71,7 +80,8 @@ public func samplingWhyDots(
 
         let flatNorm = (point.errors.flatnessErr ?? 0.0) / epsFlat
         let railNorm = (point.errors.railErr ?? 0.0) / epsRail
-        var severity = max(flatNorm, railNorm)
+        let paramNorm = (point.errors.paramErr ?? 0.0) / epsParam
+        var severity = max(flatNorm, max(railNorm, paramNorm))
         if forced && severity <= 0.0 {
             severity = 1.0
         }

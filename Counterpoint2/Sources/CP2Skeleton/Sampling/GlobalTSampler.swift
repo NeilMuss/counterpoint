@@ -19,9 +19,7 @@ public struct GlobalTSampler {
             return SamplingResult(ts: ts, trace: [], stats: SamplingStats())
 
         case .adaptive:
-            // STEP 2: geometry-only adaptive sampling (path flatness only).
-            // railProbe/paramsAt are intentionally ignored in Step 2.
-            return adaptiveSamples(config: config, positionAt: positionAt, railProbe: railProbe)
+            return adaptiveSamples(config: config, positionAt: positionAt, railProbe: railProbe, paramsAt: paramsAt)
         }
     }
 
@@ -56,7 +54,8 @@ public struct GlobalTSampler {
     private func adaptiveSamples(
         config: SamplingConfig,
         positionAt: PositionAtS,
-        railProbe: (any RailProbe)?
+        railProbe: (any RailProbe)?,
+        paramsAt: (@Sendable (Double) -> StrokeParamsSample?)?
     ) -> SamplingResult {
 
         // Accumulate accepted endpoints; we'll sort+dedup at the end.
@@ -123,10 +122,14 @@ public struct GlobalTSampler {
             var needsSubdivision = false
             var reasons: [SampleReason] = []
             var errors = SampleErrors()
+            var triggeredFlatness = false
+            var triggeredRail = false
+            var triggeredParam = false
 
             // Rule 1: path flatness
             if err > config.flatnessEps {
                 needsSubdivision = true
+                triggeredFlatness = true
                 reasons.append(.subdividePathFlatness(err: err))
                 errors.flatnessErr = err
             }
@@ -146,8 +149,22 @@ public struct GlobalTSampler {
 
                 if railErr > config.railEps {
                     needsSubdivision = true
+                    triggeredRail = true
                     reasons.append(.subdivideRailDeviation(err: railErr))
                     errors.railErr = railErr
+                }
+            }
+
+            // Rule 3: parameter/attribute deviation
+            if let paramsAt {
+                if let paramErr = paramDeviationError(s0: s0, sm: sm, s1: s1, paramsAt: paramsAt, config: config) {
+                    stats.worstParamErr = max(stats.worstParamErr, paramErr)
+                    if paramErr > max(config.attrEpsOffset, max(config.attrEpsWidth, max(config.attrEpsAngle, config.attrEpsAlpha))) {
+                        needsSubdivision = true
+                        triggeredParam = true
+                        reasons.append(.subdivideParamChange(err: paramErr))
+                        errors.paramErr = paramErr
+                    }
                 }
             }
 
@@ -164,6 +181,9 @@ public struct GlobalTSampler {
 
             // Needs subdivision.
             stats.subdividedSegments += 1
+            if triggeredFlatness { stats.subdividedByFlatness += 1 }
+            if triggeredRail { stats.subdividedByRail += 1 }
+            if triggeredParam { stats.subdividedByParam += 1 }
             trace.append(SampleDecision(
                 t0: s0, t1: s1, tm: sm, depth: depth,
                 action: .subdivided,
@@ -252,13 +272,67 @@ public struct GlobalTSampler {
 
     // Optional: used later (Step 3+)
     public struct StrokeParamsSample: Sendable, Equatable {
-        public let width: Double
+        public let widthLeft: Double
+        public let widthRight: Double
         public let theta: Double
         public let offset: Double
-        public init(width: Double, theta: Double, offset: Double) {
-            self.width = width
+        public let alpha: Double
+        public init(widthLeft: Double, widthRight: Double, theta: Double, offset: Double, alpha: Double) {
+            self.widthLeft = widthLeft
+            self.widthRight = widthRight
             self.theta = theta
             self.offset = offset
+            self.alpha = alpha
         }
+    }
+
+    private func paramDeviationError(
+        s0: Double,
+        sm: Double,
+        s1: Double,
+        paramsAt: (@Sendable (Double) -> StrokeParamsSample?),
+        config: SamplingConfig
+    ) -> Double? {
+        guard let p0 = paramsAt(s0), let p1 = paramsAt(s1) else { return nil }
+        let denom = s1 - s0
+        if abs(denom) <= config.tEps { return nil }
+
+        func deviationAt(_ t: Double) -> (maxDiff: Double, exceeds: Bool)? {
+            guard let pt = paramsAt(t) else { return nil }
+            let w = (t - s0) / denom
+            let expWidthLeft = p0.widthLeft + w * (p1.widthLeft - p0.widthLeft)
+            let expWidthRight = p0.widthRight + w * (p1.widthRight - p0.widthRight)
+            let expTheta = p0.theta + w * (p1.theta - p0.theta)
+            let expOffset = p0.offset + w * (p1.offset - p0.offset)
+            let expAlpha = p0.alpha + w * (p1.alpha - p0.alpha)
+
+            let dWidthLeft = abs(pt.widthLeft - expWidthLeft)
+            let dWidthRight = abs(pt.widthRight - expWidthRight)
+            let dTheta = abs(pt.theta - expTheta)
+            let dOffset = abs(pt.offset - expOffset)
+            let dAlpha = abs(pt.alpha - expAlpha)
+
+            let maxDiff = max(dOffset, max(dWidthLeft, max(dWidthRight, max(dTheta, dAlpha))))
+            let exceeds =
+                dOffset > config.attrEpsOffset ||
+                dWidthLeft > config.attrEpsWidth ||
+                dWidthRight > config.attrEpsWidth ||
+                dTheta > config.attrEpsAngle ||
+                dAlpha > config.attrEpsAlpha
+            return (maxDiff, exceeds)
+        }
+
+        let q1 = s0 + 0.25 * denom
+        let q3 = s0 + 0.75 * denom
+        let sampleTs = [sm, q1, q3]
+        var maxDiff = 0.0
+        var anyExceeds = false
+        for t in sampleTs {
+            if let dev = deviationAt(t) {
+                maxDiff = max(maxDiff, dev.maxDiff)
+                if dev.exceeds { anyExceeds = true }
+            }
+        }
+        return anyExceeds ? maxDiff : nil
     }
 }
