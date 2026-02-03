@@ -51,11 +51,32 @@
           "keyframes": [
             {
               "t": 0.0,
-              "value": 50
+              "value": 15,
+              "knot": "cusp"
+            },
+            {
+              "t": 2.0,
+              "value": 50,
+              "knot": "cusp"
+            },
+            {
+              "t": 4.0,
+              "value": 15,
+              "knot": "cusp"
+            },
+            {
+              "t": 6.0,
+              "value": 5,
+              "knot": "cusp"
+            },
+            {
+              "t": 8.0,
+              "value": 60,
+              "knot": "cusp"
             },
             {
               "t": 1.0,
-              "value": 62.5
+              "value": 100
             }
           ]
         },
