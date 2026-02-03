@@ -1211,6 +1211,16 @@ public func runCLI() {
             options.specPath = positional
         }
     }
+    if options.specPath == nil, options.example?.lowercased() == "gallery_lines" {
+        do {
+            try renderGalleryLines(options: options)
+            exit(0)
+        } catch {
+            warn("gallery render failed")
+            warn("error: \(error)")
+            exit(1)
+        }
+    }
     if options.specPath == nil, options.example?.lowercased() == "e" {
         options.specPath = "Fixtures/glyphs/e.v0.json"
     }
@@ -1255,6 +1265,42 @@ public func runCLI() {
         warn("path: \(outURL.path)")
         warn("cwd: \(FileManager.default.currentDirectoryPath)")
         exit(1)
+    }
+}
+
+private func renderGalleryLines(options: CLIOptions) throws {
+    let galleryDir = "Fixtures/glyphs/gallery_lines"
+    let files = try FileManager.default.contentsOfDirectory(atPath: galleryDir)
+        .filter { $0.hasSuffix(".json") }
+        .sorted()
+    if files.isEmpty {
+        throw NSError(domain: "cp2-cli.gallery", code: 1, userInfo: [NSLocalizedDescriptionKey: "no gallery fixtures found in \(galleryDir)"])
+    }
+
+    let outURL = URL(fileURLWithPath: options.outPath)
+    let outDir: URL
+    if options.outPath.lowercased().hasSuffix(".svg") {
+        outDir = outURL.deletingLastPathComponent().appendingPathComponent("gallery_lines", isDirectory: true)
+    } else {
+        outDir = outURL
+    }
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+    for file in files {
+        let path = "\(galleryDir)/\(file)"
+        let spec = try loadSpecOrThrow(path: path)
+        var perOptions = options
+        perOptions.example = nil
+        perOptions.specPath = path
+        let svg = try renderSVGString(options: perOptions, spec: spec)
+        let outPath = outDir.appendingPathComponent(file.replacingOccurrences(of: ".json", with: ".svg"))
+        guard let data = svg.data(using: .utf8) else {
+            throw NSError(domain: "cp2-cli.gallery", code: 2, userInfo: [NSLocalizedDescriptionKey: "failed to encode SVG for \(file)"])
+        }
+        try data.write(to: outPath, options: .atomic)
+        if options.verbose {
+            print("Exported \(data.count) bytes to: \(outPath.path)")
+        }
     }
 }
 

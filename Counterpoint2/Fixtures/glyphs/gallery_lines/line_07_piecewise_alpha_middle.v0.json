@@ -1,0 +1,131 @@
+{
+  "example": "line_07_piecewise_alpha_middle",
+  "render": {
+    "canvasPx": {
+      "width": 1400,
+      "height": 600
+    },
+    "fitMode": "none",
+    "paddingWorld": 0,
+    "clipToFrame": false,
+    "worldFrame": {
+      "minX": -80,
+      "minY": -140,
+      "maxX": 540,
+      "maxY": 140
+    }
+  },
+  "ink": {
+    "line": {
+      "type": "line",
+      "p0": {
+        "x": 0,
+        "y": 0
+      },
+      "p1": {
+        "x": 460,
+        "y": 0
+      }
+    }
+  },
+  "strokes": [
+    {
+      "id": "line",
+      "type": "stroke",
+      "ink": "line",
+      "params": {
+        "angleMode": "relative",
+        "theta": {
+          "keyframes": [
+            {
+              "t": 0.0,
+              "value": 0
+            },
+            {
+              "t": 1.0,
+              "value": 0
+            }
+          ]
+        },
+        "widthLeft": {
+          "keyframes": [
+            {
+              "t": 0.0,
+              "value": 50
+            },
+            {
+              "t": 0.33,
+              "value": 60
+            },
+            {
+              "t": 0.66,
+              "value": 45
+            },
+            {
+              "t": 1.0,
+              "value": 55
+            }
+          ]
+        },
+        "widthRight": {
+          "keyframes": [
+            {
+              "t": 0.0,
+              "value": 50
+            },
+            {
+              "t": 0.33,
+              "value": 60
+            },
+            {
+              "t": 0.66,
+              "value": 45
+            },
+            {
+              "t": 1.0,
+              "value": 55
+            }
+          ]
+        },
+        "offset": {
+          "keyframes": [
+            {
+              "t": 0.0,
+              "value": 0
+            },
+            {
+              "t": 1.0,
+              "value": 0
+            }
+          ]
+        },
+        "alpha": {
+          "keyframes": [
+            {
+              "t": 0.0,
+              "value": 0.0
+            },
+            {
+              "t": 0.33,
+              "value": 0.0
+            },
+            {
+              "t": 0.66,
+              "value": 0.6
+            },
+            {
+              "t": 1.0,
+              "value": 0.6
+            }
+          ]
+        },
+        "startCap": {
+          "type": "butt"
+        },
+        "endCap": {
+          "type": "butt"
+        }
+      }
+    }
+  ]
+}

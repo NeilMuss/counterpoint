@@ -339,7 +339,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp|e] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp|e|gallery_lines] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
