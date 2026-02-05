@@ -12,9 +12,32 @@ struct SweepResult {
     var capEndpointsDebug: CapEndpointsDebug?
     var capFillets: [CapFilletDebug]
     var capBoundaryDebugs: [CapBoundaryDebug]
+    var capPlaneDebugs: [CapPlaneDebug]
     var railDebugSummary: RailDebugSummary?
     var railFrames: [RailSampleFrame]?
     var railCornerDebug: RailCornerDebug?
+    var ringTopology: RingTopologyDebug?
+    var resolveSelfOverlap: ResolveSelfOverlapDebug?
+    var ringSelfXHit: RingSelfXHitDebug?
+}
+
+struct ResolveSelfOverlapDebug {
+    let original: [Vec2]
+    let resolved: [Vec2]
+    let intersections: [Vec2]
+    let selfBefore: Int
+    let selfAfter: Int
+}
+
+struct RingSelfXHitDebug {
+    let ringIndex: Int
+    let i: Int
+    let j: Int
+    let point: Vec2
+    let a0: Vec2
+    let a1: Vec2
+    let b0: Vec2
+    let b1: Vec2
 }
 
 private func emitSoupNeighborhood(_ report: SoupNeighborhoodReport, label: String) {
@@ -35,6 +58,68 @@ private func emitSoupNeighborhood(_ report: SoupNeighborhoodReport, label: Strin
     }
 }
 
+struct RingTopologyDebug {
+    struct RingInfo {
+        let index: Int
+        let area: Double
+        let absArea: Double
+        let winding: String
+        let verts: Int
+    }
+    struct SelfIntersection {
+        let ringIndex: Int
+        let i: Int
+        let j: Int
+        let point: Vec2
+    }
+    let rings: [RingInfo]
+    let selfIntersections: [SelfIntersection]
+    let microRingIndices: [Int]
+}
+
+private func ringSelfIntersections(ring: [Vec2], ringIndex: Int, eps: Double) -> [RingTopologyDebug.SelfIntersection] {
+    let n = ring.count
+    guard n >= 4 else { return [] }
+    let lastIsFirst = Epsilon.approxEqual(ring.first!, ring.last!)
+    let edgeCount = lastIsFirst ? n - 1 : n
+    func cross(_ a: Vec2, _ b: Vec2) -> Double { a.x * b.y - a.y * b.x }
+    func segmentIntersection(_ a: Vec2, _ b: Vec2, _ c: Vec2, _ d: Vec2) -> Vec2? {
+        let r = b - a
+        let s = d - c
+        let denom = cross(r, s)
+        if abs(denom) <= eps { return nil }
+        let t = cross(c - a, s) / denom
+        let u = cross(c - a, r) / denom
+        if t >= -eps && t <= 1.0 + eps && u >= -eps && u <= 1.0 + eps {
+            return Vec2(a.x + r.x * t, a.y + r.y * t)
+        }
+        return nil
+    }
+    var hits: [RingTopologyDebug.SelfIntersection] = []
+    for i in 0..<edgeCount {
+        let a0 = ring[i]
+        let a1 = ring[(i + 1) % edgeCount]
+        if (a1 - a0).length <= eps { continue }
+        if i + 2 >= edgeCount { continue }
+        for j in (i + 2)..<edgeCount {
+            if i == 0 && j == edgeCount - 1 { continue }
+            let b0 = ring[j]
+            let b1 = ring[(j + 1) % edgeCount]
+            if (b1 - b0).length <= eps { continue }
+            if let hit = segmentIntersection(a0, a1, b0, b1) {
+                if Epsilon.approxEqual(hit, a0, eps: eps)
+                    || Epsilon.approxEqual(hit, a1, eps: eps)
+                    || Epsilon.approxEqual(hit, b0, eps: eps)
+                    || Epsilon.approxEqual(hit, b1, eps: eps) {
+                    continue
+                }
+                hits.append(RingTopologyDebug.SelfIntersection(ringIndex: ringIndex, i: i, j: j, point: hit))
+            }
+        }
+    }
+    return hits
+}
+
 func runSweep(
     path: SkeletonPath,
     plan: SweepPlan,
@@ -48,6 +133,7 @@ func runSweep(
     var capEndpointsDebug: CapEndpointsDebug? = nil
     var capFillets: [CapFilletDebug] = []
     var capBoundaryDebugs: [CapBoundaryDebug] = []
+    var capPlaneDebugs: [CapPlaneDebug] = []
     var railDebugSummary: RailDebugSummary? = nil
     var railFrames: [RailSampleFrame]? = nil
     var railCornerDebug: RailCornerDebug? = nil
@@ -98,6 +184,7 @@ func runSweep(
                     }
                 },
                 debugCapBoundary: options.debugCapBoundary ? { capBoundaryDebugs.append($0) } : nil,
+                debugCapPlane: options.debugCapBoundary ? { capPlaneDebugs.append($0) } : nil,
                 capNamespace: capNamespace,
                 capLocalIndex: 0,
                 startCap: startCap,
@@ -141,6 +228,7 @@ func runSweep(
                     }
                 },
                 debugCapBoundary: options.debugCapBoundary ? { capBoundaryDebugs.append($0) } : nil,
+                debugCapPlane: options.debugCapBoundary ? { capPlaneDebugs.append($0) } : nil,
                 capNamespace: capNamespace,
                 capLocalIndex: 0,
                 startCap: startCap,
@@ -239,12 +327,125 @@ func runSweep(
         emitSoupNeighborhood(report, label: "manual")
     }
 
-    let rings = traceLoops(
+    var rings = traceLoops(
         segments: segmentsUsed,
         eps: 1.0e-6,
         debugStep: options.debugTraceJumpStep ? { traceSteps.append($0) } : nil
     )
-    let ring = rings.first ?? []
+    let selfCounts = rings.enumerated().map { index, ringItem in
+        ringSelfIntersections(ring: ringItem, ringIndex: index, eps: 1.0e-6).count
+    }
+    var ring: [Vec2] = []
+    if rings.count == 1 {
+        ring = rings[0]
+    } else if rings.count > 1 {
+        var bestIndex = 0
+        var bestSelfX = Int.max
+        var bestArea = -Double.greatestFiniteMagnitude
+        for (index, ringItem) in rings.enumerated() {
+            let area = abs(signedArea(ringItem))
+            let selfX = selfCounts[index]
+            if selfX < bestSelfX || (selfX == bestSelfX && area > bestArea) {
+                bestSelfX = selfX
+                bestArea = area
+                bestIndex = index
+            }
+        }
+        if options.debugRingTopology {
+            print(String(format: "RING_SELECT outer=%d absArea=%.6f selfX=%d", bestIndex, bestArea, bestSelfX))
+        }
+        ring = rings[bestIndex]
+    }
+
+    var resolveSelfOverlapDebug: ResolveSelfOverlapDebug? = nil
+    if options.resolveSelfOverlap, let example = options.example, example.hasPrefix("line_") {
+        let before = ringSelfIntersections(ring: ring, ringIndex: 0, eps: 1.0e-6).count
+        if before > 0 {
+            let resolved = resolveSelfOverlap(ring: ring, eps: 1.0e-6)
+            if resolved.success {
+                let after = ringSelfIntersections(ring: resolved.ring, ringIndex: 0, eps: 1.0e-6).count
+                print(String(format: "RESOLVE_SELF_OVERLAP enabled=true ringSelfXBefore=%d ringSelfXAfter=%d vertsBefore=%d vertsAfter=%d", before, after, ring.count, resolved.ring.count))
+                resolveSelfOverlapDebug = ResolveSelfOverlapDebug(
+                    original: ring,
+                    resolved: resolved.ring,
+                    intersections: resolved.intersections,
+                    selfBefore: before,
+                    selfAfter: after
+                )
+                ring = resolved.ring
+                rings = [ring]
+            } else {
+                print(String(format: "RESOLVE_SELF_OVERLAP_FALLBACK reason=%@", resolved.failureReason ?? "unknown"))
+            }
+        }
+    }
+
+    var ringTopology: RingTopologyDebug? = nil
+    if options.debugRingTopology {
+        var ringInfos: [RingTopologyDebug.RingInfo] = []
+        var intersections: [RingTopologyDebug.SelfIntersection] = []
+        var microRings: [Int] = []
+        for (index, ringItem) in rings.enumerated() {
+            let area = signedArea(ringItem)
+            let absArea = abs(area)
+            let winding = area >= 0.0 ? "CCW" : "CW"
+            ringInfos.append(RingTopologyDebug.RingInfo(index: index, area: area, absArea: absArea, winding: winding, verts: ringItem.count))
+            intersections.append(contentsOf: ringSelfIntersections(ring: ringItem, ringIndex: index, eps: 1.0e-6))
+            if absArea < 1.0 {
+                microRings.append(index)
+            }
+        }
+        ringTopology = RingTopologyDebug(rings: ringInfos, selfIntersections: intersections, microRingIndices: microRings)
+        print("RING_TOPO ringCount=\(rings.count)")
+        for info in ringInfos {
+            print(String(format: "RING_TOPO ring=%d absArea=%.6f winding=%@ verts=%d", info.index, info.absArea, info.winding, info.verts))
+        }
+        let grouped = Dictionary(grouping: intersections, by: { $0.ringIndex })
+        for info in ringInfos {
+            let hits = grouped[info.index] ?? []
+            print(String(format: "RING_SELF_X ring=%d count=%d", info.index, hits.count))
+            for hit in hits {
+                print(String(format: "RING_SELF_X hit ring=%d i=%d j=%d P=(%.6f,%.6f)", hit.ringIndex, hit.i, hit.j, hit.point.x, hit.point.y))
+            }
+        }
+        for index in microRings {
+            if let info = ringInfos.first(where: { $0.index == index }) {
+                print(String(format: "RING_MICRO ring=%d absArea=%.6f", info.index, info.absArea))
+            }
+        }
+    }
+    var ringSelfXHit: RingSelfXHitDebug? = nil
+    if let k = options.debugRingSelfXHit {
+        var intersections: [RingTopologyDebug.SelfIntersection] = []
+        for (index, ringItem) in rings.enumerated() {
+            intersections.append(contentsOf: ringSelfIntersections(ring: ringItem, ringIndex: index, eps: 1.0e-6))
+        }
+        if k >= 0 && k < intersections.count {
+            let hit = intersections[k]
+            if hit.ringIndex < rings.count, let first = rings[hit.ringIndex].first {
+                let ring = rings[hit.ringIndex]
+                let lastIsFirst = Epsilon.approxEqual(first, ring.last ?? first)
+                let edgeCount = lastIsFirst ? max(1, ring.count - 1) : ring.count
+                let a0 = ring[hit.i]
+                let a1 = ring[(hit.i + 1) % edgeCount]
+                let b0 = ring[hit.j]
+                let b1 = ring[(hit.j + 1) % edgeCount]
+                ringSelfXHit = RingSelfXHitDebug(
+                    ringIndex: hit.ringIndex,
+                    i: hit.i,
+                    j: hit.j,
+                    point: hit.point,
+                    a0: a0,
+                    a1: a1,
+                    b0: b0,
+                    b1: b1
+                )
+                print(String(format: "RING_SELF_X_HIT k=%d ring=%d i=%d j=%d P=(%.6f,%.6f) A0=(%.6f,%.6f) A1=(%.6f,%.6f) B0=(%.6f,%.6f) B1=(%.6f,%.6f)", k, hit.ringIndex, hit.i, hit.j, hit.point.x, hit.point.y, a0.x, a0.y, a1.x, a1.y, b0.x, b0.y, b1.x, b1.y))
+            }
+        } else {
+            print(String(format: "RING_SELF_X_HIT k=%d out_of_range count=%d", k, intersections.count))
+        }
+    }
     let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
 
     return SweepResult(
@@ -257,8 +458,12 @@ func runSweep(
         capEndpointsDebug: capEndpointsDebug,
         capFillets: capFillets,
         capBoundaryDebugs: capBoundaryDebugs,
+        capPlaneDebugs: capPlaneDebugs,
         railDebugSummary: railDebugSummary,
         railFrames: railFrames,
-        railCornerDebug: railCornerDebug
+        railCornerDebug: railCornerDebug,
+        ringTopology: ringTopology,
+        resolveSelfOverlap: resolveSelfOverlapDebug,
+        ringSelfXHit: ringSelfXHit
     )
 }

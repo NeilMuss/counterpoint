@@ -20,6 +20,9 @@ public struct CLIOptions {
     var debugSoloWhy: Bool = false
     var debugRingSpine: Bool = false
     var debugRingJump: Bool = false
+    var debugRingTopology: Bool = false
+    var debugRingSelfXHit: Int? = nil
+    var resolveSelfOverlap: Bool = false
     var debugKeyframes: Bool = false
     var keyframesLabels: Bool = false
     var debugParamsPlot: Bool = false
@@ -133,6 +136,13 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugRingSpine = true
         } else if arg == "--debug-ring-jump" {
             options.debugRingJump = true
+        } else if arg == "--debug-ring-topology" {
+            options.debugRingTopology = true
+        } else if arg == "--debug-ring-self-x-hit", index + 1 < args.count {
+            if let value = Int(args[index + 1]) {
+                options.debugRingSelfXHit = value
+                index += 1
+            }
         } else if arg == "--debug-keyframes" {
             options.debugKeyframes = true
         } else if arg == "--keyframes-labels" {
@@ -203,6 +213,15 @@ func parseArgs(_ args: [String]) -> CLIOptions {
                 index += 1
             } else if value == "off" {
                 options.capFilletFixtureOverlays = false
+                index += 1
+            }
+        } else if arg == "--resolve-self-overlap", index + 1 < args.count {
+            let value = args[index + 1].lowercased()
+            if value == "on" {
+                options.resolveSelfOverlap = true
+                index += 1
+            } else if value == "off" {
+                options.resolveSelfOverlap = false
                 index += 1
             }
         } else if arg == "--debug-dump-rail-corners" {
@@ -373,6 +392,8 @@ Debug flags:
   --debug-solo-why  Render only outline + sampling why dots
   --debug-ring-spine Render traced ring polyline with index breadcrumbs
   --debug-ring-jump  Highlight longest ring segment (teleport diagnostic)
+  --debug-ring-topology Dump ring count/area/winding and self-intersections
+  --debug-ring-self-x-hit N  Highlight N-th self-intersection hit (0-based)
   --debug-trace-jump-step  Dump trace decision for max jump segment
   --debug-soup-pre-repair  Dump soup degree stats before any repair
   --debug-soup-neighborhood x y r  Dump soup nodes within radius r of (x,y)

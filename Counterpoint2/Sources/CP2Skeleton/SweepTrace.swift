@@ -1511,6 +1511,18 @@ public struct CapBoundaryDebug: Equatable, Sendable {
     public let fallbackCorner: Vec2?
 }
 
+public struct CapPlaneDebug: Equatable, Sendable {
+    public let endpoint: String
+    public let side: String
+    public let origin: Vec2
+    public let normal: Vec2
+    public let overhangs: [Vec2]
+    public let removedCount: Int
+    public let clippedCount: Int
+    public let maxOverhangBefore: Double
+    public let maxOverhangAfter: Double
+}
+
 private func sampleCubicSegments(_ cubic: CubicBezier2, segments: Int, source: EdgeSource) -> (segments: [Segment2], points: [Vec2]) {
     let count = max(2, segments + 1)
     var points: [Vec2] = []
@@ -1534,6 +1546,93 @@ private func segmentsFromPoints(_ points: [Vec2], source: EdgeSource) -> [Segmen
         segmentsOut.append(Segment2(points[i], points[i + 1], source: source))
     }
     return segmentsOut
+}
+
+private struct RailTrimResult {
+    let points: [Vec2]
+    let removedCount: Int
+    let clippedCount: Int
+    let maxOverhangBefore: Double
+    let maxOverhangAfter: Double
+    let overhangs: [Vec2]
+    let valid: Bool
+}
+
+private func trimRailToCapPlane(
+    rail: [Vec2],
+    origin: Vec2,
+    normal: Vec2,
+    atStart: Bool,
+    eps: Double
+) -> RailTrimResult {
+    guard rail.count >= 2 else {
+        return RailTrimResult(points: rail, removedCount: 0, clippedCount: 0, maxOverhangBefore: 0.0, maxOverhangAfter: 0.0, overhangs: [], valid: false)
+    }
+    func overhang(_ p: Vec2) -> Double {
+        let v = p - origin
+        return v.x * normal.x + v.y * normal.y
+    }
+    func endpointWindow(_ points: [Vec2], atStart: Bool) -> ArraySlice<Vec2> {
+        let window = min(5, points.count)
+        if atStart {
+            return points.prefix(window)
+        }
+        return points.suffix(window)
+    }
+    func maxOverhang(in points: ArraySlice<Vec2>) -> Double {
+        var maxValue = -Double.greatestFiniteMagnitude
+        for point in points {
+            let d = overhang(point)
+            if d > maxValue { maxValue = d }
+        }
+        return maxValue.isFinite ? maxValue : 0.0
+    }
+    let maxBefore = maxOverhang(in: endpointWindow(rail, atStart: atStart))
+    var overhangs: [Vec2] = []
+    for point in rail {
+        let d = overhang(point)
+        if d > eps {
+            overhangs.append(point)
+        }
+    }
+
+    var trimmed = rail
+    let removedCount = 0
+    var clippedCount = 0
+    let valid = rail.count >= 2
+    let window = min(5, rail.count)
+    if atStart {
+        for i in 0..<window {
+            let d = overhang(trimmed[i])
+            if d > eps {
+                trimmed[i] = trimmed[i] - normal * d
+                clippedCount += 1
+            }
+        }
+    } else {
+        if window > 0 {
+            for offset in 0..<window {
+                let i = trimmed.count - 1 - offset
+                let d = overhang(trimmed[i])
+                if d > eps {
+                    trimmed[i] = trimmed[i] - normal * d
+                    clippedCount += 1
+                }
+            }
+        }
+    }
+
+    let maxAfter = maxOverhang(in: endpointWindow(trimmed, atStart: atStart))
+
+    return RailTrimResult(
+        points: trimmed,
+        removedCount: removedCount,
+        clippedCount: clippedCount,
+        maxOverhangBefore: maxBefore.isFinite ? maxBefore : 0.0,
+        maxOverhangAfter: maxAfter,
+        overhangs: overhangs,
+        valid: valid
+    )
 }
 
 /// General boundary soup generator that supports:
@@ -1566,6 +1665,7 @@ public func boundarySoupGeneral(
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
+    debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
@@ -1745,6 +1845,73 @@ public func boundarySoupGeneral(
         debugRailSummary(summary)
     }
 
+    // ---- Trim rails to cap plane to avoid overhang at butt caps ----
+    let eps = Epsilon.defaultValue
+    let startGT = samples.first ?? 0.0
+    let endGT = samples.last ?? 1.0
+    let startFrame = railSampleFrameAtGlobalT(
+        param: param,
+        warpGT: warpGT,
+        styleAtGT: styleAtGT,
+        gt: startGT,
+        index: 0
+    )
+    let endFrame = railSampleFrameAtGlobalT(
+        param: param,
+        warpGT: warpGT,
+        styleAtGT: styleAtGT,
+        gt: endGT,
+        index: max(0, count - 1)
+    )
+    func normalize(_ v: Vec2) -> Vec2 {
+        let len = v.length
+        if len <= eps { return Vec2(0, 0) }
+        return v * (1.0 / len)
+    }
+    let startNormal = normalize(startFrame.tangent) * -1.0
+    let endNormal = normalize(endFrame.tangent)
+    let isClosed = {
+        guard let first = path.segments.first, let last = path.segments.last else { return false }
+        return Epsilon.approxEqual(first.p0, last.p3)
+    }()
+    if debugCapBoundary != nil {
+        print(String(format: "CAP_PLANE endpoint=start origin=(%.6f,%.6f) n=(%.6f,%.6f)", startFrame.center.x, startFrame.center.y, startNormal.x, startNormal.y))
+        print(String(format: "CAP_PLANE endpoint=end origin=(%.6f,%.6f) n=(%.6f,%.6f)", endFrame.center.x, endFrame.center.y, endNormal.x, endNormal.y))
+    }
+
+    func applyTrim(
+        rail: [Vec2],
+        endpoint: String,
+        side: String,
+        origin: Vec2,
+        normal: Vec2,
+        atStart: Bool
+    ) -> [Vec2] {
+        let result = trimRailToCapPlane(rail: rail, origin: origin, normal: normal, atStart: atStart, eps: eps)
+        if debugCapBoundary != nil {
+            print(String(format: "CAP_RAIL_TRIM endpoint=%@ side=%@ removed=%d clipped=%d maxOverhangBefore=%.6f maxOverhangAfter=%.6f valid=%@", endpoint, side, result.removedCount, result.clippedCount, result.maxOverhangBefore, result.maxOverhangAfter, result.valid.description))
+        }
+        debugCapPlane?(CapPlaneDebug(
+            endpoint: endpoint,
+            side: side,
+            origin: origin,
+            normal: normal,
+            overhangs: result.overhangs,
+            removedCount: result.removedCount,
+            clippedCount: result.clippedCount,
+            maxOverhangBefore: result.maxOverhangBefore,
+            maxOverhangAfter: result.maxOverhangAfter
+        ))
+        return result.valid ? result.points : rail
+    }
+
+    if !isClosed {
+        left = applyTrim(rail: left, endpoint: "start", side: "left", origin: startFrame.center, normal: startNormal, atStart: true)
+        right = applyTrim(rail: right, endpoint: "start", side: "right", origin: startFrame.center, normal: startNormal, atStart: true)
+        left = applyTrim(rail: left, endpoint: "end", side: "left", origin: endFrame.center, normal: endNormal, atStart: false)
+        right = applyTrim(rail: right, endpoint: "end", side: "right", origin: endFrame.center, normal: endNormal, atStart: false)
+    }
+
     // MARK: EDGE CREATION SITES
     // - boundarySoupGeneral: left forward (railLeft), right backward (railRight), caps (capStart/capEnd)
     // - traceLoops: consumes segments; no creation
@@ -1789,19 +1956,21 @@ public func boundarySoupGeneral(
         let index = useReversedRight ? 0 : rightAdjusted.count - 1
         rightAdjusted[index] = endRightTrim
     }
-    for i in stride(from: count - 1, to: 0, by: -1) {
+    let leftCount = left.count
+    let rightCount = rightAdjusted.count
+    for i in stride(from: rightCount - 1, to: 0, by: -1) {
         segments.append(Segment2(rightAdjusted[i], rightAdjusted[i - 1], source: .railRight))
     }
     let startLeft = caps.startLeftTrim ?? left[0]
-    let endLeft = caps.endLeftTrim ?? left[left.count - 1]
-    if count == 2 {
+    let endLeft = caps.endLeftTrim ?? left[leftCount - 1]
+    if leftCount == 2 {
         segments.append(Segment2(startLeft, endLeft, source: .railLeft))
-    } else if count > 2 {
+    } else if leftCount > 2 {
         segments.append(Segment2(startLeft, left[1], source: .railLeft))
-        for i in 1..<(count - 1) {
+        for i in 1..<(leftCount - 1) {
             segments.append(Segment2(left[i], left[i + 1], source: .railLeft))
         }
-        segments.append(Segment2(left[count - 2], endLeft, source: .railLeft))
+        segments.append(Segment2(left[leftCount - 2], endLeft, source: .railLeft))
     }
     segments.append(contentsOf: caps.segments)
     if let debugCapEndpoints, let capInfo = computeCapEndpointsDebug(
@@ -1841,6 +2010,7 @@ public func boundarySoup(
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
+    debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
@@ -1882,6 +2052,7 @@ public func boundarySoup(
         debugRailCorner: debugRailCorner,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
+        debugCapPlane: debugCapPlane,
         capNamespace: capNamespace,
         capLocalIndex: capLocalIndex,
         startCap: startCap,
@@ -1916,6 +2087,7 @@ public func boundarySoupVariableWidth(
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
+    debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
@@ -1958,6 +2130,7 @@ public func boundarySoupVariableWidth(
         debugRailCorner: debugRailCorner,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
+        debugCapPlane: debugCapPlane,
         capNamespace: capNamespace,
         capLocalIndex: capLocalIndex,
         startCap: startCap,
@@ -1993,6 +2166,7 @@ public func boundarySoupVariableWidthAngle(
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
+    debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
@@ -2036,6 +2210,7 @@ public func boundarySoupVariableWidthAngle(
         debugRailCorner: debugRailCorner,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
+        debugCapPlane: debugCapPlane,
         capNamespace: capNamespace,
         capLocalIndex: capLocalIndex,
         startCap: startCap,
@@ -2076,6 +2251,7 @@ public func boundarySoupVariableWidthAngleAlpha(
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
+    debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
     capNamespace: String = "stroke",
     capLocalIndex: Int = 0,
     startCap: CapStyle = .butt,
@@ -2121,6 +2297,7 @@ public func boundarySoupVariableWidthAngleAlpha(
         debugRailCorner: debugRailCorner,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
+        debugCapPlane: debugCapPlane,
         capNamespace: capNamespace,
         capLocalIndex: capLocalIndex,
         startCap: startCap,
@@ -2230,6 +2407,67 @@ private func rectangleCorners(
         let world = tangent * rotated.y + normal * rotated.x
         return center + world
     }
+}
+
+private func splitSegmentsAtIntersections(_ segments: [Segment2], eps: Double) -> [Segment2] {
+    guard segments.count >= 2 else { return segments }
+    let count = segments.count
+    var splitTs: [[Double]] = Array(repeating: [0.0, 1.0], count: count)
+    func cross(_ a: Vec2, _ b: Vec2) -> Double { a.x * b.y - a.y * b.x }
+    func addT(_ t: Double, to index: Int) {
+        if t > eps && t < 1.0 - eps {
+            splitTs[index].append(t)
+        }
+    }
+    for i in 0..<count {
+        let segA = segments[i]
+        let a0 = segA.a
+        let a1 = segA.b
+        let r = a1 - a0
+        if r.length <= eps { continue }
+        for j in (i + 1)..<count {
+            let segB = segments[j]
+            let b0 = segB.a
+            let b1 = segB.b
+            if Epsilon.approxEqual(a0, b0, eps: eps) || Epsilon.approxEqual(a0, b1, eps: eps) || Epsilon.approxEqual(a1, b0, eps: eps) || Epsilon.approxEqual(a1, b1, eps: eps) {
+                continue
+            }
+            let s = b1 - b0
+            if s.length <= eps { continue }
+            let denom = cross(r, s)
+            if abs(denom) <= eps { continue }
+            let t = cross(b0 - a0, s) / denom
+            let u = cross(b0 - a0, r) / denom
+            if t >= eps && t <= 1.0 - eps && u >= eps && u <= 1.0 - eps {
+                addT(t, to: i)
+                addT(u, to: j)
+            }
+        }
+    }
+    var output: [Segment2] = []
+    output.reserveCapacity(segments.count)
+    for (index, seg) in segments.enumerated() {
+        var ts = splitTs[index]
+        ts.sort()
+        var lastT: Double? = nil
+        var unique: [Double] = []
+        unique.reserveCapacity(ts.count)
+        for t in ts {
+            if let last = lastT, abs(t - last) <= eps { continue }
+            unique.append(t)
+            lastT = t
+        }
+        for k in 0..<(unique.count - 1) {
+            let t0 = unique[k]
+            let t1 = unique[k + 1]
+            if t1 - t0 <= eps { continue }
+            let p0 = seg.a + (seg.b - seg.a) * t0
+            let p1 = seg.a + (seg.b - seg.a) * t1
+            if (p1 - p0).length <= eps { continue }
+            output.append(Segment2(p0, p1, source: seg.source))
+        }
+    }
+    return output
 }
 
 // MARK: - Sampling utilities (unchanged)
@@ -2370,6 +2608,37 @@ public struct TraceStepInfo: Equatable {
     }
 }
 
+private func ringSelfIntersectionCount(_ ring: [Vec2], eps: Double) -> Int {
+    guard ring.count >= 4 else { return 0 }
+    func cross(_ u: Vec2, _ v: Vec2) -> Double { u.x * v.y - u.y * v.x }
+    var count = 0
+    let edgeCount = ring.count - 1
+    for i in 0..<edgeCount {
+        let a = ring[i]
+        let b = ring[i + 1]
+        if i + 2 >= edgeCount { continue }
+        for j in (i + 2)..<edgeCount {
+            if i == 0 && j == ring.count - 2 { continue }
+            let c = ring[j]
+            let d = ring[j + 1]
+            if Epsilon.approxEqual(a, c, eps: eps) || Epsilon.approxEqual(a, d, eps: eps) ||
+                Epsilon.approxEqual(b, c, eps: eps) || Epsilon.approxEqual(b, d, eps: eps) {
+                continue
+            }
+            let r = b - a
+            let s = d - c
+            let denom = cross(r, s)
+            if abs(denom) <= eps { continue }
+            let t = cross(c - a, s) / denom
+            let u = cross(c - a, r) / denom
+            if t >= -eps && t <= 1.0 + eps && u >= -eps && u <= 1.0 + eps {
+                count += 1
+            }
+        }
+    }
+    return count
+}
+
 public func traceLoops(
     segments: [Segment2],
     eps: Double,
@@ -2383,16 +2652,39 @@ public func traceLoops(
     let pointForKey = graph.pointForKey
     let edgeSources = graph.edgeSources
 
-    var rings: [[SnapKey]] = []
-    var ringIndex = 0
-    while let startEdge = edges.sorted(by: edgeLess).first {
-        edges.remove(startEdge)
-        let start = startEdge.a
-        let next = startEdge.b
+    func ringTieKey(_ ring: [SnapKey]) -> UInt64 {
+        var hash: UInt64 = 1469598103934665603
+        for key in ring {
+            hash ^= UInt64(bitPattern: Int64(key.x))
+            hash = hash &* 1099511628211
+            hash ^= UInt64(bitPattern: Int64(key.y))
+            hash = hash &* 1099511628211
+        }
+        return hash
+    }
+
+    struct ChoiceKey: Hashable {
+        let curr: SnapKey
+        let prev: SnapKey
+    }
+
+    func traceRing(
+        start: SnapKey,
+        next: SnapKey,
+        ringIndex: Int,
+        edgesIn: Set<EdgeKey>,
+        forcedChoices: [ChoiceKey: SnapKey],
+        debugStep: ((TraceStepInfo) -> Void)?
+    ) -> (ring: [SnapKey], used: Set<EdgeKey>, firstAmbiguous: (from: SnapKey, prev: SnapKey, to: SnapKey, candidates: [SnapKey])?) {
         var ring: [SnapKey] = [start, next]
         var prev = start
         var curr = next
         var stepIndex = 0
+        var ringSegments: [(SnapKey, SnapKey)] = [(start, next)]
+        var usedEdges: Set<EdgeKey> = [EdgeKey(start, next)]
+        var edgesLocal = edgesIn
+        edgesLocal.remove(EdgeKey(start, next))
+        var firstAmbiguous: (from: SnapKey, prev: SnapKey, to: SnapKey, candidates: [SnapKey])? = nil
 
         if let debugStep {
             let candidates = adjacency[start] ?? []
@@ -2415,12 +2707,73 @@ public func traceLoops(
 
         while curr != start {
             guard let neighbors = adjacency[curr] else { break }
-            var candidates = neighbors.filter { edges.contains(EdgeKey(curr, $0)) }
-            if candidates.count > 1 {
-                let nonPrev = candidates.filter { $0 != prev }
-                candidates = nonPrev.isEmpty ? candidates : nonPrev
+            let candidates = neighbors.filter { edgesLocal.contains(EdgeKey(curr, $0)) }
+            let currPos = pointForKey[curr] ?? Vec2(0, 0)
+            let prevPos = pointForKey[prev] ?? Vec2(0, 0)
+            let incoming = (currPos - prevPos).normalized()
+            func signedAngle(_ candidate: SnapKey) -> Double {
+                let nextPos = pointForKey[candidate] ?? Vec2(0, 0)
+                let outgoing = (nextPos - currPos).normalized()
+                let cross = incoming.x * outgoing.y - incoming.y * outgoing.x
+                let dot = incoming.x * outgoing.x + incoming.y * outgoing.y
+                return atan2(cross, dot)
             }
-            guard let chosen = candidates.sorted(by: snapKeyLess).first else { break }
+            func segmentIntersectsExisting(_ aKey: SnapKey, _ bKey: SnapKey) -> Bool {
+                let a = pointForKey[aKey] ?? Vec2(0, 0)
+                let b = pointForKey[bKey] ?? Vec2(0, 0)
+                func cross(_ u: Vec2, _ v: Vec2) -> Double { u.x * v.y - u.y * v.x }
+                for (sKey, tKey) in ringSegments {
+                    if sKey == aKey || sKey == bKey || tKey == aKey || tKey == bKey { continue }
+                    let c = pointForKey[sKey] ?? Vec2(0, 0)
+                    let d = pointForKey[tKey] ?? Vec2(0, 0)
+                    let r = b - a
+                    let s = d - c
+                    let denom = cross(r, s)
+                    if abs(denom) <= eps { continue }
+                    let t = cross(c - a, s) / denom
+                    let u = cross(c - a, r) / denom
+                    if t >= -eps && t <= 1.0 + eps && u >= -eps && u <= 1.0 + eps {
+                        return true
+                    }
+                }
+                return false
+            }
+            let ordered = candidates.sorted {
+                let angleA = abs(signedAngle($0))
+                let angleB = abs(signedAngle($1))
+                if abs(angleA - angleB) > 1.0e-9 {
+                    return angleA < angleB
+                }
+                return snapKeyLess($0, $1)
+            }
+            if firstAmbiguous == nil && ordered.count > 1 {
+                firstAmbiguous = (from: curr, prev: prev, to: curr, candidates: ordered)
+            }
+            var chosen: SnapKey? = nil
+            if let forced = forcedChoices[ChoiceKey(curr: curr, prev: prev)] {
+                if ordered.contains(forced) {
+                    chosen = forced
+                }
+            }
+            if chosen == nil {
+                let hasNonPrev = ordered.contains { $0 != prev }
+                for candidate in ordered {
+                    if candidate == prev && hasNonPrev { continue }
+                    if !segmentIntersectsExisting(curr, candidate) {
+                        chosen = candidate
+                        break
+                    }
+                }
+            }
+            if chosen == nil {
+                chosen = ordered.first
+                if debugStep != nil, let chosenKey = chosen {
+                    let currPos = pointForKey[curr] ?? Vec2(0, 0)
+                    let nextPos = pointForKey[chosenKey] ?? Vec2(0, 0)
+                    print(String(format: "TRACE_FORCED_INTERSECTION ring=%d step=%d curr=(%.6f,%.6f) next=(%.6f,%.6f)", ringIndex, stepIndex, currPos.x, currPos.y, nextPos.x, nextPos.y))
+                }
+            }
+            guard let chosen else { break }
             if let debugStep {
                 let info = makeTraceStepInfo(
                     ringIndex: ringIndex,
@@ -2438,15 +2791,118 @@ public func traceLoops(
                 debugStep(info)
                 stepIndex += 1
             }
-            edges.remove(EdgeKey(curr, chosen))
+            edgesLocal.remove(EdgeKey(curr, chosen))
+            usedEdges.insert(EdgeKey(curr, chosen))
             ring.append(chosen)
+            ringSegments.append((curr, chosen))
             prev = curr
             curr = chosen
         }
         if ring.first != ring.last {
             ring.append(ring.first!)
         }
-        rings.append(ring)
+        return (ring, usedEdges, firstAmbiguous)
+    }
+
+    var rings: [[SnapKey]] = []
+    var ringIndex = 0
+    let maxBranches = 3
+    let maxDepth = 2
+
+    func branchCandidates(from candidates: [SnapKey]) -> [SnapKey] {
+        if candidates.count <= maxBranches { return candidates }
+        if maxBranches <= 1 { return [candidates[0]] }
+        if maxBranches == 2 { return [candidates[0], candidates.last!] }
+        return [candidates[0], candidates[1], candidates.last!]
+    }
+
+    func scoreRing(_ ringKeys: [SnapKey]) -> (intersections: Int, area: Double, tie: UInt64) {
+        let ringPoints = ringKeys.compactMap { pointForKey[$0] }
+        let intersections = ringSelfIntersectionCount(ringPoints, eps: eps)
+        let area = abs(signedArea(ringPoints))
+        let tie = ringTieKey(ringKeys)
+        return (intersections, area, tie)
+    }
+
+    func betterScore(_ a: (intersections: Int, area: Double, tie: UInt64), _ b: (intersections: Int, area: Double, tie: UInt64)) -> Bool {
+        if a.intersections != b.intersections { return a.intersections < b.intersections }
+        if abs(a.area - b.area) > 1.0e-9 { return a.area > b.area }
+        return a.tie < b.tie
+    }
+
+    func explore(
+        start: SnapKey,
+        next: SnapKey,
+        ringIndex: Int,
+        edgesIn: Set<EdgeKey>,
+        forcedChoices: [ChoiceKey: SnapKey],
+        depth: Int
+    ) -> (ring: [SnapKey], used: Set<EdgeKey>, score: (intersections: Int, area: Double, tie: UInt64)) {
+        let attempt = traceRing(
+            start: start,
+            next: next,
+            ringIndex: ringIndex,
+            edgesIn: edgesIn,
+            forcedChoices: forcedChoices,
+            debugStep: debugStep
+        )
+        let ringKeys = attempt.ring
+        let score = scoreRing(ringKeys)
+        if depth <= 0 || attempt.firstAmbiguous == nil {
+            return (ringKeys, attempt.used, score)
+        }
+        guard let ambiguous = attempt.firstAmbiguous else {
+            return (ringKeys, attempt.used, score)
+        }
+        var best = (ringKeys, attempt.used, score)
+        let candidates = branchCandidates(from: ambiguous.candidates)
+        for candidate in candidates {
+            var nextForced = forcedChoices
+            nextForced[ChoiceKey(curr: ambiguous.from, prev: ambiguous.prev)] = candidate
+            let branch = explore(
+                start: start,
+                next: next,
+                ringIndex: ringIndex,
+                edgesIn: edgesIn,
+                forcedChoices: nextForced,
+                depth: depth - 1
+            )
+            if betterScore(branch.score, best.2) {
+                best = branch
+            }
+        }
+        return best
+    }
+
+    let maxStartEdges = 3
+    while let _ = edges.sorted(by: edgeLess).first {
+        let startEdges = Array(edges.sorted(by: edgeLess).prefix(maxStartEdges))
+        var bestRing: ([SnapKey], Set<EdgeKey>, (intersections: Int, area: Double, tie: UInt64))? = nil
+        for startEdge in startEdges {
+            let start = startEdge.a
+            let next = startEdge.b
+            let candidate = explore(
+                start: start,
+                next: next,
+                ringIndex: ringIndex,
+                edgesIn: edges,
+                forcedChoices: [:],
+                depth: maxDepth
+            )
+            if let best = bestRing {
+                if betterScore(candidate.score, best.2) {
+                    bestRing = (candidate.ring, candidate.used, candidate.score)
+                }
+            } else {
+                bestRing = (candidate.ring, candidate.used, candidate.score)
+            }
+        }
+        if let bestRing {
+            rings.append(bestRing.0)
+            edges.subtract(bestRing.1)
+        } else {
+            break
+        }
         ringIndex += 1
     }
 

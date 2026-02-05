@@ -409,6 +409,90 @@ func debugOverlayForCapBoundary(_ boundaries: [CapBoundaryDebug]) -> DebugOverla
     return DebugOverlay(svg: svg, bounds: bounds)
 }
 
+func debugOverlayForCapPlane(_ planes: [CapPlaneDebug]) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    let lineLength: Double = 200.0
+    for plane in planes {
+        let n = plane.normal
+        let dir = Vec2(-n.y, n.x)
+        let a = plane.origin - dir * lineLength
+        let b = plane.origin + dir * lineLength
+        svgParts.append(String(format: "<path d=\"M %.4f %.4f L %.4f %.4f\" fill=\"none\" stroke=\"#8d6e63\" stroke-width=\"1.0\"/>", a.x, a.y, b.x, b.y))
+        bounds.expand(by: a)
+        bounds.expand(by: b)
+        for point in plane.overhangs {
+            svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"2.0\" fill=\"#d32f2f\" stroke=\"none\"/>", point.x, point.y))
+            bounds.expand(by: point)
+        }
+    }
+    let svg = """
+  <g id="debug-cap-plane">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForRingTopology(rings: [[Vec2]], debug: RingTopologyDebug) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    for hit in debug.selfIntersections {
+        let p = hit.point
+        let size: Double = 4.0
+        let x1 = p.x - size
+        let x2 = p.x + size
+        let y1 = p.y - size
+        let y2 = p.y + size
+        svgParts.append(String(format: "<path d=\"M %.4f %.4f L %.4f %.4f M %.4f %.4f L %.4f %.4f\" fill=\"none\" stroke=\"#d32f2f\" stroke-width=\"1.4\"/>", x1, y1, x2, y2, x1, y2, x2, y1))
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#d32f2f\">%d,%d</text>", p.x + 4.0, p.y - 4.0, hit.i, hit.j))
+        bounds.expand(by: p)
+    }
+    let microSet = Set(debug.microRingIndices)
+    for info in debug.rings where microSet.contains(info.index) {
+        guard info.index < rings.count else { continue }
+        let ring = rings[info.index]
+        guard let first = ring.first else { continue }
+        var parts: [String] = []
+        parts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for p in ring.dropFirst() {
+            parts.append(String(format: "L %.4f %.4f", p.x, p.y))
+        }
+        let pathData = parts.joined(separator: " ")
+        svgParts.append("<path d=\"\(pathData)\" fill=\"none\" stroke=\"#ab47bc\" stroke-width=\"1.0\"/>")
+        for p in ring { bounds.expand(by: p) }
+        svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"#ab47bc\">microRing area=%.3f</text>", first.x + 4.0, first.y - 4.0, info.absArea))
+    }
+    let svg = """
+  <g id="debug-ring-topology">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForRingSelfXHit(debug: RingSelfXHitDebug) -> DebugOverlay {
+    var bounds = AABB.empty
+    var svgParts: [String] = []
+    func addSegment(_ a: Vec2, _ b: Vec2, color: String) {
+        svgParts.append(String(format: "<path d=\"M %.4f %.4f L %.4f %.4f\" fill=\"none\" stroke=\"%@\" stroke-width=\"3.0\"/>", a.x, a.y, b.x, b.y, color))
+        bounds.expand(by: a)
+        bounds.expand(by: b)
+    }
+    addSegment(debug.a0, debug.a1, color: "#1e88e5")
+    addSegment(debug.b0, debug.b1, color: "#43a047")
+    let p = debug.point
+    svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"3.2\" fill=\"#d32f2f\" stroke=\"none\"/>", p.x, p.y))
+    svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"10\" fill=\"#d32f2f\">hit %d (i=%d j=%d)</text>", p.x + 5.0, p.y - 5.0, debug.ringIndex, debug.i, debug.j))
+    bounds.expand(by: p)
+    let svg = """
+  <g id="debug-ring-self-x-hit">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
 func overlayForRailsAndHeartline(pathParam: SkeletonPathParameterization, plan: SweepPlan, sampleCount: Int, label: String) -> DebugOverlay {
     let count = max(2, sampleCount)
     let styleAtGT: (Double) -> SweepStyle = { t in

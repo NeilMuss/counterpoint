@@ -641,6 +641,16 @@ public func renderSVGString(
         if !debugCaps.isEmpty {
             overlays.append(debugOverlayForCapBoundary(debugCaps))
         }
+        let planeDebugs = strokeOutputs.flatMap { $0.result.capPlaneDebugs }
+        if !planeDebugs.isEmpty {
+            overlays.append(debugOverlayForCapPlane(planeDebugs))
+        }
+    }
+    if options.debugRingTopology, let ringDebug = result.ringTopology, !options.viewCenterlineOnly {
+        overlays.append(debugOverlayForRingTopology(rings: result.rings, debug: ringDebug))
+    }
+    if let ringSelfXHit = result.ringSelfXHit, !options.viewCenterlineOnly {
+        overlays.append(debugOverlayForRingSelfXHit(debug: ringSelfXHit))
     }
     if spec?.example?.lowercased() == "cap_fillet_line", options.capFilletFixtureOverlays {
         for (index, output) in strokeOutputs.enumerated() {
@@ -1324,7 +1334,6 @@ private func renderGalleryLines(options: CLIOptions, mode: GalleryLinesMode) thr
             }
         }
     }
-
     let outURL = URL(fileURLWithPath: options.outPath)
     let baseOutDir: URL
     if options.outPath.lowercased().hasSuffix(".svg") {
