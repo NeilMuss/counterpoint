@@ -28,6 +28,8 @@ final class Wavy07NoHolesTests: XCTestCase {
 
         var options = CLIOptions()
         options.debugRingTopology = true
+        options.resolveSelfOverlap = true
+        options.example = "line_07_piecewise_alpha_middle_wavy"
         let provider = SpecParamProvider(params: params)
         let funcs = provider.makeParamFuncs(options: options, exampleName: spec.example, sweepWidth: 20.0)
         let plan = makeSweepPlan(
@@ -52,6 +54,8 @@ final class Wavy07NoHolesTests: XCTestCase {
         XCTAssertEqual(intersections.count, 0)
         XCTAssertEqual(result.ringTopology?.rings.count, 1)
         XCTAssertEqual(result.ringTopology?.selfIntersections.count, 0)
+        let area = abs(signedArea(result.ring))
+        XCTAssertGreaterThan(area, 1000.0)
     }
 }
 
@@ -96,4 +100,15 @@ private func ringSelfIntersections(points: [Vec2], eps: Double) -> [Vec2] {
         }
     }
     return hits
+}
+
+private func signedArea(_ ring: [Vec2]) -> Double {
+    guard ring.count >= 3 else { return 0.0 }
+    var area = 0.0
+    for i in 0..<(ring.count - 1) {
+        let a = ring[i]
+        let b = ring[i + 1]
+        area += (a.x * b.y - b.x * a.y)
+    }
+    return area * 0.5
 }
