@@ -22,6 +22,12 @@ Next workstream: Big Caslon “e”
 2) Counter subtraction (non‑ink hole) — implement boolean subtraction or dedicated counter pipeline
 3) Lower‑lip rounding vocabulary (appendage system)
 
+## Refactor planning: Stage contracts
+- Introduce CP2Domain artifacts as explicit, immutable contracts between stages.
+- Pipeline chain: Spec → Skeleton → Parameterization → Samples → Rails → BoundarySoup → Rings → Silhouette.
+- Each artifact carries DeterminismPolicy and `validate()` invariants.
+- Debug is structured data (DebugBundle), not print‑side effects.
+
 ## Determinism doctrine
 - Same JSON → same SVG bytes (stable float formatting)
 - No raster or polygon union in the critical path

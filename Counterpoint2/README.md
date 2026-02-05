@@ -13,6 +13,16 @@ Counterpoint2 is a deterministic, vector‑first Noordzij stroke engine. It is b
 6) Ring construction (ordered loop)
 7) SVG outline + deterministic debug overlays
 
+## Pipeline Artifacts (contracts)
+Counterpoint2 now defines explicit, immutable pipeline artifacts to lock down determinism and boundary contracts:
+`Spec → Skeleton → Parameterization → Samples → Rails → BoundarySoup → Rings → Silhouette`.
+
+Each artifact:
+- is **Codable + Sendable**
+- carries a **DeterminismPolicy** (eps + stable sort)
+- exposes `validate()` invariants
+- optionally carries a **DebugBundle** (structured payloads, no print side‑effects)
+
 ## What’s fixed / stable
 - **J cut‑off / teleport chord** traced to diagonal nib corner selection; fixed by cross‑axis offsets.
 - **Adaptive sampling** now includes keyframe times and rail‑aware refinement (removes faceting at sharp param ramps).

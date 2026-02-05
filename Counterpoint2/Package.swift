@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "CP2Geometry", targets: ["CP2Geometry"]),
+        .library(name: "CP2Domain", targets: ["CP2Domain"]),
         .library(name: "CP2Skeleton", targets: ["CP2Skeleton"]),
         .executable(name: "cp2-cli", targets: ["cp2-cli"])
     ],
@@ -13,6 +14,10 @@ let package = Package(
         .target(
             name: "CP2Geometry",
             dependencies: []
+        ),
+        .target(
+            name: "CP2Domain",
+            dependencies: ["CP2Geometry"]
         ),
         .target(
             name: "CP2Skeleton",
@@ -28,6 +33,10 @@ let package = Package(
         .testTarget(
             name: "CP2GeometryTests",
             dependencies: ["CP2Geometry"]
+        ),
+        .testTarget(
+            name: "CP2DomainTests",
+            dependencies: ["CP2Domain"]
         ),
         .testTarget(
             name: "CP2SkeletonTests",

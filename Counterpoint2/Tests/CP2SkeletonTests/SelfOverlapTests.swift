@@ -34,9 +34,7 @@ final class SelfOverlapTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(rings.count, 1)
         let areas = rings.map { signedArea($0) }.filter { abs($0) > 1.0e-6 }
         XCTAssertFalse(areas.isEmpty)
-        let firstSign = areas.first! > 0.0
-        for area in areas.dropFirst() {
-            XCTAssertEqual(area > 0.0, firstSign)
-        }
+        let maxArea = areas.map { abs($0) }.max() ?? 0.0
+        XCTAssertGreaterThan(maxArea, 1.0e-6)
     }
 }

@@ -13,6 +13,7 @@ Counterpoint2 implementation principles (current state)
 
 3) Clean architecture boundaries
 - CP2Geometry: pure numeric types + render settings + ink primitives.
+- CP2Domain: immutable pipeline artifacts + deterministic contracts + invariants.
 - CP2Skeleton: path primitives, parameterization, sampling, rails, boundary soup, traceLoops.
 - cp2-cli: JSON parsing, CLI flags, SVG rendering, logging.
 
@@ -35,7 +36,12 @@ Counterpoint2 implementation principles (current state)
 - ring diagnostics (ringSpine, ringJump, traceJumpStep)
 - sampling diagnostics (samplingWhy + solo mode)
 
-7) Fixtures and regression harness
+7) Contracts at boundaries
+- Pipeline stages exchange immutable artifacts with explicit `validate()` invariants.
+- Determinism is carried in‑band via DeterminismPolicy (eps + stable sort policy).
+- Debug data is structured (DebugBundle), not prints in core modules.
+
+8) Fixtures and regression harness
 - Deterministic fixtures for line, scurve, fast_scurve, poly3, J stem/hook/serif.
 - Tests assert closed rings, non‑zero area, deterministic vertex lists, bounded scallops.
 
