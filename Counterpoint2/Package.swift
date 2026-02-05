@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "CP2Geometry", targets: ["CP2Geometry"]),
         .library(name: "CP2Domain", targets: ["CP2Domain"]),
+        .library(name: "CP2ResolveOverlap", targets: ["CP2ResolveOverlap"]),
         .library(name: "CP2Skeleton", targets: ["CP2Skeleton"]),
         .executable(name: "cp2-cli", targets: ["cp2-cli"])
     ],
@@ -20,6 +21,10 @@ let package = Package(
             dependencies: ["CP2Geometry"]
         ),
         .target(
+            name: "CP2ResolveOverlap",
+            dependencies: ["CP2Geometry", "CP2Domain"]
+        ),
+        .target(
             name: "CP2Skeleton",
             dependencies: ["CP2Geometry"],
             exclude: [
@@ -28,7 +33,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "cp2-cli",
-            dependencies: ["CP2Geometry", "CP2Skeleton"]
+            dependencies: ["CP2Geometry", "CP2Skeleton", "CP2ResolveOverlap"]
         ),
         .testTarget(
             name: "CP2GeometryTests",
@@ -37,6 +42,10 @@ let package = Package(
         .testTarget(
             name: "CP2DomainTests",
             dependencies: ["CP2Domain"]
+        ),
+        .testTarget(
+            name: "CP2ResolveOverlapTests",
+            dependencies: ["CP2ResolveOverlap"]
         ),
         .testTarget(
             name: "CP2SkeletonTests",

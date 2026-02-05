@@ -1,6 +1,7 @@
 import Foundation
 import CP2Geometry
 import CP2Skeleton
+import CP2ResolveOverlap
 
 struct SweepResult {
     var segmentsUsed: [Segment2]

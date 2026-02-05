@@ -23,6 +23,9 @@ Each artifact:
 - exposes `validate()` invariants
 - optionally carries a **DebugBundle** (structured payloads, no print side‑effects)
 
+ResolveSelfOverlap is now modeled as a micro‑pipeline with explicit artifacts:
+`Ring → PlanarizedSegments → HalfEdgeGraph → FaceSet → SelectionResult`.
+
 ## What’s fixed / stable
 - **J cut‑off / teleport chord** traced to diagonal nib corner selection; fixed by cross‑axis offsets.
 - **Adaptive sampling** now includes keyframe times and rail‑aware refinement (removes faceting at sharp param ramps).

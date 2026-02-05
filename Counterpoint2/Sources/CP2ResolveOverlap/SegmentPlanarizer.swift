@@ -1,16 +1,8 @@
 import Foundation
+import CP2Domain
+import CP2Geometry
 
-public struct PlanarVertex: Equatable {
-    public let key: SnapKey
-    public let pos: Vec2
-}
-
-public struct PlanarEdge: Equatable {
-    public let u: Int
-    public let v: Int
-}
-
-public struct SegmentPlanarizerStats: Equatable {
+public struct SegmentPlanarizerStats: Equatable, Sendable {
     public let segments: Int
     public let intersections: Int
     public let splitMin: Int
@@ -21,15 +13,14 @@ public struct SegmentPlanarizerStats: Equatable {
     public let droppedZeroLength: Int
 }
 
-public struct SegmentPlanarizerResult: Equatable {
-    public let vertices: [PlanarVertex]
-    public let edges: [PlanarEdge]
+public struct SegmentPlanarizerOutput: Equatable, Sendable {
+    public let artifact: PlanarizedSegmentsArtifact
     public let intersections: [Vec2]
     public let stats: SegmentPlanarizerStats
 }
 
 public enum SegmentPlanarizer {
-    private struct SegmentRef {
+    private struct SegmentRefLocal {
         let index: Int
         let a: Vec2
         let b: Vec2
@@ -61,11 +52,17 @@ public enum SegmentPlanarizer {
         return (t, u, p)
     }
 
-    public static func planarize(ring input: [Vec2], eps: Double) -> SegmentPlanarizerResult {
+    public static func planarize(ring input: [Vec2], policy: DeterminismPolicy, sourceRingId: ArtifactID, includeDebug: Bool) -> SegmentPlanarizerOutput {
         guard input.count >= 4 else {
-            return SegmentPlanarizerResult(
+            let artifact = PlanarizedSegmentsArtifact(
+                id: ArtifactID("planarizedSegments"),
+                policy: policy,
+                sourceRingId: sourceRingId,
                 vertices: [],
-                edges: [],
+                segments: []
+            )
+            return SegmentPlanarizerOutput(
+                artifact: artifact,
                 intersections: [],
                 stats: SegmentPlanarizerStats(segments: max(0, input.count - 1), intersections: 0, splitMin: 0, splitMax: 0, splitAvg: 0.0, splitVerts: 0, splitEdges: 0, droppedZeroLength: 0)
             )
@@ -76,10 +73,10 @@ public enum SegmentPlanarizer {
         }
 
         let segCount = ring.count - 1
-        var segments: [SegmentRef] = []
+        var segments: [SegmentRefLocal] = []
         segments.reserveCapacity(segCount)
         for i in 0..<segCount {
-            segments.append(SegmentRef(index: i, a: ring[i], b: ring[i + 1]))
+            segments.append(SegmentRefLocal(index: i, a: ring[i], b: ring[i + 1]))
         }
 
         var splitPoints: [[SplitPoint]] = Array(repeating: [], count: segCount)
@@ -95,10 +92,10 @@ public enum SegmentPlanarizer {
                 if i == 0 && j == segCount - 1 { continue }
                 let si = segments[i]
                 let sj = segments[j]
-                guard let hit = segmentIntersection(si.a, si.b, sj.a, sj.b, eps: eps) else { continue }
+                guard let hit = segmentIntersection(si.a, si.b, sj.a, sj.b, eps: policy.eps) else { continue }
                 let t = max(0.0, min(1.0, hit.t))
                 let u = max(0.0, min(1.0, hit.u))
-                if (abs(t) <= eps || abs(t - 1.0) <= eps) && (abs(u) <= eps || abs(u - 1.0) <= eps) {
+                if (abs(t) <= policy.eps || abs(t - 1.0) <= policy.eps) && (abs(u) <= policy.eps || abs(u - 1.0) <= policy.eps) {
                     continue
                 }
                 splitPoints[i].append(SplitPoint(t: t, point: hit.point))
@@ -107,18 +104,18 @@ public enum SegmentPlanarizer {
             }
         }
 
-        var vertices: [PlanarVertex] = []
+        var vertices: [Vec2] = []
         var vertexIndex: [SnapKey: Int] = [:]
         func vertexFor(_ p: Vec2) -> Int {
-            let key = Epsilon.snapKey(p, eps: eps)
+            let key = Epsilon.snapKey(p, eps: policy.eps)
             if let idx = vertexIndex[key] { return idx }
             let idx = vertices.count
             vertexIndex[key] = idx
-            vertices.append(PlanarVertex(key: key, pos: p))
+            vertices.append(p)
             return idx
         }
 
-        var edges: [PlanarEdge] = []
+        var segmentsOut: [SegmentRef] = []
         var edgeSet: Set<EdgeKey> = []
         var splitCounts: [Int] = []
         splitCounts.reserveCapacity(segCount)
@@ -132,7 +129,7 @@ public enum SegmentPlanarizer {
             var splitCount = 0
             var last: SplitPoint? = nil
             for part in parts {
-                if let last = last, (part.point - last.point).length <= eps {
+                if let last = last, (part.point - last.point).length <= policy.eps {
                     continue
                 }
                 if let last = last {
@@ -141,10 +138,10 @@ public enum SegmentPlanarizer {
                     if a != b {
                         let key = EdgeKey(a, b)
                         if !edgeSet.contains(key) {
-                            let len = (vertices[a].pos - vertices[b].pos).length
-                            if len > eps {
+                            let len = (vertices[a] - vertices[b]).length
+                            if len > policy.eps {
                                 edgeSet.insert(key)
-                                edges.append(PlanarEdge(u: a, v: b))
+                                segmentsOut.append(SegmentRef(a: a, b: b))
                             } else {
                                 droppedZeroLength += 1
                             }
@@ -167,10 +164,36 @@ public enum SegmentPlanarizer {
             splitMax: maxSplit,
             splitAvg: avgSplit,
             splitVerts: vertices.count,
-            splitEdges: edges.count,
+            splitEdges: segmentsOut.count,
             droppedZeroLength: droppedZeroLength
         )
 
-        return SegmentPlanarizerResult(vertices: vertices, edges: edges, intersections: intersections, stats: stats)
+        var debug: DebugBundle? = nil
+        if includeDebug {
+            var bundle = DebugBundle()
+            let payload = PlanarizerDebugPayload(
+                segments: stats.segments,
+                intersections: stats.intersections,
+                splitMin: stats.splitMin,
+                splitMax: stats.splitMax,
+                splitAvg: stats.splitAvg,
+                splitVerts: stats.splitVerts,
+                splitEdges: stats.splitEdges,
+                droppedZeroLength: stats.droppedZeroLength
+            )
+            try? bundle.add(payload)
+            debug = bundle
+        }
+
+        let artifact = PlanarizedSegmentsArtifact(
+            id: ArtifactID("planarizedSegments"),
+            policy: policy,
+            sourceRingId: sourceRingId,
+            vertices: vertices,
+            segments: segmentsOut,
+            debug: debug
+        )
+
+        return SegmentPlanarizerOutput(artifact: artifact, intersections: intersections, stats: stats)
     }
 }

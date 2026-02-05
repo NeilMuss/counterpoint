@@ -28,6 +28,11 @@ Next workstream: Big Caslon “e”
 - Each artifact carries DeterminismPolicy and `validate()` invariants.
 - Debug is structured data (DebugBundle), not print‑side effects.
 
+## ResolveSelfOverlap micro‑pipeline (current)
+- Ring → PlanarizedSegments → HalfEdgeGraph → FaceSet → SelectionResult.
+- Each stage emits a Codable artifact with invariants and optional DebugBundle payloads.
+- SelectionPolicy is pluggable; current policy for line gallery is “max abs(area)”.
+
 ## Determinism doctrine
 - Same JSON → same SVG bytes (stable float formatting)
 - No raster or polygon union in the critical path
