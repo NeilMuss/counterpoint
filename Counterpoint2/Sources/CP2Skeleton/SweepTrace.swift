@@ -2590,7 +2590,7 @@ func buildPenSoupSegmentsRectCorners(
     corner2: [Vec2],
     corner3: [Vec2],
     eps: Double
-) -> (segments: [Segment2], laneSegments: Int, capSegments: Int) {
+) -> (segments: [Segment2], laneSegments: Int, perimeterSegments: Int) {
     guard !corner0.isEmpty else { return ([], 0, 0) }
     let count = corner0.count
     guard corner1.count == count, corner2.count == count, corner3.count == count else {
@@ -2624,7 +2624,7 @@ func buildPenSoupSegmentsRectCorners(
         }
         return "\(kb.x),\(kb.y)->\(ka.x),\(ka.y)"
     }
-    func appendCapEdge(_ a: Vec2, _ b: Vec2, seen: inout Set<String>) -> Bool {
+    func appendPerimeterEdge(_ a: Vec2, _ b: Vec2, seen: inout Set<String>) -> Bool {
         if (a - b).length <= eps { return false }
         let key = edgeKey(a, b)
         if seen.contains(key) { return false }
@@ -2634,36 +2634,23 @@ func buildPenSoupSegmentsRectCorners(
     }
 
     let edgePairs = [(0, 1), (1, 2), (2, 3), (3, 0)]
-    var capSegments = 0
+    var perimeterSegments = 0
     for k in 0..<count {
         let c0 = corner0[k]
         let c1 = corner1[k]
         let c2 = corner2[k]
         let c3 = corner3[k]
         let corners = [c0, c1, c2, c3]
-        var edges: [(len: Double, pair: (Int, Int), index: Int)] = []
-        edges.reserveCapacity(4)
-        for (idx, pair) in edgePairs.enumerated() {
+        var seen: Set<String> = []
+        for pair in edgePairs {
             let a = corners[pair.0]
             let b = corners[pair.1]
-            edges.append(((a - b).length, pair, idx))
-        }
-        edges.sort { lhs, rhs in
-            if lhs.len != rhs.len { return lhs.len < rhs.len }
-            return lhs.index < rhs.index
-        }
-        let isEnd = k == 0 || k == count - 1
-        let selected = isEnd ? edges : Array(edges.prefix(2))
-        var seen: Set<String> = []
-        for edge in selected {
-            let a = corners[edge.pair.0]
-            let b = corners[edge.pair.1]
-            if appendCapEdge(a, b, seen: &seen) {
-                capSegments += 1
+            if appendPerimeterEdge(a, b, seen: &seen) {
+                perimeterSegments += 1
             }
         }
     }
-    return (segments, laneSegments, capSegments)
+    return (segments, laneSegments, perimeterSegments)
 }
 
 private func splitSegmentsAtIntersections(_ segments: [Segment2], eps: Double) -> [Segment2] {

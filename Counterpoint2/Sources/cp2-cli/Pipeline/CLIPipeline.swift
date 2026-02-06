@@ -923,7 +923,7 @@ public func renderSVGString(
         }
         print(String(format: "SOUP chainCount=%d totalPoints=%d totalSegments=%d", soupSegments, soupPoints, soupSegments))
         if result.soupTotalSegments > 0 {
-            print(String(format: "SOUP_EDGES laneSegments=%d capSegments=%d totalSegments=%d", result.soupLaneSegments, result.soupCapSegments, result.soupTotalSegments))
+            print(String(format: "SOUP_EDGES laneSegments=%d perimeterSegments=%d totalSegments=%d", result.soupLaneSegments, result.soupPerimeterSegments, result.soupTotalSegments))
         }
         if let planarStats = result.planarizeStats {
             print(String(format: "PLANARIZE intersections=%d splitSegmentsBefore=%d after=%d", planarStats.intersections, planarStats.segments, planarStats.splitEdges))

@@ -3,7 +3,7 @@ import CP2Geometry
 @testable import CP2Skeleton
 
 final class RectCornersCapEdgesTests: XCTestCase {
-    func testCapEdgesConnectWithinEachSample() {
+    func testPerimeterEdgesConnectWithinEachSample() {
         let sampleCount = 3
         var c0: [Vec2] = []
         var c1: [Vec2] = []
@@ -23,9 +23,9 @@ final class RectCornersCapEdgesTests: XCTestCase {
             corner3: c3,
             eps: 1.0e-6
         )
-        XCTAssertGreaterThan(output.capSegments, 0)
-        let expectedCaps = 4 * 2 + max(0, sampleCount - 2) * 2
-        XCTAssertEqual(output.capSegments, expectedCaps)
+        XCTAssertGreaterThan(output.perimeterSegments, 0)
+        let expectedPerimeter = sampleCount * 4
+        XCTAssertEqual(output.perimeterSegments, expectedPerimeter)
 
         let samples = zip(zip(c0, c1), zip(c2, c3)).map { [$0.0.0, $0.0.1, $0.1.0, $0.1.1] }
         func edgeKey(_ a: Vec2, _ b: Vec2) -> String {
@@ -53,7 +53,7 @@ final class RectCornersCapEdgesTests: XCTestCase {
             }
         }
         XCTAssertEqual(perSampleCounts[0], 4)
-        XCTAssertEqual(perSampleCounts[1], 2)
+        XCTAssertEqual(perSampleCounts[1], 4)
         XCTAssertEqual(perSampleCounts[2], 4)
     }
 }

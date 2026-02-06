@@ -18,7 +18,7 @@ struct SweepResult {
     var resolvedFaces: [FaceLoop]?
     var planarizeStats: SegmentPlanarizerStats?
     var soupLaneSegments: Int
-    var soupCapSegments: Int
+    var soupPerimeterSegments: Int
     var soupTotalSegments: Int
     var glyphBounds: AABB?
     var sampling: SamplingResult?
@@ -339,13 +339,13 @@ func runSweep(
     }()
 
     var soupLaneSegments = 0
-    var soupCapSegments = 0
+    var soupPerimeterSegments = 0
     for seg in segmentsUsed {
         switch seg.source {
         case .penStrip:
             soupLaneSegments += 1
         case .penCap:
-            soupCapSegments += 1
+            soupPerimeterSegments += 1
         default:
             break
         }
@@ -648,7 +648,7 @@ func runSweep(
         resolvedFaces: resolvedFaces,
         planarizeStats: planarizeStats,
         soupLaneSegments: soupLaneSegments,
-        soupCapSegments: soupCapSegments,
+        soupPerimeterSegments: soupPerimeterSegments,
         soupTotalSegments: soupTotalSegments,
         glyphBounds: glyphBounds,
         sampling: capturedSampling,

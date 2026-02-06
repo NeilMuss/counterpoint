@@ -4,7 +4,7 @@ import CP2Skeleton
 @testable import cp2_cli
 
 final class RectCornersCapEdgesFixtureTests: XCTestCase {
-    func testLine14WavyEmitsCapEdgesAndBridgesShortEdge() throws {
+    func testLine14WavyEmitsPerimeterEdgesAndBridgesShortEdge() throws {
         let spec = try loadSpecOrThrow(path: "Fixtures/glyphs/gallery_lines/line_14_translation_wavy.v0.json")
         guard let ink = spec.ink, let stroke = spec.strokes?.first, let params = stroke.params else {
             XCTFail("expected ink and stroke params")
@@ -43,7 +43,7 @@ final class RectCornersCapEdgesFixtureTests: XCTestCase {
             endCap: .butt
         )
 
-        XCTAssertGreaterThan(sweep.soupCapSegments, 0)
+        XCTAssertGreaterThan(sweep.soupPerimeterSegments, 0)
 
         guard let stamps = sweep.penStamps?.samples, !stamps.isEmpty else {
             XCTFail("expected pen stamps")
@@ -100,7 +100,7 @@ final class RectCornersCapEdgesFixtureTests: XCTestCase {
             _ = try renderSVGString(options: options, spec: spec)
         }
         XCTAssertTrue(output.contains("SOUP_EDGES"))
-        XCTAssertTrue(output.contains("capSegments="))
+        XCTAssertTrue(output.contains("perimeterSegments="))
     }
 }
 
