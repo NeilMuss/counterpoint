@@ -17,6 +17,7 @@ struct SweepResult {
     var resolveFacesCount: Int
     var resolvedFaces: [FaceLoop]?
     var planarizeStats: SegmentPlanarizerStats?
+    var planarizationHeatmap: PlanarizationHeatmapDebug?
     var soupLaneSegments: Int
     var soupPerimeterSegments: Int
     var soupTotalSegments: Int
@@ -456,6 +457,7 @@ func runSweep(
     var resolveFacesCount = 0
     var resolvedFaces: [FaceLoop]? = nil
     var planarizeStats: SegmentPlanarizerStats? = nil
+    var planarizationHeatmap: PlanarizationHeatmapDebug? = nil
 
     let envelope = selectEnvelopeCandidate(rings: rawRings)
     if let envelope {
@@ -492,6 +494,7 @@ func runSweep(
         let segmentPairs = segmentsUsed.map { ($0.a, $0.b) }
         let planar = SegmentPlanarizer.planarize(segments: segmentPairs, policy: policy, sourceRingId: ArtifactID("soupSegments"), includeDebug: false)
         planarizeStats = planar.stats
+        planarizationHeatmap = buildPlanarizationHeatmap(artifact: planar.artifact)
         if !planar.artifact.segments.isEmpty {
             let planarSegments = planar.artifact.segments.map { seg in
                 Segment2(planar.artifact.vertices[seg.a], planar.artifact.vertices[seg.b], source: .unknown("planarized"))
@@ -647,6 +650,7 @@ func runSweep(
         resolveFacesCount: resolveFacesCount,
         resolvedFaces: resolvedFaces,
         planarizeStats: planarizeStats,
+        planarizationHeatmap: planarizationHeatmap,
         soupLaneSegments: soupLaneSegments,
         soupPerimeterSegments: soupPerimeterSegments,
         soupTotalSegments: soupTotalSegments,

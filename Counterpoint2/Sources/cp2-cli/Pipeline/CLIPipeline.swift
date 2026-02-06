@@ -688,6 +688,13 @@ public func renderSVGString(
         }()
         overlays.append(debugOverlayForResolvedFacesAll(faces: faces, selectedFaceId: selectedFaceId))
     }
+    if options.debugPlanarizationHeatmap, !options.viewCenterlineOnly {
+        if let heatmap = result.planarizationHeatmap {
+            overlays.append(debugOverlayForPlanarizationHeatmap(debug: heatmap))
+        } else {
+            overlays.append(DebugOverlay(svg: "<g id=\"debug-planarization-heatmap\"></g>", bounds: AABB.empty))
+        }
+    }
     if options.debugRingOutputOutline, !options.viewCenterlineOnly {
         overlays.append(debugOverlayForRingOutputOutline(ring: result.finalContour.points))
     }
@@ -927,6 +934,9 @@ public func renderSVGString(
         }
         if let planarStats = result.planarizeStats {
             print(String(format: "PLANARIZE intersections=%d splitSegmentsBefore=%d after=%d", planarStats.intersections, planarStats.segments, planarStats.splitEdges))
+        }
+        if let heatmap = result.planarizationHeatmap {
+            print(String(format: "PLANARIZE_HEATMAP vertices=%d maxDegree=%d avgDegree=%.3f", heatmap.vertices.count, heatmap.maxDegree, heatmap.avgDegree))
         }
         print(String(format: "RINGS count=%d maxAbsArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f)", result.rings.count, maxRingArea, minP.x, minP.y, maxP.x, maxP.y))
         if let faces = result.resolvedFaces, !faces.isEmpty {

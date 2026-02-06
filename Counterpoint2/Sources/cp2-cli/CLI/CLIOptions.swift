@@ -28,6 +28,7 @@ public struct CLIOptions {
     var debugRingOutputSelfX: Bool = false
     var debugEnvelopeCandidateOutline: Bool = false
     var debugResolvedFacesAll: Bool = false
+    var debugPlanarizationHeatmap: Bool = false
     var debugRingSelfXHit: Int? = nil
     var resolveSelfOverlap: Bool = false
     var debugAngleMode: Bool = false
@@ -334,6 +335,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             if tokens.contains("resolvedFacesAll") || tokens.contains("resolvedfacesall") {
                 options.debugResolvedFacesAll = true
             }
+            if tokens.contains("planarizationHeatmap") || tokens.contains("planarizationheatmap") {
+                options.debugPlanarizationHeatmap = true
+            }
             if tokens.contains("samplingWhy") {
                 options.debugSamplingWhy = true
             }
@@ -489,6 +493,7 @@ Debug flags:
   --view ringOutputSelfX  Render output ring self-intersection points
   --view envelopeCandidateOutline  Render envelope candidate outline (stroke only)
   --view resolvedFacesAll  Render all resolved faces (stroke only)
+  --view planarizationHeatmap  Render planarization heatmap (vertex complexity)
   --debug-angle-mode  Print angle mode + crossAxis/tangent diagnostics
   --debug-summary  Print end-of-run summary metrics
   --debug-trace-jump-step  Dump trace decision for max jump segment
