@@ -1,6 +1,7 @@
 import Foundation
 import CP2Geometry
 import CP2Skeleton
+import CP2ResolveOverlap
 
 enum SamplingModeError: Error, CustomStringConvertible {
     case fixedNotAllowed(String)
@@ -506,8 +507,9 @@ public func renderSVGString(
     let joinGTs = primaryOutput.joinGTs
 
     let strokeEntries: [(index: Int, stroke: ResolvedStroke, ring: [Vec2])] = strokeOutputs.enumerated().compactMap { index, output in
-        guard !output.result.ring.isEmpty else { return nil }
-        return (index, output.stroke, normalizedRing(output.result.ring, clockwise: true))
+        let points = output.result.finalContour.points
+        guard !points.isEmpty else { return nil }
+        return (index, output.stroke, normalizedRing(points, clockwise: true))
     }
     let inkRingsNormalized: [[Vec2]] = strokeEntries.map { $0.ring }
     var counterRingsNormalized: [(ring: [Vec2], appliesTo: [String]?)] = []
@@ -633,6 +635,21 @@ public func renderSVGString(
             overlays.append(DebugOverlay(svg: "<g id=\"debug-counters\"></g>", bounds: AABB.empty))
         }
     }
+    if !soloWhy && options.debugPenStamps && !options.viewCenterlineOnly {
+        if let penStamps = primaryOutput.result.penStamps {
+            let selected = selectPenStamps(
+                stamps: penStamps.samples,
+                options: options
+            )
+            overlays.append(debugOverlayForPenStamps(
+                stamps: selected,
+                showVertices: options.debugPenStampsShowVertices,
+                showConnectors: options.debugPenStampsShowConnectors
+            ))
+        } else {
+            overlays.append(DebugOverlay(svg: "<g id=\"debug-pen-stamps\"></g>", bounds: AABB.empty))
+        }
+    }
     if let capFilletOverlay {
         overlays.append(capFilletOverlay)
     }
@@ -657,6 +674,25 @@ public func renderSVGString(
     }
     if options.debugRingTopology, let ringDebug = result.ringTopology, !options.viewCenterlineOnly {
         overlays.append(debugOverlayForRingTopology(rings: result.rings, debug: ringDebug))
+    }
+    if options.debugEnvelopeCandidateOutline, !options.viewCenterlineOnly {
+        let candidate = (result.envelopeIndex >= 0 && result.envelopeIndex < result.rings.count) ? result.rings[result.envelopeIndex] : []
+        overlays.append(debugOverlayForEnvelopeCandidateOutline(ring: candidate, ringIndex: result.envelopeIndex))
+    }
+    if options.debugResolvedFacesAll, let faces = result.resolvedFaces, !options.viewCenterlineOnly {
+        let selectedFaceId: Int? = {
+            if case let .resolvedFace(faceId) = result.finalContour.provenance {
+                return faceId
+            }
+            return nil
+        }()
+        overlays.append(debugOverlayForResolvedFacesAll(faces: faces, selectedFaceId: selectedFaceId))
+    }
+    if options.debugRingOutputOutline, !options.viewCenterlineOnly {
+        overlays.append(debugOverlayForRingOutputOutline(ring: result.finalContour.points))
+    }
+    if options.debugRingOutputSelfX, !options.viewCenterlineOnly {
+        overlays.append(debugOverlayForRingOutputSelfX(ring: result.finalContour.points))
     }
     if let ringSelfXHit = result.ringSelfXHit, !options.viewCenterlineOnly {
         overlays.append(debugOverlayForRingSelfXHit(debug: ringSelfXHit))
@@ -886,19 +922,65 @@ public func renderSVGString(
             print("RECT minRectArea=0.000000 minEdgeLen=0.000000")
         }
         print(String(format: "SOUP chainCount=%d totalPoints=%d totalSegments=%d", soupSegments, soupPoints, soupSegments))
+        if let planarStats = result.planarizeStats {
+            print(String(format: "PLANARIZE intersections=%d splitSegmentsBefore=%d after=%d", planarStats.intersections, planarStats.segments, planarStats.splitEdges))
+        }
         print(String(format: "RINGS count=%d maxAbsArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f)", result.rings.count, maxRingArea, minP.x, minP.y, maxP.x, maxP.y))
-        if let first = result.ring.first {
+        if let faces = result.resolvedFaces, !faces.isEmpty {
+            var bestFaceId = faces.first?.faceId ?? -1
+            var bestAbsArea = -Double.greatestFiniteMagnitude
+            var bestBBoxArea = -Double.greatestFiniteMagnitude
+            for face in faces {
+                let absArea = abs(face.area)
+                let bounds = ringBounds(face.boundary)
+                let bboxArea = max(0.0, bounds.max.x - bounds.min.x) * max(0.0, bounds.max.y - bounds.min.y)
+                if absArea > bestAbsArea ||
+                    (absArea == bestAbsArea && bboxArea > bestBBoxArea) ||
+                    (absArea == bestAbsArea && bboxArea == bestBBoxArea && face.faceId < bestFaceId) {
+                    bestAbsArea = absArea
+                    bestBBoxArea = bboxArea
+                    bestFaceId = face.faceId
+                }
+            }
+            print(String(format: "FACES count=%d maxAbsAreaFaceId=%d maxAbsArea=%.6f", faces.count, bestFaceId, bestAbsArea))
+        }
+        if result.envelopeIndex >= 0 {
+            print(String(format: "ENVELOPE_CANDIDATE ringIndex=%d absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f) selfX=%d",
+                         result.envelopeIndex,
+                         result.envelopeAbsArea,
+                         result.envelopeBBoxMin.x, result.envelopeBBoxMin.y, result.envelopeBBoxMax.x, result.envelopeBBoxMax.y,
+                         result.envelopeSelfX))
+        }
+        for (index, ring) in result.rings.enumerated() {
+            let absArea = abs(signedArea(ring))
+            let bounds = ringBounds(ring)
+            let selfX = ringSelfIntersectionCount(ring)
+            print(String(format: "RING_DIAG ringIndex=%d absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f) selfX=%d", index, absArea, bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y, selfX))
+        }
+        if let first = result.finalContour.points.first {
             var outMin = first
             var outMax = first
-            for p in result.ring {
+            for p in result.finalContour.points {
                 outMin = Vec2(min(outMin.x, p.x), min(outMin.y, p.y))
                 outMax = Vec2(max(outMax.x, p.x), max(outMax.y, p.y))
             }
-            let outArea = abs(signedArea(result.ring))
-            let outIndex = result.rings.firstIndex(where: { $0 == result.ring }) ?? -1
-            print(String(format: "OUTPUT ringIndex=%d absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f)", outIndex, outArea, outMin.x, outMin.y, outMax.x, outMax.y))
+            let outArea = abs(signedArea(result.finalContour.points))
+            let outSelfX = result.finalContour.selfX
+            switch result.finalContour.provenance {
+            case .tracedRing(let index):
+                print(String(format: "OUTPUT ringIndex=%d absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f) selfX=%d reason=%@", index, outArea, outMin.x, outMin.y, outMax.x, outMax.y, outSelfX, result.finalContour.reason))
+            case .resolvedFace(let faceId):
+                print(String(format: "OUTPUT faceId=%d absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f) selfX=%d reason=%@", faceId, outArea, outMin.x, outMin.y, outMax.x, outMax.y, outSelfX, result.finalContour.reason))
+            case .none:
+                print(String(format: "OUTPUT ringIndex=-1 absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f) selfX=%d reason=%@", outArea, outMin.x, outMin.y, outMax.x, outMax.y, outSelfX, result.finalContour.reason))
+            }
+            if result.resolveFacesCount > 0 {
+                print(String(format: "RESOLVE faces=%d", result.resolveFacesCount))
+            }
+            print(String(format: "OUTPUT_DIAG selfX=%d reason=%@", outSelfX, result.finalContour.reason))
         } else {
-            print("OUTPUT ringIndex=-1 absArea=0.000000 bbox=(0.000000,0.000000,0.000000,0.000000)")
+            print("OUTPUT ringIndex=-1 absArea=0.000000 bbox=(0.000000,0.000000,0.000000,0.000000) selfX=0 reason=none")
+            print("OUTPUT_DIAG selfX=0 reason=none")
         }
         if let resolve = result.resolveSelfOverlap {
             print(String(format: "RESOLVE beforeRings=%d afterRings=%d", resolve.selfBefore, resolve.selfAfter))
@@ -1663,7 +1745,7 @@ func renderStoryboardCels(
         plan: primaryOutput.plan,
         params: primaryStroke.params,
         sampling: primaryOutput.result.sampling,
-        ring: primaryOutput.result.ring,
+        ring: primaryOutput.result.finalContour.points,
         railsLeft: railsLeft.isEmpty ? nil : railsLeft,
         railsRight: railsRight.isEmpty ? nil : railsRight,
         soupChains: soupChains,

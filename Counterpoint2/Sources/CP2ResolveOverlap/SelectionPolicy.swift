@@ -19,6 +19,7 @@ private struct RectCornersCandidate {
     let face: FaceLoop
     let absArea: Double
     let bboxArea: Double
+    let selfX: Int
 }
 
 public enum SelectionPolicy {
@@ -87,10 +88,18 @@ public enum SelectionPolicy {
                     rejected.append(face.faceId)
                     continue
                 }
-                candidates.append(RectCornersCandidate(face: face, absArea: absArea, bboxArea: boxArea))
+                let selfX = ringSelfIntersectionCount(face.boundary)
+                candidates.append(RectCornersCandidate(face: face, absArea: absArea, bboxArea: boxArea, selfX: selfX))
             }
 
-            guard let best = candidates.max(by: { lhs, rhs in
+            let preferredCandidates: [RectCornersCandidate]
+            if candidates.contains(where: { $0.selfX == 0 }) {
+                preferredCandidates = candidates.filter { $0.selfX == 0 }
+            } else {
+                preferredCandidates = candidates
+            }
+
+            guard let best = preferredCandidates.max(by: { lhs, rhs in
                 if lhs.bboxArea == rhs.bboxArea {
                     if lhs.absArea == rhs.absArea { return lhs.face.faceId < rhs.face.faceId }
                     return lhs.absArea < rhs.absArea

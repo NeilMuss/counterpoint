@@ -1,6 +1,7 @@
 import Foundation
 import CP2Geometry
 import CP2Skeleton
+import CP2ResolveOverlap
 
 struct DebugOverlay {
     var svg: String
@@ -488,6 +489,102 @@ func debugOverlayForRingSelfXHit(debug: RingSelfXHitDebug) -> DebugOverlay {
     let svg = """
   <g id="debug-ring-self-x-hit">
     \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForRingOutputOutline(ring: [Vec2]) -> DebugOverlay {
+    var bounds = AABB.empty
+    var parts: [String] = []
+    guard let first = ring.first else {
+        return DebugOverlay(svg: "<g id=\"debug-ring-output-outline\"></g>", bounds: AABB.empty)
+    }
+    var pathParts: [String] = []
+    pathParts.append(String(format: "M %.4f %.4f", first.x, first.y))
+    for p in ring.dropFirst() {
+        pathParts.append(String(format: "L %.4f %.4f", p.x, p.y))
+    }
+    let pathData = pathParts.joined(separator: " ")
+    parts.append("<path class=\"ring-output\" d=\"\(pathData)\" fill=\"none\" stroke=\"#1e88e5\" stroke-width=\"1.4\" />")
+    for p in ring { bounds.expand(by: p) }
+    let svg = """
+  <g id="debug-ring-output-outline">
+    \(parts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForEnvelopeCandidateOutline(ring: [Vec2], ringIndex: Int) -> DebugOverlay {
+    var bounds = AABB.empty
+    var parts: [String] = []
+    guard let first = ring.first else {
+        return DebugOverlay(svg: "<g id=\"debug-envelope-candidate-outline\"></g>", bounds: AABB.empty)
+    }
+    var pathParts: [String] = []
+    pathParts.append(String(format: "M %.4f %.4f", first.x, first.y))
+    for p in ring.dropFirst() {
+        pathParts.append(String(format: "L %.4f %.4f", p.x, p.y))
+    }
+    let pathData = pathParts.joined(separator: " ")
+    parts.append("<path class=\"envelope-candidate ring-\(ringIndex)\" d=\"\(pathData)\" fill=\"none\" stroke=\"#fb8c00\" stroke-width=\"1.2\" />")
+    for p in ring { bounds.expand(by: p) }
+    let label = String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"9\" fill=\"#fb8c00\">envelope %d</text>", first.x + 4.0, first.y - 4.0, ringIndex)
+    parts.append(label)
+    let svg = """
+  <g id="debug-envelope-candidate-outline">
+    \(parts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForRingOutputSelfX(ring: [Vec2]) -> DebugOverlay {
+    let points = ringSelfIntersectionPoints(ring)
+    guard !points.isEmpty else {
+        return DebugOverlay(svg: "<g id=\"debug-ring-output-selfx\"></g>", bounds: AABB.empty)
+    }
+    var bounds = AABB.empty
+    var parts: [String] = []
+    for p in points {
+        parts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"2.4\" fill=\"#d32f2f\" stroke=\"none\" />", p.x, p.y))
+        bounds.expand(by: p)
+    }
+    let svg = """
+  <g id="debug-ring-output-selfx">
+    \(parts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForResolvedFacesAll(faces: [FaceLoop], selectedFaceId: Int?) -> DebugOverlay {
+    var bounds = AABB.empty
+    var parts: [String] = []
+    guard !faces.isEmpty else {
+        return DebugOverlay(svg: "<g id=\"debug-resolved-faces-all\"></g>", bounds: AABB.empty)
+    }
+    for face in faces {
+        guard let first = face.boundary.first else { continue }
+        var pathParts: [String] = []
+        pathParts.append(String(format: "M %.4f %.4f", first.x, first.y))
+        for p in face.boundary.dropFirst() {
+            pathParts.append(String(format: "L %.4f %.4f", p.x, p.y))
+        }
+        let pathData = pathParts.joined(separator: " ")
+        let isSelected = selectedFaceId == face.faceId
+        let stroke = isSelected ? "#1e88e5" : "#26a69a"
+        let width = isSelected ? "1.8" : "1.0"
+        let cls = isSelected ? "resolved-face selected" : "resolved-face"
+        parts.append("<path class=\"\(cls)\" data-face=\"\(face.faceId)\" d=\"\(pathData)\" fill=\"none\" stroke=\"\(stroke)\" stroke-width=\"\(width)\" />")
+        let label = String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"8\" fill=\"%@\">face %d</text>", first.x + 4.0, first.y - 4.0, stroke, face.faceId)
+        parts.append(label)
+        for p in face.boundary { bounds.expand(by: p) }
+    }
+    let svg = """
+  <g id="debug-resolved-faces-all">
+    \(parts.joined(separator: "\n    "))
   </g>
 """
     return DebugOverlay(svg: svg, bounds: bounds)

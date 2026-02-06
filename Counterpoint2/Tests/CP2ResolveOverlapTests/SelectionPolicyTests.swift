@@ -83,4 +83,32 @@ final class SelectionPolicyTests: XCTestCase {
         XCTAssertEqual(result.selectedFaceId, 2)
         XCTAssertNil(result.failureReason)
     }
+
+    func test_SelectionPolicy_RectCorners_PrefersNonSelfIntersectingRing() {
+        let bowtie = [Vec2(0,0), Vec2(3,3), Vec2(0,3), Vec2(3,0), Vec2(0,0)]
+        let simple = [Vec2(0,0), Vec2(2,0), Vec2(2,2), Vec2(0,2), Vec2(0,0)]
+        let faceSelfX = FaceLoop(
+            faceId: 10,
+            boundary: bowtie,
+            area: 9.0,
+            winding: .ccw,
+            halfEdgeCycle: [0, 1, 2]
+        )
+        let faceSimple = FaceLoop(
+            faceId: 11,
+            boundary: simple,
+            area: 4.0,
+            winding: .ccw,
+            halfEdgeCycle: [3, 4, 5]
+        )
+        let policy = DeterminismPolicy(eps: 1.0e-6, stableSort: .lexicographicXYThenIndex)
+        let (result, _) = SelectionPolicy.select(
+            policy: .rectCornersBBox(minAreaRatio: 0.0, minBBoxRatio: 0.0),
+            originalRing: bowtie,
+            faces: [faceSelfX, faceSimple],
+            determinism: policy,
+            includeDebug: false
+        )
+        XCTAssertEqual(result.selectedFaceId, 11)
+    }
 }

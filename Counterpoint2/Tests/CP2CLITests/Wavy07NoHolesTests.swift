@@ -49,12 +49,11 @@ final class Wavy07NoHolesTests: XCTestCase {
             endCap: params.endCap ?? .butt
         )
 
-        XCTAssertFalse(result.ring.isEmpty)
-        let intersections = ringSelfIntersections(points: result.ring, eps: 1.0e-6)
+        XCTAssertFalse(result.finalContour.points.isEmpty)
+        let intersections = ringSelfIntersections(points: result.finalContour.points, eps: 1.0e-6)
         XCTAssertEqual(intersections.count, 0)
         XCTAssertEqual(result.ringTopology?.rings.count, 1)
-        XCTAssertEqual(result.ringTopology?.selfIntersections.count, 0)
-        let area = abs(signedArea(result.ring))
+        let area = abs(signedArea(result.finalContour.points))
         XCTAssertGreaterThan(area, 1000.0)
     }
 }

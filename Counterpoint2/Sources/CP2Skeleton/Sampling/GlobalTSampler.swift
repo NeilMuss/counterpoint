@@ -96,9 +96,20 @@ public struct GlobalTSampler {
         /// Decide if we should subdivide based on skeleton flatness only.
         func flatnessError(s0: Double, sm: Double, s1: Double) -> Double {
             let p0 = positionAt(s0)
-            let pm = positionAt(sm)
             let p1 = positionAt(s1)
-            return ErrorMetrics.midpointDeviation(p0: p0, pm: pm, p1: p1)
+            let pm = positionAt(sm)
+            let q1 = s0 + 0.25 * (s1 - s0)
+            let q3 = s0 + 0.75 * (s1 - s0)
+            let p25 = positionAt(q1)
+            let p75 = positionAt(q3)
+            func deviation(_ p: Vec2, weight: Double) -> Double {
+                let chord = p0 + (p1 - p0) * weight
+                return (p - chord).length
+            }
+            let eMid = deviation(pm, weight: 0.5)
+            let e25 = deviation(p25, weight: 0.25)
+            let e75 = deviation(p75, weight: 0.75)
+            return max(eMid, max(e25, e75))
         }
 
         /// Recursive subdivision driver.

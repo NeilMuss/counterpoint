@@ -196,4 +196,148 @@ public enum SegmentPlanarizer {
 
         return SegmentPlanarizerOutput(artifact: artifact, intersections: intersections, stats: stats)
     }
+
+    public static func planarize(segments input: [(Vec2, Vec2)], policy: DeterminismPolicy, sourceRingId: ArtifactID, includeDebug: Bool) -> SegmentPlanarizerOutput {
+        guard !input.isEmpty else {
+            let artifact = PlanarizedSegmentsArtifact(
+                id: ArtifactID("planarizedSegments"),
+                policy: policy,
+                sourceRingId: sourceRingId,
+                vertices: [],
+                segments: []
+            )
+            return SegmentPlanarizerOutput(
+                artifact: artifact,
+                intersections: [],
+                stats: SegmentPlanarizerStats(segments: 0, intersections: 0, splitMin: 0, splitMax: 0, splitAvg: 0.0, splitVerts: 0, splitEdges: 0, droppedZeroLength: 0)
+            )
+        }
+
+        let segCount = input.count
+        var segments: [SegmentRefLocal] = []
+        segments.reserveCapacity(segCount)
+        for (index, seg) in input.enumerated() {
+            segments.append(SegmentRefLocal(index: index, a: seg.0, b: seg.1))
+        }
+
+        var splitPoints: [[SplitPoint]] = Array(repeating: [], count: segCount)
+        for i in 0..<segCount {
+            splitPoints[i].append(SplitPoint(t: 0.0, point: segments[i].a))
+            splitPoints[i].append(SplitPoint(t: 1.0, point: segments[i].b))
+        }
+
+        func isEndpoint(_ t: Double) -> Bool {
+            abs(t) <= policy.eps || abs(t - 1.0) <= policy.eps
+        }
+
+        var intersections: [Vec2] = []
+        for i in 0..<segCount {
+            for j in (i + 1)..<segCount {
+                let si = segments[i]
+                let sj = segments[j]
+                guard let hit = segmentIntersection(si.a, si.b, sj.a, sj.b, eps: policy.eps) else { continue }
+                let t = max(0.0, min(1.0, hit.t))
+                let u = max(0.0, min(1.0, hit.u))
+                let sharedEndpoint = isEndpoint(t) && isEndpoint(u)
+                if sharedEndpoint {
+                    continue
+                }
+                splitPoints[i].append(SplitPoint(t: t, point: hit.point))
+                splitPoints[j].append(SplitPoint(t: u, point: hit.point))
+                intersections.append(hit.point)
+            }
+        }
+
+        var vertices: [Vec2] = []
+        var vertexIndex: [SnapKey: Int] = [:]
+        func vertexFor(_ p: Vec2) -> Int {
+            let key = Epsilon.snapKey(p, eps: policy.eps)
+            if let idx = vertexIndex[key] { return idx }
+            let idx = vertices.count
+            vertexIndex[key] = idx
+            vertices.append(p)
+            return idx
+        }
+
+        var segmentsOut: [SegmentRef] = []
+        var edgeSet: Set<EdgeKey> = []
+        var splitCounts: [Int] = []
+        splitCounts.reserveCapacity(segCount)
+        var droppedZeroLength = 0
+        for i in 0..<segCount {
+            let parts = splitPoints[i].sorted { lhs, rhs in
+                if abs(lhs.t - rhs.t) > 1.0e-9 { return lhs.t < rhs.t }
+                if lhs.point.x != rhs.point.x { return lhs.point.x < rhs.point.x }
+                return lhs.point.y < rhs.point.y
+            }
+            var splitCount = 0
+            var last: SplitPoint? = nil
+            for part in parts {
+                if let last = last, (part.point - last.point).length <= policy.eps {
+                    continue
+                }
+                if let last = last {
+                    let a = vertexFor(last.point)
+                    let b = vertexFor(part.point)
+                    if a != b {
+                        let key = EdgeKey(a, b)
+                        if !edgeSet.contains(key) {
+                            let len = (vertices[a] - vertices[b]).length
+                            if len > policy.eps {
+                                edgeSet.insert(key)
+                                segmentsOut.append(SegmentRef(a: a, b: b))
+                            } else {
+                                droppedZeroLength += 1
+                            }
+                        }
+                    }
+                }
+                splitCount += 1
+                last = part
+            }
+            splitCounts.append(splitCount)
+        }
+
+        let minSplit = splitCounts.min() ?? 0
+        let maxSplit = splitCounts.max() ?? 0
+        let avgSplit = splitCounts.isEmpty ? 0.0 : Double(splitCounts.reduce(0, +)) / Double(splitCounts.count)
+        let stats = SegmentPlanarizerStats(
+            segments: segCount,
+            intersections: intersections.count,
+            splitMin: minSplit,
+            splitMax: maxSplit,
+            splitAvg: avgSplit,
+            splitVerts: vertices.count,
+            splitEdges: segmentsOut.count,
+            droppedZeroLength: droppedZeroLength
+        )
+
+        var debug: DebugBundle? = nil
+        if includeDebug {
+            var bundle = DebugBundle()
+            let payload = PlanarizerDebugPayload(
+                segments: stats.segments,
+                intersections: stats.intersections,
+                splitMin: stats.splitMin,
+                splitMax: stats.splitMax,
+                splitAvg: stats.splitAvg,
+                splitVerts: stats.splitVerts,
+                splitEdges: stats.splitEdges,
+                droppedZeroLength: stats.droppedZeroLength
+            )
+            try? bundle.add(payload)
+            debug = bundle
+        }
+
+        let artifact = PlanarizedSegmentsArtifact(
+            id: ArtifactID("planarizedSegments"),
+            policy: policy,
+            sourceRingId: sourceRingId,
+            vertices: vertices,
+            segments: segmentsOut,
+            debug: debug
+        )
+
+        return SegmentPlanarizerOutput(artifact: artifact, intersections: intersections, stats: stats)
+    }
 }

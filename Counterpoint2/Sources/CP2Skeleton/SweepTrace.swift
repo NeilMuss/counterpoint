@@ -1669,6 +1669,7 @@ public func boundarySoupGeneral(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugPenStamps: ((PenStampsDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
     debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
@@ -1893,6 +1894,16 @@ public func boundarySoupGeneral(
         )
         debugRailSummary(summary)
     }
+    if let debugPenStamps, useRectCorners, corner0.count == count, corner1.count == count, corner2.count == count, corner3.count == count {
+        var samplesOut: [PenStampSample] = []
+        samplesOut.reserveCapacity(count)
+        for i in 0..<count {
+            let corners = [corner0[i], corner1[i], corner2[i], corner3[i]]
+            let gt = i < samples.count ? samples[i] : Double(i) / Double(max(1, count - 1))
+            samplesOut.append(PenStampSample(index: i, gt: gt, corners: corners))
+        }
+        debugPenStamps(PenStampsDebug(samples: samplesOut))
+    }
 
     // ---- Trim rails to cap plane to avoid overhang at butt caps ----
     let eps = Epsilon.defaultValue
@@ -2077,6 +2088,7 @@ public func boundarySoup(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugPenStamps: ((PenStampsDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
     debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
@@ -2120,6 +2132,7 @@ public func boundarySoup(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugPenStamps: debugPenStamps,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
         debugCapPlane: debugCapPlane,
@@ -2156,6 +2169,7 @@ public func boundarySoupVariableWidth(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugPenStamps: ((PenStampsDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
     debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
@@ -2200,6 +2214,7 @@ public func boundarySoupVariableWidth(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugPenStamps: debugPenStamps,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
         debugCapPlane: debugCapPlane,
@@ -2237,6 +2252,7 @@ public func boundarySoupVariableWidthAngle(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugPenStamps: ((PenStampsDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
     debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
@@ -2282,6 +2298,7 @@ public func boundarySoupVariableWidthAngle(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugPenStamps: debugPenStamps,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
         debugCapPlane: debugCapPlane,
@@ -2324,6 +2341,7 @@ public func boundarySoupVariableWidthAngleAlpha(
     debugRailFrames: (([RailSampleFrame]) -> Void)? = nil,
     debugRailCornerIndex: Int? = nil,
     debugRailCorner: ((RailCornerDebug) -> Void)? = nil,
+    debugPenStamps: ((PenStampsDebug) -> Void)? = nil,
     debugCapFillet: ((CapFilletDebug) -> Void)? = nil,
     debugCapBoundary: ((CapBoundaryDebug) -> Void)? = nil,
     debugCapPlane: ((CapPlaneDebug) -> Void)? = nil,
@@ -2371,6 +2389,7 @@ public func boundarySoupVariableWidthAngleAlpha(
         debugRailFrames: debugRailFrames,
         debugRailCornerIndex: debugRailCornerIndex,
         debugRailCorner: debugRailCorner,
+        debugPenStamps: debugPenStamps,
         debugCapFillet: debugCapFillet,
         debugCapBoundary: debugCapBoundary,
         debugCapPlane: debugCapPlane,
@@ -2501,6 +2520,26 @@ public struct PenCornerSet: Equatable, Sendable {
     public let c1: Vec2
     public let c2: Vec2
     public let c3: Vec2
+}
+
+public struct PenStampSample: Equatable, Sendable {
+    public let index: Int
+    public let gt: Double
+    public let corners: [Vec2]
+
+    public init(index: Int, gt: Double, corners: [Vec2]) {
+        self.index = index
+        self.gt = gt
+        self.corners = corners
+    }
+}
+
+public struct PenStampsDebug: Equatable, Sendable {
+    public let samples: [PenStampSample]
+
+    public init(samples: [PenStampSample]) {
+        self.samples = samples
+    }
 }
 
 public func penCorners(

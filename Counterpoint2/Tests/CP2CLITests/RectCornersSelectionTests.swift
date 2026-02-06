@@ -51,31 +51,17 @@ final class RectCornersSelectionTests: XCTestCase {
             endCap: .butt
         )
 
-        let determinism = DeterminismPolicy(eps: 1.0e-6, stableSort: .lexicographicXYThenIndex)
-        let (resolved, artifacts) = ResolveSelfOverlapUseCase.run(
-            ring: sweep.ring,
-            policy: determinism,
-            selectionPolicy: .rectCornersBBox(minAreaRatio: 0.01, minBBoxRatio: 0.01),
-            includeDebug: false
-        )
-
-        let ring = resolved.success ? resolved.ring : sweep.ring
-        let bounds = ringBounds(ring)
-        let width = bounds.max.x - bounds.min.x
-        let height = bounds.max.y - bounds.min.y
-
-        XCTAssertGreaterThan(width, 300.0)
-        XCTAssertGreaterThan(height, 150.0)
-
-        if let faces = artifacts?.faceSet.faces, !faces.isEmpty {
-            let maxAbsArea = faces.map { abs($0.area) }.max() ?? 0.0
-            XCTAssertGreaterThan(resolved.selectedAbsArea, 0.5 * maxAbsArea)
+        if case .resolvedFace = sweep.finalContour.provenance {
+            XCTAssertEqual(sweep.finalContour.selfX, 0)
+            let bounds = ringBounds(sweep.finalContour.points)
+            XCTAssertGreaterThan(bounds.max.x, 400.0)
+            XCTAssertLessThan(bounds.min.y, -100.0)
         } else {
-            XCTFail("expected faces for rectCorners selection")
+            XCTFail("expected final contour to be selected from planarized faces")
         }
     }
 
-    func testFinalRingChooserPicksMaxAbsArea() throws {
+    func testFinalRingChooserPrefersSimpleRingWhenAvailable() throws {
         let spec = try loadSpecOrThrow(path: "Fixtures/glyphs/gallery_lines/line_14_translation_wavy.v0.json")
         guard let ink = spec.ink else {
             XCTFail("expected ink in spec")
@@ -120,14 +106,10 @@ final class RectCornersSelectionTests: XCTestCase {
             endCap: .butt
         )
 
-        let maxAbsArea = sweep.rings.map { abs(signedArea($0)) }.max() ?? 0.0
-        let selectedAbsArea = abs(signedArea(sweep.ring))
-        XCTAssertEqual(selectedAbsArea, maxAbsArea, accuracy: 1.0e-6)
-
-        let bounds = ringBounds(sweep.ring)
-        let width = bounds.max.x - bounds.min.x
-        let height = bounds.max.y - bounds.min.y
-        XCTAssertGreaterThan(width, 300.0)
-        XCTAssertGreaterThan(height, 150.0)
+        XCTAssertGreaterThan(sweep.envelopeSelfX, 0)
+        XCTAssertEqual(ringSelfIntersectionCount(sweep.finalContour.points), 0)
+        let bounds = ringBounds(sweep.finalContour.points)
+        XCTAssertGreaterThan(bounds.max.x, 400.0)
+        XCTAssertLessThan(bounds.min.y, -100.0)
     }
 }

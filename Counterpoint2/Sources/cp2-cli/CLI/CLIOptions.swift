@@ -24,6 +24,10 @@ public struct CLIOptions {
     var debugRingSpine: Bool = false
     var debugRingJump: Bool = false
     var debugRingTopology: Bool = false
+    var debugRingOutputOutline: Bool = false
+    var debugRingOutputSelfX: Bool = false
+    var debugEnvelopeCandidateOutline: Bool = false
+    var debugResolvedFacesAll: Bool = false
     var debugRingSelfXHit: Int? = nil
     var resolveSelfOverlap: Bool = false
     var debugAngleMode: Bool = false
@@ -33,6 +37,15 @@ public struct CLIOptions {
     var debugParamsPlot: Bool = false
     var debugCounters: Bool = false
     var debugTraceJumpStep: Bool = false
+    var debugPenStamps: Bool = false
+    var debugPenStampsGTStart: Double? = nil
+    var debugPenStampsGTEnd: Double? = nil
+    var debugPenStampsGTStep: Double = 0.02
+    var debugPenStampsSampleStart: Int? = nil
+    var debugPenStampsSampleEnd: Int? = nil
+    var debugPenStampsSampleStep: Int = 8
+    var debugPenStampsShowVertices: Bool = false
+    var debugPenStampsShowConnectors: Bool = false
     var debugSoupPreRepair: Bool = false
     var debugSoupNeighborhoodCenter: Vec2? = nil
     var debugSoupNeighborhoodRadius: Double = 5.0
@@ -164,6 +177,30 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             options.debugParamsPlot = true
         } else if arg == "--debug-counters" {
             options.debugCounters = true
+        } else if arg == "--debug-pen-stamps-gt", index + 2 < args.count {
+            options.debugPenStamps = true
+            options.debugPenStampsGTStart = Double(args[index + 1])
+            options.debugPenStampsGTEnd = Double(args[index + 2])
+            index += 2
+        } else if arg == "--debug-pen-stamps-step", index + 1 < args.count {
+            options.debugPenStamps = true
+            options.debugPenStampsGTStep = max(1.0e-12, Double(args[index + 1]) ?? options.debugPenStampsGTStep)
+            index += 1
+        } else if arg == "--debug-pen-stamps-samples", index + 2 < args.count {
+            options.debugPenStamps = true
+            options.debugPenStampsSampleStart = Int(args[index + 1])
+            options.debugPenStampsSampleEnd = Int(args[index + 2])
+            index += 2
+        } else if arg == "--debug-pen-stamps-sample-step", index + 1 < args.count {
+            options.debugPenStamps = true
+            options.debugPenStampsSampleStep = max(1, Int(args[index + 1]) ?? options.debugPenStampsSampleStep)
+            index += 1
+        } else if arg == "--debug-pen-stamps-vertices" {
+            options.debugPenStamps = true
+            options.debugPenStampsShowVertices = true
+        } else if arg == "--debug-pen-stamps-connectors" {
+            options.debugPenStamps = true
+            options.debugPenStampsShowConnectors = true
         } else if arg == "--debug-trace-jump-step" {
             options.debugTraceJumpStep = true
         } else if arg == "--debug-soup-pre-repair" {
@@ -285,6 +322,18 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             if tokens.contains("ringJump") || tokens.contains("ringJumps") {
                 options.debugRingJump = true
             }
+            if tokens.contains("ringOutputOutline") || tokens.contains("ringoutputoutline") {
+                options.debugRingOutputOutline = true
+            }
+            if tokens.contains("ringOutputSelfX") || tokens.contains("ringoutputselfx") {
+                options.debugRingOutputSelfX = true
+            }
+            if tokens.contains("envelopeCandidateOutline") || tokens.contains("envelopecandidateoutline") {
+                options.debugEnvelopeCandidateOutline = true
+            }
+            if tokens.contains("resolvedFacesAll") || tokens.contains("resolvedfacesall") {
+                options.debugResolvedFacesAll = true
+            }
             if tokens.contains("samplingWhy") {
                 options.debugSamplingWhy = true
             }
@@ -296,6 +345,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
             }
             if tokens.contains("counters") {
                 options.debugCounters = true
+            }
+            if tokens.contains("penStamps") || tokens.contains("penstamps") {
+                options.debugPenStamps = true
             }
             if tokens.contains("centerlineOnly") {
                 options.viewCenterlineOnly = true
@@ -433,6 +485,10 @@ Debug flags:
   --debug-ring-jump  Highlight longest ring segment (teleport diagnostic)
   --debug-ring-topology Dump ring count/area/winding and self-intersections
   --debug-ring-self-x-hit N  Highlight N-th self-intersection hit (0-based)
+  --view ringOutputOutline  Render output ring outline (stroke only)
+  --view ringOutputSelfX  Render output ring self-intersection points
+  --view envelopeCandidateOutline  Render envelope candidate outline (stroke only)
+  --view resolvedFacesAll  Render all resolved faces (stroke only)
   --debug-angle-mode  Print angle mode + crossAxis/tangent diagnostics
   --debug-summary  Print end-of-run summary metrics
   --debug-trace-jump-step  Dump trace decision for max jump segment
@@ -470,7 +526,13 @@ Debug flags:
   --keyframes-labels  Label keyframe markers with t values
   --debug-params-plot  Render parameter plot overlay
   --debug-counters   Render counter paths overlay (no subtraction yet)
-  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll,counters,centerlineOnly)
+  --debug-pen-stamps-gt A B  Pen stamp overlay GT range [A,B] (requires penStamps view)
+  --debug-pen-stamps-step N  Pen stamp GT step (default: 0.02)
+  --debug-pen-stamps-samples A B  Pen stamp sample index range [A,B]
+  --debug-pen-stamps-sample-step N  Pen stamp sample stride (default: 8)
+  --debug-pen-stamps-vertices  Render pen stamp vertex markers and labels
+  --debug-pen-stamps-connectors  Render lane connector segments between stamps
+  --view LIST      Comma-separated debug views (e.g. ringSpine,samplingWhy,compare,compareAll,counters,centerlineOnly,penStamps)
   --probe-count N  Number of globalT probe points (default: 5)
   --arc-samples N  Arc-length samples per segment (default: 256)
   --allow-fixed-sampling  Allow fixed sampling mode (escape hatch)
