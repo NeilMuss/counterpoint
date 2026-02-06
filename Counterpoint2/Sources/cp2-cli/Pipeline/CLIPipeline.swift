@@ -922,6 +922,9 @@ public func renderSVGString(
             print("RECT minRectArea=0.000000 minEdgeLen=0.000000")
         }
         print(String(format: "SOUP chainCount=%d totalPoints=%d totalSegments=%d", soupSegments, soupPoints, soupSegments))
+        if result.soupTotalSegments > 0 {
+            print(String(format: "SOUP_EDGES laneSegments=%d capSegments=%d totalSegments=%d", result.soupLaneSegments, result.soupCapSegments, result.soupTotalSegments))
+        }
         if let planarStats = result.planarizeStats {
             print(String(format: "PLANARIZE intersections=%d splitSegmentsBefore=%d after=%d", planarStats.intersections, planarStats.segments, planarStats.splitEdges))
         }

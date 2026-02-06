@@ -30,6 +30,8 @@ public enum EdgeSource: Equatable, Codable, CustomStringConvertible, Sendable {
     case capEnd
     case capStartEdge(role: CapEdgeRole, detail: String)
     case capEndEdge(role: CapEdgeRole, detail: String)
+    case penStrip(loop: Int)
+    case penCap
     case join
     case sanitizeRemoveShort
     case sanitizeDedupe
@@ -45,6 +47,8 @@ public enum EdgeSource: Equatable, Codable, CustomStringConvertible, Sendable {
         case .capEnd: return "capEnd"
         case .capStartEdge(let role, let detail): return "capStart.\(role.rawValue)(\(detail))"
         case .capEndEdge(let role, let detail): return "capEnd.\(role.rawValue)(\(detail))"
+        case .penStrip(let loop): return "penStrip(\(loop))"
+        case .penCap: return "penCap"
         case .join: return "join"
         case .sanitizeRemoveShort: return "sanitizeRemoveShort"
         case .sanitizeDedupe: return "sanitizeDedupe"
@@ -1973,23 +1977,13 @@ public func boundarySoupGeneral(
     }
 
     if useRectCorners && !corner0.isEmpty && corner0.count == count {
-        var segments: [Segment2] = []
-        let loops = buildPenEdgeStripLoops(
+        return buildPenSoupSegmentsRectCorners(
             corner0: corner0,
             corner1: corner1,
             corner2: corner2,
             corner3: corner3,
             eps: eps
-        )
-        segments.reserveCapacity(loops.reduce(0) { $0 + max(0, $1.count - 1) })
-        for (index, loop) in loops.enumerated() {
-            guard loop.count >= 2 else { continue }
-            let source = EdgeSource.unknown("penStrip\(index)")
-            for i in 0..<(loop.count - 1) {
-                segments.append(Segment2(loop[i], loop[i + 1], source: source))
-            }
-        }
-        return segments
+        ).segments
     }
 
     // MARK: EDGE CREATION SITES
@@ -2588,6 +2582,88 @@ func buildPenEdgeStripLoops(
         loops.append(loop)
     }
     return loops
+}
+
+func buildPenSoupSegmentsRectCorners(
+    corner0: [Vec2],
+    corner1: [Vec2],
+    corner2: [Vec2],
+    corner3: [Vec2],
+    eps: Double
+) -> (segments: [Segment2], laneSegments: Int, capSegments: Int) {
+    guard !corner0.isEmpty else { return ([], 0, 0) }
+    let count = corner0.count
+    guard corner1.count == count, corner2.count == count, corner3.count == count else {
+        return ([], 0, 0)
+    }
+    let loops = buildPenEdgeStripLoops(
+        corner0: corner0,
+        corner1: corner1,
+        corner2: corner2,
+        corner3: corner3,
+        eps: eps
+    )
+    var segments: [Segment2] = []
+    segments.reserveCapacity(loops.reduce(0) { $0 + max(0, $1.count - 1) } + count * 4)
+
+    var laneSegments = 0
+    for (index, loop) in loops.enumerated() {
+        guard loop.count >= 2 else { continue }
+        let source = EdgeSource.penStrip(loop: index)
+        for i in 0..<(loop.count - 1) {
+            segments.append(Segment2(loop[i], loop[i + 1], source: source))
+            laneSegments += 1
+        }
+    }
+
+    func edgeKey(_ a: Vec2, _ b: Vec2) -> String {
+        let ka = Epsilon.snapKey(a, eps: eps)
+        let kb = Epsilon.snapKey(b, eps: eps)
+        if ka.x < kb.x || (ka.x == kb.x && ka.y < kb.y) {
+            return "\(ka.x),\(ka.y)->\(kb.x),\(kb.y)"
+        }
+        return "\(kb.x),\(kb.y)->\(ka.x),\(ka.y)"
+    }
+    func appendCapEdge(_ a: Vec2, _ b: Vec2, seen: inout Set<String>) -> Bool {
+        if (a - b).length <= eps { return false }
+        let key = edgeKey(a, b)
+        if seen.contains(key) { return false }
+        seen.insert(key)
+        segments.append(Segment2(a, b, source: .penCap))
+        return true
+    }
+
+    let edgePairs = [(0, 1), (1, 2), (2, 3), (3, 0)]
+    var capSegments = 0
+    for k in 0..<count {
+        let c0 = corner0[k]
+        let c1 = corner1[k]
+        let c2 = corner2[k]
+        let c3 = corner3[k]
+        let corners = [c0, c1, c2, c3]
+        var edges: [(len: Double, pair: (Int, Int), index: Int)] = []
+        edges.reserveCapacity(4)
+        for (idx, pair) in edgePairs.enumerated() {
+            let a = corners[pair.0]
+            let b = corners[pair.1]
+            edges.append(((a - b).length, pair, idx))
+        }
+        edges.sort { lhs, rhs in
+            if lhs.len != rhs.len { return lhs.len < rhs.len }
+            return lhs.index < rhs.index
+        }
+        let isEnd = k == 0 || k == count - 1
+        let selected = isEnd ? edges : Array(edges.prefix(2))
+        var seen: Set<String> = []
+        for edge in selected {
+            let a = corners[edge.pair.0]
+            let b = corners[edge.pair.1]
+            if appendCapEdge(a, b, seen: &seen) {
+                capSegments += 1
+            }
+        }
+    }
+    return (segments, laneSegments, capSegments)
 }
 
 private func splitSegmentsAtIntersections(_ segments: [Segment2], eps: Double) -> [Segment2] {

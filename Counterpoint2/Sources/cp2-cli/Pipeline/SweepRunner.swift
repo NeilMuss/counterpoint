@@ -17,6 +17,9 @@ struct SweepResult {
     var resolveFacesCount: Int
     var resolvedFaces: [FaceLoop]?
     var planarizeStats: SegmentPlanarizerStats?
+    var soupLaneSegments: Int
+    var soupCapSegments: Int
+    var soupTotalSegments: Int
     var glyphBounds: AABB?
     var sampling: SamplingResult?
     var traceSteps: [TraceStepInfo]
@@ -335,6 +338,20 @@ func runSweep(
         }
     }()
 
+    var soupLaneSegments = 0
+    var soupCapSegments = 0
+    for seg in segmentsUsed {
+        switch seg.source {
+        case .penStrip:
+            soupLaneSegments += 1
+        case .penCap:
+            soupCapSegments += 1
+        default:
+            break
+        }
+    }
+    let soupTotalSegments = segmentsUsed.count
+
     if capNamespace == "fillet", case .fillet = endCap {
         let endLeft = capFillets.first { $0.kind == "end" && $0.side == "left" && $0.success }
         let endRight = capFillets.first { $0.kind == "end" && $0.side == "right" && $0.success }
@@ -630,6 +647,9 @@ func runSweep(
         resolveFacesCount: resolveFacesCount,
         resolvedFaces: resolvedFaces,
         planarizeStats: planarizeStats,
+        soupLaneSegments: soupLaneSegments,
+        soupCapSegments: soupCapSegments,
+        soupTotalSegments: soupTotalSegments,
         glyphBounds: glyphBounds,
         sampling: capturedSampling,
         traceSteps: traceSteps,
