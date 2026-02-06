@@ -4,6 +4,9 @@ import CP2Skeleton
 
 public struct CLIOptions {
     var outPath: String = "out/line.svg"
+    var outDirPath: String? = nil
+    var storyboardStages: [StoryStage] = []
+    var storyboardContext: StoryboardContextMode = .prev
     var example: String? = nil
     var specPath: String? = nil
     var inkName: String? = nil
@@ -23,6 +26,8 @@ public struct CLIOptions {
     var debugRingTopology: Bool = false
     var debugRingSelfXHit: Int? = nil
     var resolveSelfOverlap: Bool = false
+    var debugAngleMode: Bool = false
+    var debugSummary: Bool = false
     var debugKeyframes: Bool = false
     var keyframesLabels: Bool = false
     var debugParamsPlot: Bool = false
@@ -46,6 +51,7 @@ public struct CLIOptions {
     var debugRailUnitEps: Double = 1.0e-3
     var capFilletArcSegments: Int = 8
     var capRoundArcSegments: Int = 64
+    var penShape: PenShape = .auto
     var capFilletFixtureOverlays: Bool = false
     var galleryLinesWavy: Bool = false
     var galleryLinesBoth: Bool = false
@@ -101,6 +107,9 @@ func parseArgs(_ args: [String]) -> CLIOptions {
         } else if arg == "--out", index + 1 < args.count {
             options.outPath = args[index + 1]
             index += 1
+        } else if arg == "--out-dir", index + 1 < args.count {
+            options.outDirPath = args[index + 1]
+            index += 1
         } else if arg == "--spec", index + 1 < args.count {
             options.specPath = args[index + 1]
             index += 1
@@ -143,6 +152,10 @@ func parseArgs(_ args: [String]) -> CLIOptions {
                 options.debugRingSelfXHit = value
                 index += 1
             }
+        } else if arg == "--debug-angle-mode" {
+            options.debugAngleMode = true
+        } else if arg == "--debug-summary" {
+            options.debugSummary = true
         } else if arg == "--debug-keyframes" {
             options.debugKeyframes = true
         } else if arg == "--keyframes-labels" {
@@ -202,6 +215,20 @@ func parseArgs(_ args: [String]) -> CLIOptions {
                 options.capRoundArcSegments = max(2, value)
                 index += 1
             }
+        } else if arg == "--pen-shape", index + 1 < args.count {
+            let value = args[index + 1].lowercased()
+            switch value {
+            case "rails", "railsonly", "rails_only":
+                options.penShape = .railsOnly
+            case "rect", "rectcorners", "rect_corners":
+                options.penShape = .rectCorners
+            case "auto":
+                options.penShape = .auto
+            default:
+                print("warning: unknown pen shape '\(value)', using auto")
+                options.penShape = .auto
+            }
+            index += 1
         } else if arg == "--gallery-lines-wavy" {
             options.galleryLinesWavy = true
         } else if arg == "--gallery-lines-both" {
@@ -274,6 +301,18 @@ func parseArgs(_ args: [String]) -> CLIOptions {
                 options.viewCenterlineOnly = true
                 options.debugCenterline = true
             }
+            index += 1
+        } else if arg == "--storyboard", index + 1 < args.count {
+            let tokens = args[index + 1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            if tokens.contains(where: { $0.lowercased() == "all" }) {
+                options.storyboardStages = StoryStage.defaultOrder
+            } else {
+                options.storyboardStages = tokens.compactMap { StoryStage(rawValue: $0.lowercased()) }
+            }
+            index += 1
+        } else if arg == "--storyboard-context", index + 1 < args.count {
+            let value = args[index + 1].lowercased()
+            options.storyboardContext = StoryboardContextMode(rawValue: value) ?? options.storyboardContext
             index += 1
         } else if arg == "--probe-count", index + 1 < args.count {
             options.probeCount = max(1, Int(args[index + 1]) ?? options.probeCount)
@@ -378,7 +417,7 @@ func parseArgs(_ args: [String]) -> CLIOptions {
 
 func printUsage() {
     let text = """
-Usage: cp2-cli [--out <path>] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp|e|gallery_lines] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
+Usage: cp2-cli [--out <path>] [--out-dir <path>] [--storyboard stages] [--storyboard-context none|prev|all] [--example scurve|fast_scurve|fast_scurve2|twoseg|jstem|j|j_serif_only|poly3|line|line_end_ramp|e|gallery_lines] [--verbose] [--debug-param] [--debug-params] [--debug-sweep] [--debug-svg] [--debug-sampling-why] [--debug-solo-why] [--probe-count N]
 
 Debug flags:
   --verbose        Enable verbose logging
@@ -394,6 +433,8 @@ Debug flags:
   --debug-ring-jump  Highlight longest ring segment (teleport diagnostic)
   --debug-ring-topology Dump ring count/area/winding and self-intersections
   --debug-ring-self-x-hit N  Highlight N-th self-intersection hit (0-based)
+  --debug-angle-mode  Print angle mode + crossAxis/tangent diagnostics
+  --debug-summary  Print end-of-run summary metrics
   --debug-trace-jump-step  Dump trace decision for max jump segment
   --debug-soup-pre-repair  Dump soup degree stats before any repair
   --debug-soup-neighborhood x y r  Dump soup nodes within radius r of (x,y)
@@ -412,9 +453,13 @@ Debug flags:
   --debug-rail-unit-eps N   Normal length epsilon (default: 1e-3)
   --cap-fillet-arc-segments N  Fillet arc segments (default: 8)
   --cap-round-arc-segments N   Round cap arc segments (default: 64)
+  --pen-shape {railsOnly|rectCorners|auto}  Pen shape mode (default: auto)
   --gallery-lines-wavy  Render wavy-only line gallery
   --gallery-lines-both  Render straight + wavy line gallery
   --cap-fillet-fixture-overlays {off|on}  Cap fillet fixture-only overlays (default: off)
+  --out-dir PATH  Output storyboard SVGs to directory (ignores --out)
+  --storyboard LIST  Comma-separated stages or "all": skeleton,keyframes,counterpoint,samples,rails,soup,ring,resolve,final
+  --storyboard-context {none|prev|all}  Context layers for storyboard (default: prev)
   --adaptive-attr-eps N  Adaptive sampling attribute epsilon (default: 0.25)
   --adaptive-attr-eps-angle N  Adaptive sampling angle epsilon in degrees (default: 0.25)
   --debug-dump-rail-corners  Dump rail corner basis/corners for one index

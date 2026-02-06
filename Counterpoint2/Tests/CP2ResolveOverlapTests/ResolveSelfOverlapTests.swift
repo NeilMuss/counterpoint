@@ -13,7 +13,12 @@ final class ResolveSelfOverlapTests: XCTestCase {
             Vec2(0, 0)
         ]
         let policy = DeterminismPolicy(eps: 1.0e-6, stableSort: .lexicographicXYThenIndex)
-        let (result, artifacts) = ResolveSelfOverlapUseCase.run(ring: ring, policy: policy, includeDebug: true)
+        let (result, artifacts) = ResolveSelfOverlapUseCase.run(
+            ring: ring,
+            policy: policy,
+            selectionPolicy: .lineGalleryMaxAbsAreaFace(minAreaRatio: 0.01),
+            includeDebug: true
+        )
         XCTAssertTrue(result.success)
         XCTAssertNotNil(artifacts)
         guard let artifacts else { return }

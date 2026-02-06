@@ -493,6 +493,110 @@ func debugOverlayForRingSelfXHit(debug: RingSelfXHitDebug) -> DebugOverlay {
     return DebugOverlay(svg: svg, bounds: bounds)
 }
 
+func debugOverlayForCrossAxis(
+    pathParam: SkeletonPathParameterization,
+    plan: SweepPlan,
+    sampling: SamplingResult?,
+    tickStride: Int,
+    tickLength: Double
+) -> DebugOverlay {
+    let ts = sampling?.ts ?? [0.0, 0.5, 1.0]
+    var svgParts: [String] = []
+    var bounds = AABB.empty
+    var index = 0
+    let stride = max(1, tickStride)
+    func styleAtGT(_ gt: Double) -> SweepStyle {
+        SweepStyle(
+            width: plan.scaledWidthAtT(gt),
+            widthLeft: plan.scaledWidthLeftAtT(gt),
+            widthRight: plan.scaledWidthRightAtT(gt),
+            height: plan.sweepHeight,
+            angle: plan.thetaAtT(gt),
+            offset: plan.offsetAtT(gt),
+            angleIsRelative: plan.angleMode == .relative
+        )
+    }
+    for (i, gt) in ts.enumerated() {
+        if i % stride != 0 { continue }
+        let frame = railSampleFrameAtGlobalT(
+            param: pathParam,
+            warpGT: plan.warpT,
+            styleAtGT: styleAtGT,
+            gt: gt,
+            index: index
+        )
+        index += 1
+        let start = frame.center
+        let end = frame.center + frame.crossAxis.normalized() * tickLength
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"#ff6f00\" stroke-width=\"0.8\"/>", start.x, start.y, end.x, end.y))
+        bounds.expand(by: start)
+        bounds.expand(by: end)
+    }
+    let svg = """
+  <g id="debug-cross-axis">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
+func debugOverlayForRailSeparation(
+    pathParam: SkeletonPathParameterization,
+    plan: SweepPlan,
+    sampling: SamplingResult?,
+    minIndex: Int,
+    tickStride: Int
+) -> DebugOverlay {
+    let ts = sampling?.ts ?? [0.0, 0.5, 1.0]
+    let stride = max(1, tickStride)
+    var svgParts: [String] = []
+    var bounds = AABB.empty
+    func styleAtGT(_ gt: Double) -> SweepStyle {
+        SweepStyle(
+            width: plan.scaledWidthAtT(gt),
+            widthLeft: plan.scaledWidthLeftAtT(gt),
+            widthRight: plan.scaledWidthRightAtT(gt),
+            height: plan.sweepHeight,
+            angle: plan.thetaAtT(gt),
+            offset: plan.offsetAtT(gt),
+            angleIsRelative: plan.angleMode == .relative
+        )
+    }
+    var minSep: Double = Double.greatestFiniteMagnitude
+    var minLeft = Vec2(0, 0)
+    var minRight = Vec2(0, 0)
+    for (i, gt) in ts.enumerated() {
+        let frame = railSampleFrameAtGlobalT(
+            param: pathParam,
+            warpGT: plan.warpT,
+            styleAtGT: styleAtGT,
+            gt: gt,
+            index: i
+        )
+        let sep = (frame.right - frame.left).length
+        if i == minIndex {
+            minSep = sep
+            minLeft = frame.left
+            minRight = frame.right
+        }
+        if i % stride != 0 { continue }
+        svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"#00796b\" stroke-width=\"0.6\"/>", frame.left.x, frame.left.y, frame.right.x, frame.right.y))
+        bounds.expand(by: frame.left)
+        bounds.expand(by: frame.right)
+    }
+    svgParts.append(String(format: "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\" stroke=\"#d32f2f\" stroke-width=\"1.8\"/>", minLeft.x, minLeft.y, minRight.x, minRight.y))
+    let mid = (minLeft + minRight) * 0.5
+    svgParts.append(String(format: "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"3.2\" fill=\"#d32f2f\" stroke=\"none\"/>", mid.x, mid.y))
+    svgParts.append(String(format: "<text x=\"%.4f\" y=\"%.4f\" font-size=\"9\" fill=\"#d32f2f\">MIN_SEP=%.3f</text>", mid.x + 4.0, mid.y - 4.0, minSep))
+    bounds.expand(by: mid)
+    let svg = """
+  <g id="debug-rail-separation">
+    \(svgParts.joined(separator: "\n    "))
+  </g>
+"""
+    return DebugOverlay(svg: svg, bounds: bounds)
+}
+
 func overlayForRailsAndHeartline(pathParam: SkeletonPathParameterization, plan: SweepPlan, sampleCount: Int, label: String) -> DebugOverlay {
     let count = max(2, sampleCount)
     let styleAtGT: (Double) -> SweepStyle = { t in

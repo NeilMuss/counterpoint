@@ -646,6 +646,15 @@ public func renderSVGString(
             overlays.append(debugOverlayForCapPlane(planeDebugs))
         }
     }
+    if options.debugAngleMode {
+        overlays.append(debugOverlayForCrossAxis(
+            pathParam: primaryOutput.pathParam,
+            plan: primaryOutput.plan,
+            sampling: primaryOutput.result.sampling,
+            tickStride: 6,
+            tickLength: 8.0
+        ))
+    }
     if options.debugRingTopology, let ringDebug = result.ringTopology, !options.viewCenterlineOnly {
         overlays.append(debugOverlayForRingTopology(rings: result.rings, debug: ringDebug))
     }
@@ -700,6 +709,203 @@ public func renderSVGString(
             }
         }
     }
+    let angleDebugMetrics = options.debugAngleMode ? emitAngleModeDebug(
+        options: options,
+        pathParam: primaryOutput.pathParam,
+        plan: primaryOutput.plan,
+        sampling: primaryOutput.result.sampling
+    ) : nil
+    if let angleDebugMetrics {
+        overlays.append(debugOverlayForRailSeparation(
+            pathParam: primaryOutput.pathParam,
+            plan: primaryOutput.plan,
+            sampling: primaryOutput.result.sampling,
+            minIndex: angleDebugMetrics.minIndex,
+            tickStride: 25
+        ))
+    }
+
+    if options.debugSummary {
+        let sampleCount = primaryOutput.result.sampling?.ts.count ?? 0
+        let penShapeText: String = {
+            switch options.penShape {
+            case .railsOnly: return "railsOnly"
+            case .rectCorners: return "rectCorners"
+            case .auto: return "auto"
+            }
+        }()
+        let hasCorners = options.penShape != .railsOnly && sampleCount > 0
+        let stripPoints = hasCorners ? (sampleCount * 2 + 1) : 0
+        let soupSegments = strokeOutputs.reduce(0) { $0 + $1.result.segmentsUsed.count }
+        let soupPoints = strokeOutputs.reduce(0) { total, output in
+            total + output.result.segmentsUsed.count * 2
+        }
+        let ringAreas = result.rings.map { abs(signedArea($0)) }
+        let maxRingArea = ringAreas.max() ?? 0.0
+        var minP = Vec2(0, 0)
+        var maxP = Vec2(0, 0)
+        if let ring = result.rings.max(by: { abs(signedArea($0)) < abs(signedArea($1)) }), let first = ring.first {
+            minP = first
+            maxP = first
+            for p in ring {
+                minP = Vec2(min(minP.x, p.x), min(minP.y, p.y))
+                maxP = Vec2(max(maxP.x, p.x), max(maxP.y, p.y))
+            }
+        }
+        print(String(format: "SAMPLES count=%d", sampleCount))
+        print(String(format: "PEN_SHAPE shape=%@", penShapeText))
+        if hasCorners {
+            print(String(format: "CORNERS sampleCount=%d cornersPerSample=4", sampleCount))
+            print(String(format: "STRIPS loops=4 pointsPerLoopMin=%d pointsPerLoopMax=%d", stripPoints, stripPoints))
+            var minRectArea = Double.greatestFiniteMagnitude
+            var minEdgeLen = Double.greatestFiniteMagnitude
+            var minRectIndex: Int = 0
+            var minCorners: PenCornerSet? = nil
+            var twistCount = 0
+            var minQuadArea = Double.greatestFiniteMagnitude
+            var maxQuadArea = 0.0
+            if let sampling = primaryOutput.result.sampling {
+                let pathParam = primaryOutput.pathParam
+                func styleAtGT(_ gt: Double) -> SweepStyle {
+                    SweepStyle(
+                        width: primaryOutput.plan.scaledWidthAtT(gt),
+                        widthLeft: primaryOutput.plan.scaledWidthLeftAtT(gt),
+                        widthRight: primaryOutput.plan.scaledWidthRightAtT(gt),
+                        height: primaryOutput.plan.sweepHeight,
+                        angle: primaryOutput.plan.thetaAtT(gt),
+                        offset: primaryOutput.plan.offsetAtT(gt),
+                        angleIsRelative: primaryOutput.plan.angleMode == .relative
+                    )
+                }
+                var cornerSets: [PenCornerSet] = []
+                cornerSets.reserveCapacity(sampling.ts.count)
+                for (index, gt) in sampling.ts.enumerated() {
+                    let frame = railSampleFrameAtGlobalT(
+                        param: pathParam,
+                        warpGT: primaryOutput.plan.warpT,
+                        styleAtGT: styleAtGT,
+                        gt: gt,
+                        index: index
+                    )
+                    let style = styleAtGT(gt)
+                    let halfWidth = style.width * 0.5
+                    let wL = style.widthLeft > 0.0 ? style.widthLeft : halfWidth
+                    let wR = style.widthRight > 0.0 ? style.widthRight : halfWidth
+                    let corners = penCorners(
+                        center: frame.center,
+                        crossAxis: frame.crossAxis,
+                        widthLeft: wL,
+                        widthRight: wR,
+                        height: style.height
+                    )
+                    cornerSets.append(corners)
+                    let e1 = corners.c1 - corners.c0
+                    let e2 = corners.c3 - corners.c0
+                    let area = abs(e1.x * e2.y - e1.y * e2.x)
+                    let edgeH = (corners.c0 - corners.c1).length
+                    let edgeW = (corners.c0 - corners.c3).length
+                    if area < minRectArea {
+                        minRectArea = area
+                        minEdgeLen = min(edgeH, edgeW)
+                        minRectIndex = index
+                        minCorners = corners
+                    } else {
+                        minEdgeLen = min(minEdgeLen, min(edgeH, edgeW))
+                    }
+                }
+
+                func segmentsIntersect(_ a0: Vec2, _ a1: Vec2, _ b0: Vec2, _ b1: Vec2) -> Bool {
+                    func orient(_ p: Vec2, _ q: Vec2, _ r: Vec2) -> Double {
+                        (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+                    }
+                    let o1 = orient(a0, a1, b0)
+                    let o2 = orient(a0, a1, b1)
+                    let o3 = orient(b0, b1, a0)
+                    let o4 = orient(b0, b1, a1)
+                    return (o1 > 0 && o2 < 0 || o1 < 0 && o2 > 0) && (o3 > 0 && o4 < 0 || o3 < 0 && o4 > 0)
+                }
+
+                if cornerSets.count >= 2 {
+                    for i in 0..<(cornerSets.count - 1) {
+                        let a = cornerSets[i]
+                        let b = cornerSets[i + 1]
+                        let current = [a.c0, a.c1, a.c2, a.c3]
+                        let next = [b.c0, b.c1, b.c2, b.c3]
+                        for k in 0..<4 {
+                            let a0 = current[k]
+                            let a1 = next[k]
+                            let b0 = current[(k + 1) % 4]
+                            let b1 = next[(k + 1) % 4]
+                            if segmentsIntersect(a0, a1, b0, b1) {
+                                twistCount += 1
+                            }
+                            let quad = [a0, b0, b1, a1, a0]
+                            var area = 0.0
+                            for q in 0..<(quad.count - 1) {
+                                let p0 = quad[q]
+                                let p1 = quad[q + 1]
+                                area += (p0.x * p1.y - p1.x * p0.y)
+                            }
+                            let absArea = abs(area * 0.5)
+                            minQuadArea = min(minQuadArea, absArea)
+                            maxQuadArea = max(maxQuadArea, absArea)
+                        }
+                    }
+                }
+            }
+            if minRectArea.isFinite && minEdgeLen.isFinite {
+                print(String(format: "RECT minRectArea=%.6f minEdgeLen=%.6f", minRectArea, minEdgeLen))
+                if let corners = minCorners {
+                    let widthEdges = [
+                        (corners.c0 - corners.c3).length,
+                        (corners.c1 - corners.c2).length
+                    ]
+                    let heightEdges = [
+                        (corners.c0 - corners.c1).length,
+                        (corners.c3 - corners.c2).length
+                    ]
+                    let cornerList = [
+                        corners.c0, corners.c1, corners.c2, corners.c3
+                    ].map { String(format: "(%.4f,%.4f)", $0.x, $0.y) }.joined(separator: ", ")
+                    let widthList = widthEdges.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+                    let heightList = heightEdges.map { String(format: "%.4f", $0) }.joined(separator: ", ")
+                    print("RECT_MIN k=\(minRectIndex) corners=[\(cornerList)] widthEdges=[\(widthList)] heightEdges=[\(heightList)]")
+                }
+                if minQuadArea.isFinite {
+                    print(String(format: "STRIPS_DIAG minQuadArea=%.6f maxQuadArea=%.6f twistCount=%d", minQuadArea, maxQuadArea, twistCount))
+                } else {
+                    print("STRIPS_DIAG minQuadArea=0.000000 maxQuadArea=0.000000 twistCount=0")
+                }
+            } else {
+                print("RECT minRectArea=0.000000 minEdgeLen=0.000000")
+                print("STRIPS_DIAG minQuadArea=0.000000 maxQuadArea=0.000000 twistCount=0")
+            }
+        } else {
+            print("CORNERS sampleCount=0 cornersPerSample=0")
+            print("STRIPS loops=0 pointsPerLoopMin=0 pointsPerLoopMax=0")
+            print("RECT minRectArea=0.000000 minEdgeLen=0.000000")
+        }
+        print(String(format: "SOUP chainCount=%d totalPoints=%d totalSegments=%d", soupSegments, soupPoints, soupSegments))
+        print(String(format: "RINGS count=%d maxAbsArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f)", result.rings.count, maxRingArea, minP.x, minP.y, maxP.x, maxP.y))
+        if let first = result.ring.first {
+            var outMin = first
+            var outMax = first
+            for p in result.ring {
+                outMin = Vec2(min(outMin.x, p.x), min(outMin.y, p.y))
+                outMax = Vec2(max(outMax.x, p.x), max(outMax.y, p.y))
+            }
+            let outArea = abs(signedArea(result.ring))
+            let outIndex = result.rings.firstIndex(where: { $0 == result.ring }) ?? -1
+            print(String(format: "OUTPUT ringIndex=%d absArea=%.6f bbox=(%.6f,%.6f,%.6f,%.6f)", outIndex, outArea, outMin.x, outMin.y, outMax.x, outMax.y))
+        } else {
+            print("OUTPUT ringIndex=-1 absArea=0.000000 bbox=(0.000000,0.000000,0.000000,0.000000)")
+        }
+        if let resolve = result.resolveSelfOverlap {
+            print(String(format: "RESOLVE beforeRings=%d afterRings=%d", resolve.selfBefore, resolve.selfAfter))
+            print(String(format: "FINAL selectedAbsArea=%.6f selectedBBox=(%.6f,%.6f,%.6f,%.6f) selectedFaceId=%d", resolve.selectedAbsArea, resolve.selectedBBoxMin.x, resolve.selectedBBoxMin.y, resolve.selectedBBoxMax.x, resolve.selectedBBoxMax.y, resolve.selectedFaceId))
+        }
+    }
+
     if !soloWhy && (options.debugRingSpine || options.debugRingJump || options.debugTraceJumpStep) && !options.viewCenterlineOnly {
         let ringJumps = (options.debugRingJump || options.debugTraceJumpStep) ? computeRingJumps(rings: result.rings) : []
         for (index, ring) in result.rings.enumerated() {
@@ -1217,6 +1423,264 @@ public func renderSVGString(
 """
 }
 
+private struct AngleModeDebugMetrics {
+    let minIndex: Int
+    let minGT: Double
+    let minSep: Double
+    let maxSep: Double
+    let meanSep: Double
+    let minLeft: Vec2
+    let minRight: Vec2
+    let minTangent: Vec2
+    let minTheta: Double
+}
+
+private func emitAngleModeDebug(
+    options: CLIOptions,
+    pathParam: SkeletonPathParameterization,
+    plan: SweepPlan,
+    sampling: SamplingResult?
+) -> AngleModeDebugMetrics? {
+    let angleMode = plan.angleMode == .relative ? "relative" : "absolute"
+    print("ANGLE_MODE mode=\(angleMode)")
+    let ts = sampling?.ts ?? [0.0, 0.5, 1.0]
+    let picks: [Double] = {
+        guard ts.count >= 3 else { return ts }
+        return [ts.first!, ts[ts.count / 2], ts.last!]
+    }()
+    func styleAtGT(_ gt: Double) -> SweepStyle {
+        SweepStyle(
+            width: plan.scaledWidthAtT(gt),
+            widthLeft: plan.scaledWidthLeftAtT(gt),
+            widthRight: plan.scaledWidthRightAtT(gt),
+            height: plan.sweepHeight,
+            angle: plan.thetaAtT(gt),
+            offset: plan.offsetAtT(gt),
+            angleIsRelative: plan.angleMode == .relative
+        )
+    }
+    for (index, gt) in picks.enumerated() {
+        let frame = railSampleFrameAtGlobalT(
+            param: pathParam,
+            warpGT: plan.warpT,
+            styleAtGT: styleAtGT,
+            gt: gt,
+            index: index
+        )
+        let tangent = frame.tangent
+        let normal = frame.normal
+        let cross = frame.crossAxis
+        let theta = plan.thetaAtT(gt)
+        let dotT = cross.dot(tangent)
+        let dotN = cross.dot(normal)
+        let heightScalar = styleAtGT(plan.warpT(gt)).height
+        let tangentAngle = atan2(tangent.y, tangent.x)
+        print(String(format: "ANGLE_MODE sample=%d gt=%.6f tangent=(%.6f,%.6f) tangentDeg=%.3f theta=%.6f cross=(%.6f,%.6f) normal=(%.6f,%.6f) dotT=%.6f dotN=%.6f height=%.6f", index, gt, tangent.x, tangent.y, tangentAngle * 180.0 / Double.pi, theta, cross.x, cross.y, normal.x, normal.y, dotT, dotN, heightScalar))
+    }
+
+    var minSep = Double.greatestFiniteMagnitude
+    var maxSep = 0.0
+    var sumSep = 0.0
+    var minIndex = 0
+    var minGT = ts.first ?? 0.0
+    var minLeft = Vec2(0, 0)
+    var minRight = Vec2(0, 0)
+    var minTangent = Vec2(1, 0)
+    var minTheta = 0.0
+
+    for (index, gt) in ts.enumerated() {
+        let frame = railSampleFrameAtGlobalT(
+            param: pathParam,
+            warpGT: plan.warpT,
+            styleAtGT: styleAtGT,
+            gt: gt,
+            index: index
+        )
+        let sep = (frame.right - frame.left).length
+        sumSep += sep
+        if sep < minSep {
+            minSep = sep
+            minIndex = index
+            minGT = gt
+            minLeft = frame.left
+            minRight = frame.right
+            minTangent = frame.tangent
+            minTheta = plan.thetaAtT(gt)
+        }
+        if sep > maxSep { maxSep = sep }
+    }
+    let meanSep = ts.isEmpty ? 0.0 : (sumSep / Double(ts.count))
+    print(String(format: "RAIL_SEP min=%.6f at=%d gt=%.6f max=%.6f mean=%.6f", minSep, minIndex, minGT, maxSep, meanSep))
+    let tangentDeg = atan2(minTangent.y, minTangent.x) * 180.0 / Double.pi
+    let thetaDeg = minTheta * 180.0 / Double.pi
+    print(String(format: "RAIL_SEP_ARGMIN i=%d gt=%.6f left=(%.6f,%.6f) right=(%.6f,%.6f) tangentDeg=%.3f thetaDeg=%.3f", minIndex, minGT, minLeft.x, minLeft.y, minRight.x, minRight.y, tangentDeg, thetaDeg))
+
+    return AngleModeDebugMetrics(
+        minIndex: minIndex,
+        minGT: minGT,
+        minSep: minSep,
+        maxSep: maxSep,
+        meanSep: meanSep,
+        minLeft: minLeft,
+        minRight: minRight,
+        minTangent: minTangent,
+        minTheta: minTheta
+    )
+}
+
+func renderStoryboardCels(
+    options: CLIOptions,
+    spec: CP2Spec?,
+    stages: [StoryStage],
+    contextMode: StoryboardContextMode,
+    warnSink: ((String) -> Void)? = nil
+) throws -> [StoryboardCel] {
+    let options = options
+    let warnHandler: (String) -> Void = { message in
+        if let warnSink {
+            warnSink(message)
+        } else {
+            warn(message)
+        }
+    }
+
+    var (renderSettings, referenceLayer) = resolveEffectiveSettings(options: options, spec: spec)
+    if options.viewCenterlineOnly {
+        referenceLayer = nil
+    }
+
+    let (exampleName, resolvedStrokes) = try resolveEffectiveStrokes(
+        options: options,
+        spec: spec,
+        warn: warnHandler
+    )
+    let primaryStroke = resolvedStrokes.first!
+
+    typealias StrokeOutput = (
+        stroke: ResolvedStroke,
+        pathParam: SkeletonPathParameterization,
+        plan: SweepPlan,
+        result: SweepResult
+    )
+    var strokeOutputs: [StrokeOutput] = []
+    var combinedGlyphBounds: AABB? = nil
+
+    for (index, stroke) in resolvedStrokes.enumerated() {
+        let path = stroke.path
+        let pathParam = SkeletonPathParameterization(path: path, samplesPerSegment: options.arcSamples)
+        let provider: StrokeParamProvider
+        if let params = stroke.params {
+            provider = SpecParamProvider(params: params)
+        } else {
+            provider = ExampleParamProvider()
+        }
+        let funcs = provider.makeParamFuncs(options: options, exampleName: exampleName, sweepWidth: 20.0)
+        let plan = makeSweepPlan(
+            options: options,
+            funcs: funcs,
+            baselineWidth: 20.0,
+            sweepWidth: 20.0,
+            sweepHeight: 10.0,
+            sweepSampleCount: 64
+        )
+        let capNamespace = stroke.id ?? stroke.inkName ?? "stroke-\(index)"
+        let result = runSweep(
+            path: path,
+            plan: plan,
+            options: options,
+            capNamespace: capNamespace,
+            startCap: stroke.startCap,
+            endCap: stroke.endCap
+        )
+        strokeOutputs.append((stroke: stroke, pathParam: pathParam, plan: plan, result: result))
+        if let glyphBounds = result.glyphBounds {
+            combinedGlyphBounds = combinedGlyphBounds?.union(glyphBounds) ?? glyphBounds
+        }
+    }
+
+    let primaryOutput = strokeOutputs[0]
+
+    var referenceViewBox: WorldRect? = nil
+    if let layer = referenceLayer {
+        if let asset = loadReferenceAsset(layer: layer, warn: warnHandler) {
+            referenceViewBox = asset.viewBox
+        }
+    }
+    let referenceBoundsAABB = (referenceViewBox != nil && referenceLayer != nil) ? referenceBounds(viewBox: referenceViewBox!, layer: referenceLayer!) : nil
+    let frame = resolveWorldFrame(
+        settings: renderSettings,
+        glyphBounds: combinedGlyphBounds,
+        referenceBounds: referenceBoundsAABB,
+        debugBounds: nil
+    )
+
+    let railSamples = primaryOutput.result.sampling?.ts ?? []
+    let railTs = railSamples.isEmpty ? stride(from: 0, through: 1.0, by: 0.05).map { $0 } : railSamples
+    var railsLeft: [Vec2] = []
+    var railsRight: [Vec2] = []
+    if !railTs.isEmpty {
+        railsLeft.reserveCapacity(railTs.count)
+        railsRight.reserveCapacity(railTs.count)
+        let styleAtGT: (Double) -> SweepStyle = { t in
+            SweepStyle(
+                width: primaryOutput.plan.scaledWidthAtT(t),
+                widthLeft: primaryOutput.plan.scaledWidthLeftAtT(t),
+                widthRight: primaryOutput.plan.scaledWidthRightAtT(t),
+                height: primaryOutput.plan.sweepHeight,
+                angle: primaryOutput.plan.thetaAtT(t),
+                offset: primaryOutput.plan.offsetAtT(t),
+                angleIsRelative: primaryOutput.plan.angleMode == .relative
+            )
+        }
+        for (index, gt) in railTs.enumerated() {
+            let frame = railSampleFrameAtGlobalT(
+                param: primaryOutput.pathParam,
+                warpGT: primaryOutput.plan.warpT,
+                styleAtGT: styleAtGT,
+                gt: gt,
+                index: index
+            )
+            railsLeft.append(frame.left)
+            railsRight.append(frame.right)
+        }
+    }
+    let soupChains: [[Vec2]]? = primaryOutput.result.segmentsUsed.isEmpty ? nil : primaryOutput.result.segmentsUsed.map { [$0.a, $0.b] }
+    let resolveBefore = primaryOutput.result.resolveSelfOverlap?.original
+    let resolveAfter = primaryOutput.result.resolveSelfOverlap?.resolved
+    let resolveIntersections = primaryOutput.result.resolveSelfOverlap?.intersections
+    let capabilities = StoryCapabilities(
+        hasRails: !railsLeft.isEmpty && !railsRight.isEmpty,
+        hasSoup: soupChains != nil,
+        hasRings: !primaryOutput.result.rings.isEmpty,
+        hasResolve: resolveAfter != nil
+    )
+
+    let context = StoryContext(
+        canvas: renderSettings.canvasPx,
+        frame: frame,
+        path: primaryStroke.path,
+        pathParam: primaryOutput.pathParam,
+        plan: primaryOutput.plan,
+        params: primaryStroke.params,
+        sampling: primaryOutput.result.sampling,
+        ring: primaryOutput.result.ring,
+        railsLeft: railsLeft.isEmpty ? nil : railsLeft,
+        railsRight: railsRight.isEmpty ? nil : railsRight,
+        soupChains: soupChains,
+        rings: primaryOutput.result.rings,
+        resolveBefore: resolveBefore,
+        resolveAfter: resolveAfter,
+        resolveIntersections: resolveIntersections,
+        capabilities: capabilities
+    )
+    for stage in stages {
+        if let reason = StoryboardRenderer.placeholderReason(stage: stage, context: context) {
+            warnHandler("STORYBOARD missingStage=\(stage.rawValue) reason=\(reason)")
+        }
+    }
+    return StoryboardRenderer.renderCels(context: context, stages: stages, contextMode: contextMode)
+}
+
 public func runCLI() {
     // NOTE: CLIOptions.parse currently understands --spec and --example.
     // We also support positional *.json as specPath here to avoid silent fallback.
@@ -1272,6 +1736,17 @@ public func runCLI() {
             }
         } else {
             spec = nil
+        }
+
+        if let outDirPath = options.outDirPath {
+            let stages = options.storyboardStages.isEmpty ? [StoryStage.skeleton, .keyframes, .samples, .final] : options.storyboardStages
+            let cels = try renderStoryboardCels(options: options, spec: spec, stages: stages, contextMode: options.storyboardContext)
+            let outDir = URL(fileURLWithPath: outDirPath)
+            try StoryboardRenderer.writeCels(cels: cels, outDir: outDir)
+            if options.verbose {
+                print("Exported storyboard to: \(outDir.path)")
+            }
+            exit(0)
         }
 
         let svg = try renderSVGString(options: options, spec: spec)

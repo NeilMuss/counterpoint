@@ -43,6 +43,15 @@ ResolveSelfOverlap is now modeled as a micro‑pipeline with explicit artifacts:
 - ring diagnostics: `ringSpine`, `ringJump`, `traceJumpStep`
 - sampling diagnostics: `samplingWhy` and solo mode (`--debug-solo-why`)
 
+## Storyboard output (CLI)
+Generate a sequence of SVG “cels” showing pipeline stages:
+```
+swift run cp2-cli Fixtures/glyphs/wavy07.v0.json --out-dir out/storyboard/wavy07 --storyboard all --storyboard-context prev
+```
+Stages are fixed-numbered:
+`01_skeleton.svg`, `02_keyframes.svg`, `03_counterpoint.svg`, `04_samples.svg`, `05_rails.svg`, `06_soup.svg`, `07_ring.svg`, `08_resolve.svg`, `09_final.svg`.
+If a stage isn’t available, a placeholder SVG is still written and a warning is printed.
+
 ## Where we are now
 - **Big Caslon J** is typographically convincing.
 - Remaining mismatch is **terminal vocabulary** (elliptical/ball terminal). This will be implemented as a first‑class appendage shape rather than hacked via width.

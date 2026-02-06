@@ -28,6 +28,10 @@ struct ResolveSelfOverlapDebug {
     let intersections: [Vec2]
     let selfBefore: Int
     let selfAfter: Int
+    let selectedFaceId: Int
+    let selectedAbsArea: Double
+    let selectedBBoxMin: Vec2
+    let selectedBBoxMax: Vec2
 }
 
 struct RingSelfXHitDebug {
@@ -191,7 +195,8 @@ func runSweep(
                 startCap: startCap,
                 endCap: endCap,
                 capFilletArcSegments: options.capFilletArcSegments,
-                capRoundArcSegments: options.capRoundArcSegments
+                capRoundArcSegments: options.capRoundArcSegments,
+                penShape: options.penShape
             )
         } else {
                 return boundarySoup(
@@ -235,7 +240,8 @@ func runSweep(
                 startCap: startCap,
                 endCap: endCap,
                 capFilletArcSegments: options.capFilletArcSegments,
-                capRoundArcSegments: options.capRoundArcSegments
+                capRoundArcSegments: options.capRoundArcSegments,
+                penShape: options.penShape
             )
         }
     }()
@@ -333,45 +339,48 @@ func runSweep(
         eps: 1.0e-6,
         debugStep: options.debugTraceJumpStep ? { traceSteps.append($0) } : nil
     )
-    let selfCounts = rings.enumerated().map { index, ringItem in
-        ringSelfIntersections(ring: ringItem, ringIndex: index, eps: 1.0e-6).count
-    }
     var ring: [Vec2] = []
     if rings.count == 1 {
         ring = rings[0]
     } else if rings.count > 1 {
-        var bestIndex = 0
-        var bestSelfX = Int.max
-        var bestArea = -Double.greatestFiniteMagnitude
-        for (index, ringItem) in rings.enumerated() {
-            let area = abs(signedArea(ringItem))
-            let selfX = selfCounts[index]
-            if selfX < bestSelfX || (selfX == bestSelfX && area > bestArea) {
-                bestSelfX = selfX
-                bestArea = area
-                bestIndex = index
-            }
-        }
+        let selection = selectFinalRing(rings: rings)
+        ring = selection.ring
         if options.debugRingTopology {
-            print(String(format: "RING_SELECT outer=%d absArea=%.6f selfX=%d", bestIndex, bestArea, bestSelfX))
+            print(String(format: "RING_SELECT outer=%d absArea=%.6f", selection.index, selection.absArea))
         }
-        ring = rings[bestIndex]
     }
 
     var resolveSelfOverlapDebug: ResolveSelfOverlapDebug? = nil
     if options.resolveSelfOverlap, let example = options.example, example.hasPrefix("line_") {
         let before = ringSelfIntersections(ring: ring, ringIndex: 0, eps: 1.0e-6).count
         if before > 0 {
-            let resolved = resolveSelfOverlap(ring: ring, eps: 1.0e-6)
+            let resolvedPenShape: PenShape = {
+                switch options.penShape {
+                case .auto:
+                    return plan.angleMode == .relative ? .railsOnly : .rectCorners
+                default:
+                    return options.penShape
+                }
+            }()
+            let selectionPolicy: ResolveSelfOverlapSelectionPolicy =
+                resolvedPenShape == .rectCorners
+                ? .rectCornersBBox(minAreaRatio: 0.01, minBBoxRatio: 0.01)
+                : .lineGalleryMaxAbsAreaFace(minAreaRatio: 0.01)
+            let resolved = resolveSelfOverlap(ring: ring, eps: 1.0e-6, selectionPolicy: selectionPolicy)
             if resolved.success {
                 let after = ringSelfIntersections(ring: resolved.ring, ringIndex: 0, eps: 1.0e-6).count
                 print(String(format: "RESOLVE_SELF_OVERLAP enabled=true ringSelfXBefore=%d ringSelfXAfter=%d vertsBefore=%d vertsAfter=%d", before, after, ring.count, resolved.ring.count))
+                let bounds = ringBounds(resolved.ring)
                 resolveSelfOverlapDebug = ResolveSelfOverlapDebug(
                     original: ring,
                     resolved: resolved.ring,
                     intersections: resolved.intersections,
                     selfBefore: before,
-                    selfAfter: after
+                    selfAfter: after,
+                    selectedFaceId: resolved.selectedFaceId,
+                    selectedAbsArea: resolved.selectedAbsArea,
+                    selectedBBoxMin: bounds.min,
+                    selectedBBoxMax: bounds.max
                 )
                 ring = resolved.ring
                 rings = [ring]
@@ -467,4 +476,23 @@ func runSweep(
         resolveSelfOverlap: resolveSelfOverlapDebug,
         ringSelfXHit: ringSelfXHit
     )
+}
+
+private func selectFinalRing(rings: [[Vec2]]) -> (index: Int, ring: [Vec2], absArea: Double, bboxArea: Double) {
+    var bestIndex = 0
+    var bestAbsArea = -Double.greatestFiniteMagnitude
+    var bestBBoxArea = -Double.greatestFiniteMagnitude
+    for (index, ring) in rings.enumerated() {
+        let absArea = abs(signedArea(ring))
+        let bounds = ringBounds(ring)
+        let bboxArea = max(0.0, bounds.max.x - bounds.min.x) * max(0.0, bounds.max.y - bounds.min.y)
+        if absArea > bestAbsArea ||
+            (absArea == bestAbsArea && bboxArea > bestBBoxArea) ||
+            (absArea == bestAbsArea && bboxArea == bestBBoxArea && index < bestIndex) {
+            bestIndex = index
+            bestAbsArea = absArea
+            bestBBoxArea = bboxArea
+        }
+    }
+    return (bestIndex, rings[bestIndex], bestAbsArea, bestBBoxArea)
 }

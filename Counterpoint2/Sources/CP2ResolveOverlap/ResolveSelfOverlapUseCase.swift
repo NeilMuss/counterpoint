@@ -19,9 +19,14 @@ public struct ResolveSelfOverlapPipelineArtifacts: Equatable, Sendable {
 }
 
 public enum ResolveSelfOverlapUseCase {
-    public static func run(ring input: [Vec2], policy: DeterminismPolicy, includeDebug: Bool) -> (ResolveSelfOverlapResult, ResolveSelfOverlapPipelineArtifacts?) {
+    public static func run(
+        ring input: [Vec2],
+        policy: DeterminismPolicy,
+        selectionPolicy: ResolveSelfOverlapSelectionPolicy,
+        includeDebug: Bool
+    ) -> (ResolveSelfOverlapResult, ResolveSelfOverlapPipelineArtifacts?) {
         guard input.count >= 4 else {
-            return (ResolveSelfOverlapResult(ring: input, intersections: [], faces: 0, insideFaces: 0, success: false, failureReason: "ringTooSmall"), nil)
+            return (ResolveSelfOverlapResult(ring: input, intersections: [], faces: 0, insideFaces: 0, selectedFaceId: -1, selectedAbsArea: 0.0, success: false, failureReason: "ringTooSmall"), nil)
         }
 
         var ring = input
@@ -32,7 +37,7 @@ public enum ResolveSelfOverlapUseCase {
         let planarOutput = SegmentPlanarizer.planarize(ring: ring, policy: policy, sourceRingId: ArtifactID("inputRing"), includeDebug: includeDebug)
         let planarArtifact = planarOutput.artifact
         if planarArtifact.segments.isEmpty {
-            return (ResolveSelfOverlapResult(ring: ring, intersections: planarOutput.intersections, faces: 0, insideFaces: 0, success: false, failureReason: "noEdges"), nil)
+            return (ResolveSelfOverlapResult(ring: ring, intersections: planarOutput.intersections, faces: 0, insideFaces: 0, selectedFaceId: -1, selectedAbsArea: 0.0, success: false, failureReason: "noEdges"), nil)
         }
 
         let (graphArtifactBase, graphIndex) = HalfEdgeGraphBuilder.build(planar: planarArtifact, includeDebug: false)
@@ -58,7 +63,7 @@ public enum ResolveSelfOverlapUseCase {
         )
 
         let (selectionResult, selectionDebug) = SelectionPolicy.select(
-            policy: .lineGalleryMaxAbsAreaFace(minAreaRatio: 0.01),
+            policy: selectionPolicy,
             originalRing: ring,
             faces: faceResult.faceSet.faces,
             determinism: policy,
@@ -84,9 +89,9 @@ public enum ResolveSelfOverlapUseCase {
         )
 
         if let reason = selectionResult.failureReason {
-            return (ResolveSelfOverlapResult(ring: ring, intersections: planarOutput.intersections, faces: faceResult.faceSet.faces.count, insideFaces: 0, success: false, failureReason: reason), pipelineArtifacts)
+            return (ResolveSelfOverlapResult(ring: ring, intersections: planarOutput.intersections, faces: faceResult.faceSet.faces.count, insideFaces: 0, selectedFaceId: selectionResult.selectedFaceId, selectedAbsArea: selectionResult.absArea, success: false, failureReason: reason), pipelineArtifacts)
         }
 
-        return (ResolveSelfOverlapResult(ring: selectionResult.ring.points, intersections: planarOutput.intersections, faces: faceResult.faceSet.faces.count, insideFaces: 0, success: true, failureReason: nil), pipelineArtifacts)
+        return (ResolveSelfOverlapResult(ring: selectionResult.ring.points, intersections: planarOutput.intersections, faces: faceResult.faceSet.faces.count, insideFaces: 0, selectedFaceId: selectionResult.selectedFaceId, selectedAbsArea: selectionResult.absArea, success: true, failureReason: nil), pipelineArtifacts)
     }
 }

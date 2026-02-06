@@ -68,3 +68,41 @@ public struct SelectionDebugPayload: DebugPayload, Equatable, Sendable {
         self.failureReason = failureReason
     }
 }
+
+public struct RectCornersSelectionCandidate: Codable, Equatable, Sendable {
+    public let faceId: Int
+    public let absArea: Double
+    public let bboxArea: Double
+
+    public init(faceId: Int, absArea: Double, bboxArea: Double) {
+        self.faceId = faceId
+        self.absArea = absArea
+        self.bboxArea = bboxArea
+    }
+}
+
+public struct RectCornersSelectionDebugPayload: DebugPayload, Equatable, Sendable {
+    public static let kind = "ResolveOverlap.Selection.RectCorners"
+    public let candidates: [RectCornersSelectionCandidate]
+    public let selectedFaceId: Int
+    public let selectedAbsArea: Double
+    public let selectedBBoxArea: Double
+    public let rejectedCount: Int
+    public let failureReason: String?
+
+    public init(
+        candidates: [RectCornersSelectionCandidate],
+        selectedFaceId: Int,
+        selectedAbsArea: Double,
+        selectedBBoxArea: Double,
+        rejectedCount: Int,
+        failureReason: String?
+    ) {
+        self.candidates = candidates
+        self.selectedFaceId = selectedFaceId
+        self.selectedAbsArea = selectedAbsArea
+        self.selectedBBoxArea = selectedBBoxArea
+        self.rejectedCount = rejectedCount
+        self.failureReason = failureReason
+    }
+}

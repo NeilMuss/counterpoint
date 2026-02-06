@@ -357,6 +357,12 @@ public struct SweepStyle: Equatable, Codable {
     }
 }
 
+public enum PenShape: String, Codable, Sendable {
+    case railsOnly
+    case rectCorners
+    case auto
+}
+
 public struct CapBuildResult: Equatable, Sendable {
     public let segments: [Segment2]
     public let startLeftTrim: Vec2?
@@ -1671,7 +1677,8 @@ public func boundarySoupGeneral(
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
     capFilletArcSegments: Int = 8,
-    capRoundArcSegments: Int = 64
+    capRoundArcSegments: Int = 64,
+    penShape: PenShape = .auto
 ) -> [Segment2] {
 
     let param = SkeletonPathParameterization(path: path, samplesPerSegment: arcSamplesPerSegment)
@@ -1740,16 +1747,41 @@ public func boundarySoupGeneral(
         stats.keyframeHits = injected.insertedCount
         samplingOutput = SamplingResult(ts: samplingOutput.ts, trace: samplingOutput.trace, stats: stats)
     }
+    if samples != samplingOutput.ts {
+        samplingOutput = SamplingResult(ts: samples, trace: samplingOutput.trace, stats: samplingOutput.stats)
+    }
     debugSampling?(samplingOutput)
 
     let count = max(2, samples.count)
+
+    let resolvedPenShape: PenShape = {
+        switch penShape {
+        case .auto:
+            let base = styleAtGT(warpGT(0.0))
+            return base.angleIsRelative ? .railsOnly : .rectCorners
+        default:
+            return penShape
+        }
+    }()
+    let useRectCorners = resolvedPenShape == .rectCorners
 
     var left: [Vec2] = []
     var right: [Vec2] = []
     left.reserveCapacity(count)
     right.reserveCapacity(count)
 
-    let wantsFrames = debugRailFrames != nil || debugRailSummary != nil
+    var corner0: [Vec2] = []
+    var corner1: [Vec2] = []
+    var corner2: [Vec2] = []
+    var corner3: [Vec2] = []
+    if useRectCorners {
+        corner0.reserveCapacity(count)
+        corner1.reserveCapacity(count)
+        corner2.reserveCapacity(count)
+        corner3.reserveCapacity(count)
+    }
+
+    let wantsFrames = debugRailFrames != nil || debugRailSummary != nil || useRectCorners
     var frames: [RailSampleFrame] = []
     if wantsFrames {
         frames.reserveCapacity(count)
@@ -1768,6 +1800,23 @@ public func boundarySoupGeneral(
             left.append(rail.left)
             right.append(rail.right)
             frames.append(frame)
+            if useRectCorners {
+                let style = styleAtGT(warpGT(gt))
+                let halfWidth = style.width * 0.5
+                let wL = style.widthLeft > 0.0 ? style.widthLeft : halfWidth
+                let wR = style.widthRight > 0.0 ? style.widthRight : halfWidth
+                let corners = penCorners(
+                    center: frame.center,
+                    crossAxis: frame.crossAxis,
+                    widthLeft: wL,
+                    widthRight: wR,
+                    height: style.height
+                )
+                corner0.append(corners.c0)
+                corner1.append(corners.c1)
+                corner2.append(corners.c2)
+                corner3.append(corners.c3)
+            }
             if let debugRailCorner, let target = debugRailCornerIndex, target == index {
                 let cornerDebug = computeRailCornerDebug(
                     index: index,
@@ -1912,6 +1961,26 @@ public func boundarySoupGeneral(
         right = applyTrim(rail: right, endpoint: "end", side: "right", origin: endFrame.center, normal: endNormal, atStart: false)
     }
 
+    if useRectCorners && !corner0.isEmpty && corner0.count == count {
+        var segments: [Segment2] = []
+        let loops = buildPenEdgeStripLoops(
+            corner0: corner0,
+            corner1: corner1,
+            corner2: corner2,
+            corner3: corner3,
+            eps: eps
+        )
+        segments.reserveCapacity(loops.reduce(0) { $0 + max(0, $1.count - 1) })
+        for (index, loop) in loops.enumerated() {
+            guard loop.count >= 2 else { continue }
+            let source = EdgeSource.unknown("penStrip\(index)")
+            for i in 0..<(loop.count - 1) {
+                segments.append(Segment2(loop[i], loop[i + 1], source: source))
+            }
+        }
+        return segments
+    }
+
     // MARK: EDGE CREATION SITES
     // - boundarySoupGeneral: left forward (railLeft), right backward (railRight), caps (capStart/capEnd)
     // - traceLoops: consumes segments; no creation
@@ -2016,7 +2085,8 @@ public func boundarySoup(
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
     capFilletArcSegments: Int = 8,
-    capRoundArcSegments: Int = 64
+    capRoundArcSegments: Int = 64,
+    penShape: PenShape = .auto
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -2058,7 +2128,8 @@ public func boundarySoup(
         startCap: startCap,
         endCap: endCap,
         capFilletArcSegments: capFilletArcSegments,
-        capRoundArcSegments: capRoundArcSegments
+        capRoundArcSegments: capRoundArcSegments,
+        penShape: penShape
     )
 }
 
@@ -2093,7 +2164,8 @@ public func boundarySoupVariableWidth(
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
     capFilletArcSegments: Int = 8,
-    capRoundArcSegments: Int = 64
+    capRoundArcSegments: Int = 64,
+    penShape: PenShape = .auto
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -2136,7 +2208,8 @@ public func boundarySoupVariableWidth(
         startCap: startCap,
         endCap: endCap,
         capFilletArcSegments: capFilletArcSegments,
-        capRoundArcSegments: capRoundArcSegments
+        capRoundArcSegments: capRoundArcSegments,
+        penShape: penShape
     )
 }
 
@@ -2172,7 +2245,8 @@ public func boundarySoupVariableWidthAngle(
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
     capFilletArcSegments: Int = 8,
-    capRoundArcSegments: Int = 64
+    capRoundArcSegments: Int = 64,
+    penShape: PenShape = .auto
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -2216,7 +2290,8 @@ public func boundarySoupVariableWidthAngle(
         startCap: startCap,
         endCap: endCap,
         capFilletArcSegments: capFilletArcSegments,
-        capRoundArcSegments: capRoundArcSegments
+        capRoundArcSegments: capRoundArcSegments,
+        penShape: penShape
     )
 }
 
@@ -2257,7 +2332,8 @@ public func boundarySoupVariableWidthAngleAlpha(
     startCap: CapStyle = .butt,
     endCap: CapStyle = .butt,
     capFilletArcSegments: Int = 8,
-    capRoundArcSegments: Int = 64
+    capRoundArcSegments: Int = 64,
+    penShape: PenShape = .auto
 ) -> [Segment2] {
     boundarySoupGeneral(
         path: path,
@@ -2303,7 +2379,8 @@ public func boundarySoupVariableWidthAngleAlpha(
         startCap: startCap,
         endCap: endCap,
         capFilletArcSegments: capFilletArcSegments,
-        capRoundArcSegments: capRoundArcSegments
+        capRoundArcSegments: capRoundArcSegments,
+        penShape: penShape
     )
 }
 
@@ -2352,11 +2429,21 @@ private func computeRailSampleFrame(
     let style = styleAtGT(warped)
 
     let halfWidth = 0.5 * style.width
-    let baseAngle = style.angleIsRelative ? 0.0 : atan2(tangent.y, tangent.x)
-    let effectiveAngle = baseAngle + style.angle
-    let c = cos(effectiveAngle)
-    let s = sin(effectiveAngle)
-    let vRot = tangent * s + normal * c
+    let effectiveAngle: Double
+    let vRot: Vec2
+    if style.angleIsRelative {
+        effectiveAngle = style.angle
+        let c = cos(effectiveAngle)
+        let s = sin(effectiveAngle)
+        vRot = tangent * s + normal * c
+    } else {
+        let c = cos(style.angle)
+        let s = sin(style.angle)
+        vRot = Vec2(s, c)
+        let relSin = vRot.dot(tangent)
+        let relCos = vRot.dot(normal)
+        effectiveAngle = atan2(relSin, relCos)
+    }
     let center = point + vRot * style.offset
     let railPoints = railPointsFromCrossAxis(
         center: center,
@@ -2407,6 +2494,61 @@ private func rectangleCorners(
         let world = tangent * rotated.y + normal * rotated.x
         return center + world
     }
+}
+
+public struct PenCornerSet: Equatable, Sendable {
+    public let c0: Vec2
+    public let c1: Vec2
+    public let c2: Vec2
+    public let c3: Vec2
+}
+
+public func penCorners(
+    center: Vec2,
+    crossAxis: Vec2,
+    widthLeft: Double,
+    widthRight: Double,
+    height: Double
+) -> PenCornerSet {
+    let axisLen = crossAxis.length
+    let u = axisLen > 1.0e-12 ? crossAxis * (1.0 / axisLen) : Vec2(1.0, 0.0)
+    let alongAxis = Vec2(-u.y, u.x)
+    let h = height
+    let c0 = center + u * widthRight + alongAxis * h
+    let c1 = center + u * widthRight - alongAxis * h
+    let c2 = center - u * widthLeft - alongAxis * h
+    let c3 = center - u * widthLeft + alongAxis * h
+    return PenCornerSet(c0: c0, c1: c1, c2: c2, c3: c3)
+}
+
+func buildPenEdgeStripLoops(
+    corner0: [Vec2],
+    corner1: [Vec2],
+    corner2: [Vec2],
+    corner3: [Vec2],
+    eps: Double
+) -> [[Vec2]] {
+    guard !corner0.isEmpty else { return [] }
+    let count = corner0.count
+    guard corner1.count == count, corner2.count == count, corner3.count == count else { return [] }
+    let corners = [corner0, corner1, corner2, corner3]
+    var loops: [[Vec2]] = []
+    loops.reserveCapacity(4)
+    for k in 0..<4 {
+        let a = corners[k]
+        let b = corners[(k + 1) % 4]
+        var loop: [Vec2] = []
+        loop.reserveCapacity(a.count + b.count + 1)
+        loop.append(contentsOf: a)
+        loop.append(contentsOf: b.reversed())
+        if let first = a.first {
+            if loop.isEmpty || !Epsilon.approxEqual(loop.last ?? first, first, eps: eps) {
+                loop.append(first)
+            }
+        }
+        loops.append(loop)
+    }
+    return loops
 }
 
 private func splitSegmentsAtIntersections(_ segments: [Segment2], eps: Double) -> [Segment2] {

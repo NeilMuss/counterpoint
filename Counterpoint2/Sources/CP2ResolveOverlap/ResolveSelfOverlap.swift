@@ -7,6 +7,8 @@ public struct ResolveSelfOverlapResult: Equatable {
     public let intersections: [Vec2]
     public let faces: Int
     public let insideFaces: Int
+    public let selectedFaceId: Int
+    public let selectedAbsArea: Double
     public let success: Bool
     public let failureReason: String?
 
@@ -15,6 +17,8 @@ public struct ResolveSelfOverlapResult: Equatable {
         intersections: [Vec2],
         faces: Int,
         insideFaces: Int,
+        selectedFaceId: Int,
+        selectedAbsArea: Double,
         success: Bool,
         failureReason: String?
     ) {
@@ -22,13 +26,19 @@ public struct ResolveSelfOverlapResult: Equatable {
         self.intersections = intersections
         self.faces = faces
         self.insideFaces = insideFaces
+        self.selectedFaceId = selectedFaceId
+        self.selectedAbsArea = selectedAbsArea
         self.success = success
         self.failureReason = failureReason
     }
 }
 
-public func resolveSelfOverlap(ring input: [Vec2], eps: Double) -> ResolveSelfOverlapResult {
+public func resolveSelfOverlap(
+    ring input: [Vec2],
+    eps: Double,
+    selectionPolicy: ResolveSelfOverlapSelectionPolicy = .lineGalleryMaxAbsAreaFace(minAreaRatio: 0.01)
+) -> ResolveSelfOverlapResult {
     let policy = DeterminismPolicy(eps: eps, stableSort: .lexicographicXYThenIndex)
-    let (result, _) = ResolveSelfOverlapUseCase.run(ring: input, policy: policy, includeDebug: false)
+    let (result, _) = ResolveSelfOverlapUseCase.run(ring: input, policy: policy, selectionPolicy: selectionPolicy, includeDebug: false)
     return result
 }

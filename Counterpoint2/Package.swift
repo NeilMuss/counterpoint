@@ -48,6 +48,10 @@ let package = Package(
             dependencies: ["CP2ResolveOverlap"]
         ),
         .testTarget(
+            name: "CP2StoryboardRenderTests",
+            dependencies: ["cp2-cli"]
+        ),
+        .testTarget(
             name: "CP2SkeletonTests",
             dependencies: ["CP2Skeleton"],
             exclude: [
