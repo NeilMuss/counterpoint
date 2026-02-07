@@ -234,17 +234,16 @@ private func selectOuterFace(faces: [FaceLoop]) -> FaceLoop? {
     return best
 }
 
-func runSweep(
+func buildSoup(
     path: SkeletonPath,
     plan: SweepPlan,
     options: CLIOptions,
     capNamespace: String,
     startCap: CapStyle,
     endCap: CapStyle,
-    traceSink: TraceSink? = nil
-) -> SweepResult {
+    traceSink: TraceSink?
+) -> SoupBuildResult {
     var capturedSampling: SamplingResult? = nil
-    var traceSteps: [TraceStepInfo] = []
     var capEndpointsDebug: CapEndpointsDebug? = nil
     var capFillets: [CapFilletDebug] = []
     var capBoundaryDebugs: [CapBoundaryDebug] = []
@@ -257,25 +256,25 @@ func runSweep(
     let wantsRailCorner = options.debugDumpRailCorners
     let wantsPenStamps = options.debugPenStamps && options.penShape == .rectCorners
 
-    let segmentsUsed: [Segment2] = {
+    let segments: [Segment2] = {
         if plan.usesVariableWidthAngleAlpha {
-                return boundarySoupVariableWidthAngleAlpha(
-                    path: path,
-                    height: plan.sweepHeight,
-                    sampleCount: plan.sweepSampleCount,
-                    arcSamplesPerSegment: plan.paramSamplesPerSegment,
-                    adaptiveSampling: options.adaptiveSampling,
-                    flatnessEps: options.flatnessEps,
-                    railEps: options.flatnessEps,
-                    attrEpsOffset: options.adaptiveAttrEps,
-                    attrEpsWidth: options.adaptiveAttrEps,
-                    attrEpsAngle: options.adaptiveAttrEpsAngleDeg * Double.pi / 180.0,
-                    attrEpsAlpha: options.adaptiveAttrEps,
-                    maxDepth: options.maxDepth,
-                    maxSamples: options.maxSamples,
-                    widthAtT: plan.scaledWidthAtT,
-                    widthLeftAtT: plan.scaledWidthLeftAtT,
-                    widthRightAtT: plan.scaledWidthRightAtT,
+            return boundarySoupVariableWidthAngleAlpha(
+                path: path,
+                height: plan.sweepHeight,
+                sampleCount: plan.sweepSampleCount,
+                arcSamplesPerSegment: plan.paramSamplesPerSegment,
+                adaptiveSampling: options.adaptiveSampling,
+                flatnessEps: options.flatnessEps,
+                railEps: options.flatnessEps,
+                attrEpsOffset: options.adaptiveAttrEps,
+                attrEpsWidth: options.adaptiveAttrEps,
+                attrEpsAngle: options.adaptiveAttrEpsAngleDeg * Double.pi / 180.0,
+                attrEpsAlpha: options.adaptiveAttrEps,
+                maxDepth: options.maxDepth,
+                maxSamples: options.maxSamples,
+                widthAtT: plan.scaledWidthAtT,
+                widthLeftAtT: plan.scaledWidthLeftAtT,
+                widthRightAtT: plan.scaledWidthRightAtT,
                 angleAtT: plan.thetaAtT,
                 offsetAtT: plan.offsetAtT,
                 alphaAtT: plan.alphaAtT,
@@ -325,72 +324,71 @@ func runSweep(
                 capRoundArcSegments: options.capRoundArcSegments,
                 penShape: options.penShape
             )
-        } else {
-                return boundarySoup(
-                    path: path,
-                    width: plan.sweepWidth,
-                    height: plan.sweepHeight,
-                    effectiveAngle: plan.sweepAngle,
-                    sampleCount: plan.sweepSampleCount,
-                    arcSamplesPerSegment: plan.paramSamplesPerSegment,
-                    adaptiveSampling: options.adaptiveSampling,
-                    flatnessEps: options.flatnessEps,
-                    railEps: options.flatnessEps,
-                    attrEpsOffset: options.adaptiveAttrEps,
-                    attrEpsWidth: options.adaptiveAttrEps,
-                    attrEpsAngle: options.adaptiveAttrEpsAngleDeg * Double.pi / 180.0,
-                    attrEpsAlpha: options.adaptiveAttrEps,
-                    maxDepth: options.maxDepth,
-                    maxSamples: options.maxSamples,
-                    debugSampling: { capturedSampling = $0 },
-                debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
-                debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
-                debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
-                debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
-                debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil,
-                debugPenStamps: wantsPenStamps ? { penStamps = $0 } : nil,
-                debugCapFillet: {
-                    capFillets.append($0)
-                    if options.debugDumpCapEndpoints || options.debugSweep {
-                        let info = $0
-                        if info.success {
-                            traceSink?.emit(.capFilletSuccess(TraceCapFilletSuccess(
-                                kind: info.kind,
-                                side: info.side,
-                                radius: info.radius,
-                                theta: info.theta,
-                                d: info.d,
-                                corner: info.corner,
-                                p: info.p,
-                                q: info.q
-                            )))
-                        } else {
-                            let reason = info.failureReason ?? "unknown"
-                            traceSink?.emit(.capFilletFailure(TraceCapFilletFailure(
-                                kind: info.kind,
-                                side: info.side,
-                                radius: info.radius,
-                                reason: reason
-                            )))
-                        }
-                    }
-                },
-                debugCapBoundary: options.debugCapBoundary ? { capBoundaryDebugs.append($0) } : nil,
-                debugCapPlane: options.debugCapBoundary ? { capPlaneDebugs.append($0) } : nil,
-                capNamespace: capNamespace,
-                capLocalIndex: 0,
-                startCap: startCap,
-                endCap: endCap,
-                capFilletArcSegments: options.capFilletArcSegments,
-                capRoundArcSegments: options.capRoundArcSegments,
-                penShape: options.penShape
-            )
         }
+        return boundarySoup(
+            path: path,
+            width: plan.sweepWidth,
+            height: plan.sweepHeight,
+            effectiveAngle: plan.sweepAngle,
+            sampleCount: plan.sweepSampleCount,
+            arcSamplesPerSegment: plan.paramSamplesPerSegment,
+            adaptiveSampling: options.adaptiveSampling,
+            flatnessEps: options.flatnessEps,
+            railEps: options.flatnessEps,
+            attrEpsOffset: options.adaptiveAttrEps,
+            attrEpsWidth: options.adaptiveAttrEps,
+            attrEpsAngle: options.adaptiveAttrEpsAngleDeg * Double.pi / 180.0,
+            attrEpsAlpha: options.adaptiveAttrEps,
+            maxDepth: options.maxDepth,
+            maxSamples: options.maxSamples,
+            debugSampling: { capturedSampling = $0 },
+            debugCapEndpoints: options.debugDumpCapEndpoints ? { capEndpointsDebug = $0 } : nil,
+            debugRailSummary: options.debugDumpRailEndpoints ? { railDebugSummary = $0 } : nil,
+            debugRailFrames: wantsRailFrames ? { railFrames = $0 } : nil,
+            debugRailCornerIndex: wantsRailCorner ? options.debugDumpRailCornersIndex : nil,
+            debugRailCorner: wantsRailCorner ? { railCornerDebug = $0 } : nil,
+            debugPenStamps: wantsPenStamps ? { penStamps = $0 } : nil,
+            debugCapFillet: {
+                capFillets.append($0)
+                if options.debugDumpCapEndpoints || options.debugSweep {
+                    let info = $0
+                    if info.success {
+                        traceSink?.emit(.capFilletSuccess(TraceCapFilletSuccess(
+                            kind: info.kind,
+                            side: info.side,
+                            radius: info.radius,
+                            theta: info.theta,
+                            d: info.d,
+                            corner: info.corner,
+                            p: info.p,
+                            q: info.q
+                        )))
+                    } else {
+                        let reason = info.failureReason ?? "unknown"
+                        traceSink?.emit(.capFilletFailure(TraceCapFilletFailure(
+                            kind: info.kind,
+                            side: info.side,
+                            radius: info.radius,
+                            reason: reason
+                        )))
+                    }
+                }
+            },
+            debugCapBoundary: options.debugCapBoundary ? { capBoundaryDebugs.append($0) } : nil,
+            debugCapPlane: options.debugCapBoundary ? { capPlaneDebugs.append($0) } : nil,
+            capNamespace: capNamespace,
+            capLocalIndex: 0,
+            startCap: startCap,
+            endCap: endCap,
+            capFilletArcSegments: options.capFilletArcSegments,
+            capRoundArcSegments: options.capRoundArcSegments,
+            penShape: options.penShape
+        )
     }()
 
     var soupLaneSegments = 0
     var soupPerimeterSegments = 0
-    for seg in segmentsUsed {
+    for seg in segments {
         switch seg.source {
         case .penStrip:
             soupLaneSegments += 1
@@ -400,11 +398,96 @@ func runSweep(
             break
         }
     }
-    let soupTotalSegments = segmentsUsed.count
+    let soupTotalSegments = segments.count
+
+    if let center = options.debugSoupNeighborhoodCenter {
+        let report = computeSoupNeighborhood(
+            segments: segments,
+            eps: 1.0e-6,
+            center: center,
+            radius: options.debugSoupNeighborhoodRadius
+        )
+        traceSink?.emit(makeSoupNeighborhoodEvent(report, label: "manual"))
+    }
+
+    return SoupBuildResult(
+        segments: segments,
+        soupLaneSegments: soupLaneSegments,
+        soupPerimeterSegments: soupPerimeterSegments,
+        soupTotalSegments: soupTotalSegments,
+        sampling: capturedSampling,
+        traceSteps: [],
+        capEndpointsDebug: capEndpointsDebug,
+        capFillets: capFillets,
+        capBoundaryDebugs: capBoundaryDebugs,
+        capPlaneDebugs: capPlaneDebugs,
+        railDebugSummary: railDebugSummary,
+        railFrames: railFrames,
+        railCornerDebug: railCornerDebug,
+        penStamps: penStamps
+    )
+}
+
+func planarizeAndExtractFaces(
+    segments: [Segment2],
+    debugStep: ((TraceStepInfo) -> Void)?
+) -> PlanarizationResult {
+    let policy = DeterminismPolicy(eps: 1.0e-6, stableSort: .lexicographicXYThenIndex)
+    let segmentPairs = segments.map { ($0.a, $0.b) }
+    let planar = SegmentPlanarizer.planarize(segments: segmentPairs, policy: policy, sourceRingId: ArtifactID("soupSegments"), includeDebug: false)
+    let heatmap = buildPlanarizationHeatmap(artifact: planar.artifact)
+    guard !planar.artifact.segments.isEmpty else {
+        return PlanarizationResult(
+            planarizeStats: planar.stats,
+            planarizationHeatmap: heatmap,
+            planarSegments: [],
+            rings: [],
+            faces: []
+        )
+    }
+    let planarSegments = planar.artifact.segments.map { seg in
+        Segment2(planar.artifact.vertices[seg.a], planar.artifact.vertices[seg.b], source: .unknown("planarized"))
+    }
+    let rings = traceLoops(
+        segments: planarSegments,
+        eps: 1.0e-6,
+        debugStep: debugStep
+    )
+    let (graphArtifact, graphIndex) = HalfEdgeGraphBuilder.build(planar: planar.artifact, includeDebug: false)
+    let faceResult = FaceEnumerator.enumerate(graph: graphIndex, policy: policy, graphId: graphArtifact.id, includeDebug: false)
+    return PlanarizationResult(
+        planarizeStats: planar.stats,
+        planarizationHeatmap: heatmap,
+        planarSegments: planarSegments,
+        rings: rings,
+        faces: faceResult.faceSet.faces
+    )
+}
+
+func runSweep(
+    path: SkeletonPath,
+    plan: SweepPlan,
+    options: CLIOptions,
+    capNamespace: String,
+    startCap: CapStyle,
+    endCap: CapStyle,
+    traceSink: TraceSink? = nil
+) -> SweepResult {
+    let soup = buildSoup(
+        path: path,
+        plan: plan,
+        options: options,
+        capNamespace: capNamespace,
+        startCap: startCap,
+        endCap: endCap,
+        traceSink: traceSink
+    )
+    var traceSteps: [TraceStepInfo] = soup.traceSteps
+    let segmentsUsed = soup.segments
 
     if capNamespace == "fillet", case .fillet = endCap {
-        let endLeft = capFillets.first { $0.kind == "end" && $0.side == "left" && $0.success }
-        let endRight = capFillets.first { $0.kind == "end" && $0.side == "right" && $0.success }
+        let endLeft = soup.capFillets.first { $0.kind == "end" && $0.side == "left" && $0.success }
+        let endRight = soup.capFillets.first { $0.kind == "end" && $0.side == "right" && $0.success }
         if let left = endLeft, let right = endRight {
             let midA = right.p
             let midB = left.q
@@ -502,16 +585,6 @@ func runSweep(
         }
     }
 
-    if let center = options.debugSoupNeighborhoodCenter {
-        let report = computeSoupNeighborhood(
-            segments: segmentsUsed,
-            eps: 1.0e-6,
-            center: center,
-            radius: options.debugSoupNeighborhoodRadius
-        )
-        traceSink?.emit(makeSoupNeighborhoodEvent(report, label: "manual"))
-    }
-
     let rawRings = traceLoops(
         segments: segmentsUsed,
         eps: 1.0e-6,
@@ -561,24 +634,16 @@ func runSweep(
     }()
 
     if resolvedPenShape == .rectCorners, !segmentsUsed.isEmpty {
-        let policy = DeterminismPolicy(eps: 1.0e-6, stableSort: .lexicographicXYThenIndex)
-        let segmentPairs = segmentsUsed.map { ($0.a, $0.b) }
-        let planar = SegmentPlanarizer.planarize(segments: segmentPairs, policy: policy, sourceRingId: ArtifactID("soupSegments"), includeDebug: false)
-        planarizeStats = planar.stats
-        planarizationHeatmap = buildPlanarizationHeatmap(artifact: planar.artifact)
-        if !planar.artifact.segments.isEmpty {
-            let planarSegments = planar.artifact.segments.map { seg in
-                Segment2(planar.artifact.vertices[seg.a], planar.artifact.vertices[seg.b], source: .unknown("planarized"))
-            }
-            rings = traceLoops(
-                segments: planarSegments,
-                eps: 1.0e-6,
-                debugStep: options.debugTraceJumpStep ? { traceSteps.append($0) } : nil
-            )
-            let (graphArtifact, graphIndex) = HalfEdgeGraphBuilder.build(planar: planar.artifact, includeDebug: false)
-            let faceResult = FaceEnumerator.enumerate(graph: graphIndex, policy: policy, graphId: graphArtifact.id, includeDebug: false)
-            resolvedFaces = faceResult.faceSet.faces
-            if let outer = selectOuterFace(faces: faceResult.faceSet.faces) {
+        let planar = planarizeAndExtractFaces(
+            segments: segmentsUsed,
+            debugStep: options.debugTraceJumpStep ? { traceSteps.append($0) } : nil
+        )
+        planarizeStats = planar.planarizeStats
+        planarizationHeatmap = planar.planarizationHeatmap
+        if !planar.planarSegments.isEmpty {
+            rings = planar.rings
+            resolvedFaces = planar.faces
+            if let outer = selectOuterFace(faces: planar.faces) {
                 let bounds = ringBounds(outer.boundary)
                 let selfX = ringSelfIntersectionCount(outer.boundary)
                 finalContour = FinalContour(
@@ -748,20 +813,20 @@ func runSweep(
         resolvedFaces: resolvedFaces,
         planarizeStats: planarizeStats,
         planarizationHeatmap: planarizationHeatmap,
-        soupLaneSegments: soupLaneSegments,
-        soupPerimeterSegments: soupPerimeterSegments,
-        soupTotalSegments: soupTotalSegments,
+        soupLaneSegments: soup.soupLaneSegments,
+        soupPerimeterSegments: soup.soupPerimeterSegments,
+        soupTotalSegments: soup.soupTotalSegments,
         glyphBounds: glyphBounds,
-        sampling: capturedSampling,
+        sampling: soup.sampling,
         traceSteps: traceSteps,
-        capEndpointsDebug: capEndpointsDebug,
-        capFillets: capFillets,
-        capBoundaryDebugs: capBoundaryDebugs,
-        capPlaneDebugs: capPlaneDebugs,
-        railDebugSummary: railDebugSummary,
-        railFrames: railFrames,
-        railCornerDebug: railCornerDebug,
-        penStamps: penStamps,
+        capEndpointsDebug: soup.capEndpointsDebug,
+        capFillets: soup.capFillets,
+        capBoundaryDebugs: soup.capBoundaryDebugs,
+        capPlaneDebugs: soup.capPlaneDebugs,
+        railDebugSummary: soup.railDebugSummary,
+        railFrames: soup.railFrames,
+        railCornerDebug: soup.railCornerDebug,
+        penStamps: soup.penStamps,
         ringTopology: ringTopology,
         resolveSelfOverlap: resolveSelfOverlapDebug,
         ringSelfXHit: ringSelfXHit
