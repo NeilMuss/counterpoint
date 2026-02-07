@@ -464,6 +464,71 @@ func planarizeAndExtractFaces(
     )
 }
 
+func selectFinalContour(
+    rawRings: [[Vec2]],
+    planarRings: [[Vec2]]?,
+    faces: [FaceLoop]?
+) -> FinalContourSelectionResult {
+    let envelope = selectEnvelopeCandidate(rings: rawRings)
+    let baseRings = planarRings ?? rawRings
+    let defaultContour = FinalContour(
+        points: [],
+        absArea: 0.0,
+        bboxMin: Vec2(0, 0),
+        bboxMax: Vec2(0, 0),
+        selfX: 0,
+        reason: "none",
+        provenance: .none
+    )
+    guard let envelope else {
+        return FinalContourSelectionResult(
+            finalContour: defaultContour,
+            ring: [],
+            rings: baseRings,
+            envelopeIndex: -1,
+            envelopeAbsArea: 0.0,
+            envelopeBBoxMin: Vec2(0, 0),
+            envelopeBBoxMax: Vec2(0, 0),
+            envelopeSelfX: 0
+        )
+    }
+    let reason = envelope.selfX == 0 ? "max-area-simple" : "max-area"
+    var finalContour = FinalContour(
+        points: envelope.ring,
+        absArea: envelope.absArea,
+        bboxMin: envelope.bboxMin,
+        bboxMax: envelope.bboxMax,
+        selfX: envelope.selfX,
+        reason: reason,
+        provenance: .tracedRing(index: envelope.index)
+    )
+    var ring = envelope.ring
+    if let faces, let outer = selectOuterFace(faces: faces) {
+        let bounds = ringBounds(outer.boundary)
+        let selfX = ringSelfIntersectionCount(outer.boundary)
+        finalContour = FinalContour(
+            points: outer.boundary,
+            absArea: abs(outer.area),
+            bboxMin: bounds.min,
+            bboxMax: bounds.max,
+            selfX: selfX,
+            reason: "planarized-outer-face",
+            provenance: .resolvedFace(faceId: outer.faceId)
+        )
+        ring = outer.boundary
+    }
+    return FinalContourSelectionResult(
+        finalContour: finalContour,
+        ring: ring,
+        rings: baseRings,
+        envelopeIndex: envelope.index,
+        envelopeAbsArea: envelope.absArea,
+        envelopeBBoxMin: envelope.bboxMin,
+        envelopeBBoxMax: envelope.bboxMax,
+        envelopeSelfX: envelope.selfX
+    )
+}
+
 func runSweep(
     path: SkeletonPath,
     plan: SweepPlan,
@@ -590,38 +655,15 @@ func runSweep(
         eps: 1.0e-6,
         debugStep: options.debugTraceJumpStep ? { traceSteps.append($0) } : nil
     )
-    var rings = rawRings
-    var ring: [Vec2] = []
-    var finalContour = FinalContour(points: [], absArea: 0.0, bboxMin: Vec2(0, 0), bboxMax: Vec2(0, 0), selfX: 0, reason: "none", provenance: .none)
-    var envelopeIndex = -1
-    var envelopeAbsArea = 0.0
-    var envelopeBBoxMin = Vec2(0, 0)
-    var envelopeBBoxMax = Vec2(0, 0)
-    var envelopeSelfX = 0
     var resolveFacesCount = 0
     var resolvedFaces: [FaceLoop]? = nil
     var planarizeStats: SegmentPlanarizerStats? = nil
     var planarizationHeatmap: PlanarizationHeatmapDebug? = nil
-
-    let envelope = selectEnvelopeCandidate(rings: rawRings)
-    if let envelope {
-        ring = envelope.ring
-        envelopeIndex = envelope.index
-        envelopeAbsArea = envelope.absArea
-        envelopeBBoxMin = envelope.bboxMin
-        envelopeBBoxMax = envelope.bboxMax
-        envelopeSelfX = envelope.selfX
-        let reason = envelope.selfX == 0 ? "max-area-simple" : "max-area"
-        finalContour = FinalContour(
-            points: envelope.ring,
-            absArea: envelope.absArea,
-            bboxMin: envelope.bboxMin,
-            bboxMax: envelope.bboxMax,
-            selfX: envelope.selfX,
-            reason: reason,
-            provenance: .tracedRing(index: envelope.index)
-        )
-    }
+    var selection = selectFinalContour(
+        rawRings: rawRings,
+        planarRings: nil,
+        faces: nil
+    )
 
     var resolveSelfOverlapDebug: ResolveSelfOverlapDebug? = nil
     let resolvedPenShape: PenShape = {
@@ -641,34 +683,25 @@ func runSweep(
         planarizeStats = planar.planarizeStats
         planarizationHeatmap = planar.planarizationHeatmap
         if !planar.planarSegments.isEmpty {
-            rings = planar.rings
             resolvedFaces = planar.faces
-            if let outer = selectOuterFace(faces: planar.faces) {
-                let bounds = ringBounds(outer.boundary)
-                let selfX = ringSelfIntersectionCount(outer.boundary)
-                finalContour = FinalContour(
-                    points: outer.boundary,
-                    absArea: abs(outer.area),
-                    bboxMin: bounds.min,
-                    bboxMax: bounds.max,
-                    selfX: selfX,
-                    reason: "planarized-outer-face",
-                    provenance: .resolvedFace(faceId: outer.faceId)
-                )
-                ring = outer.boundary
-            }
+            selection = selectFinalContour(
+                rawRings: rawRings,
+                planarRings: planar.rings,
+                faces: planar.faces
+            )
         }
     }
 
-    let envelopeNeedsResolve = envelopeSelfX > 0
+    let envelopeNeedsResolve = selection.envelopeSelfX > 0
     let allowAutoResolve = resolvedPenShape == .rectCorners
-    let shouldResolve = options.resolveSelfOverlap || ((finalContour.provenance == .none) && (allowAutoResolve && envelopeNeedsResolve))
-    if shouldResolve, !ring.isEmpty {
-        let before = ringSelfIntersections(ring: ring, ringIndex: 0, eps: 1.0e-6).count
+    let shouldResolve = options.resolveSelfOverlap || ((selection.finalContour.provenance == .none) && (allowAutoResolve && envelopeNeedsResolve))
+    if shouldResolve, !selection.ring.isEmpty {
+        let ringBefore = selection.ring
+        let before = ringSelfIntersections(ring: ringBefore, ringIndex: 0, eps: 1.0e-6).count
         let selectionPolicy: ResolveSelfOverlapSelectionPolicy = .lineGalleryMaxAbsAreaFace(minAreaRatio: 0.0)
         let policy = DeterminismPolicy(eps: 1.0e-6, stableSort: .lexicographicXYThenIndex)
         let (resolved, artifacts) = ResolveSelfOverlapUseCase.run(
-            ring: ring,
+            ring: ringBefore,
             policy: policy,
             selectionPolicy: selectionPolicy,
             includeDebug: false
@@ -681,12 +714,12 @@ func runSweep(
                 enabledExplicit: options.resolveSelfOverlap,
                 ringSelfXBefore: before,
                 ringSelfXAfter: after,
-                vertsBefore: ring.count,
+                vertsBefore: ringBefore.count,
                 vertsAfter: resolved.ring.count
             )))
             let bounds = ringBounds(resolved.ring)
             resolveSelfOverlapDebug = ResolveSelfOverlapDebug(
-                original: ring,
+                original: ringBefore,
                 resolved: resolved.ring,
                 intersections: resolved.intersections,
                 selfBefore: before,
@@ -696,7 +729,7 @@ func runSweep(
                 selectedBBoxMin: bounds.min,
                 selectedBBoxMax: bounds.max
             )
-            finalContour = FinalContour(
+            let finalContour = FinalContour(
                 points: resolved.ring,
                 absArea: abs(signedArea(resolved.ring)),
                 bboxMin: bounds.min,
@@ -705,7 +738,8 @@ func runSweep(
                 reason: options.resolveSelfOverlap ? "resolved" : "resolved-outer-face",
                 provenance: .resolvedFace(faceId: resolved.selectedFaceId)
             )
-            ring = resolved.ring
+            selection.ring = resolved.ring
+            selection.finalContour = finalContour
         } else {
             traceSink?.emit(.resolveSelfOverlapFallback(reason: resolved.failureReason ?? "unknown"))
         }
@@ -716,7 +750,7 @@ func runSweep(
         var ringInfos: [RingTopologyDebug.RingInfo] = []
         var intersections: [RingTopologyDebug.SelfIntersection] = []
         var microRings: [Int] = []
-        for (index, ringItem) in rings.enumerated() {
+        for (index, ringItem) in selection.rings.enumerated() {
             let area = signedArea(ringItem)
             let absArea = abs(area)
             let winding = area >= 0.0 ? "CCW" : "CW"
@@ -727,7 +761,7 @@ func runSweep(
             }
         }
         ringTopology = RingTopologyDebug(rings: ringInfos, selfIntersections: intersections, microRingIndices: microRings)
-        traceSink?.emit(.ringTopoCount(count: rings.count))
+        traceSink?.emit(.ringTopoCount(count: selection.rings.count))
         for info in ringInfos {
             traceSink?.emit(.ringTopoInfo(TraceRingTopoInfo(
                 index: info.index,
@@ -758,13 +792,13 @@ func runSweep(
     var ringSelfXHit: RingSelfXHitDebug? = nil
     if let k = options.debugRingSelfXHit {
         var intersections: [RingTopologyDebug.SelfIntersection] = []
-        for (index, ringItem) in rings.enumerated() {
+        for (index, ringItem) in selection.rings.enumerated() {
             intersections.append(contentsOf: ringSelfIntersections(ring: ringItem, ringIndex: index, eps: 1.0e-6))
         }
         if k >= 0 && k < intersections.count {
             let hit = intersections[k]
-            if hit.ringIndex < rings.count, let first = rings[hit.ringIndex].first {
-                let ring = rings[hit.ringIndex]
+            if hit.ringIndex < selection.rings.count, let first = selection.rings[hit.ringIndex].first {
+                let ring = selection.rings[hit.ringIndex]
                 let lastIsFirst = Epsilon.approxEqual(first, ring.last ?? first)
                 let edgeCount = lastIsFirst ? max(1, ring.count - 1) : ring.count
                 let a0 = ring[hit.i]
@@ -797,18 +831,18 @@ func runSweep(
             traceSink?.emit(.ringSelfXHitOutOfRange(k: k, count: intersections.count))
         }
     }
-    let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
+    let glyphBounds = selection.ring.isEmpty ? nil : ringBounds(selection.ring)
 
     return SweepResult(
         segmentsUsed: segmentsUsed,
-        rings: rings,
-        ring: ring,
-        finalContour: finalContour,
-        envelopeIndex: envelopeIndex,
-        envelopeAbsArea: envelopeAbsArea,
-        envelopeBBoxMin: envelopeBBoxMin,
-        envelopeBBoxMax: envelopeBBoxMax,
-        envelopeSelfX: envelopeSelfX,
+        rings: selection.rings,
+        ring: selection.ring,
+        finalContour: selection.finalContour,
+        envelopeIndex: selection.envelopeIndex,
+        envelopeAbsArea: selection.envelopeAbsArea,
+        envelopeBBoxMin: selection.envelopeBBoxMin,
+        envelopeBBoxMax: selection.envelopeBBoxMax,
+        envelopeSelfX: selection.envelopeSelfX,
         resolveFacesCount: resolveFacesCount,
         resolvedFaces: resolvedFaces,
         planarizeStats: planarizeStats,
