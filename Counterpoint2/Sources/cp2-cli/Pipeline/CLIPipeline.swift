@@ -2,6 +2,7 @@ import Foundation
 import CP2Geometry
 import CP2Skeleton
 import CP2ResolveOverlap
+import CP2Domain
 
 enum SamplingModeError: Error, CustomStringConvertible {
     case fixedNotAllowed(String)
@@ -361,6 +362,15 @@ public func renderSVGString(
             warn(message)
         }
     }
+
+    let traceSink: TraceSink? = {
+        let wantsTrace = options.debugDumpCapEndpoints ||
+            options.debugSweep ||
+            options.debugRingTopology ||
+            options.debugRingSelfXHit != nil ||
+            options.debugSoupNeighborhoodCenter != nil
+        return wantsTrace ? StdoutTraceSink() : nil
+    }()
     
     if options.debugHeartlineResolve {
         dumpHeartlineResolve(specPath: options.specPath, spec: spec, options: options)
@@ -490,7 +500,8 @@ public func renderSVGString(
             options: options,
             capNamespace: capNamespace,
             startCap: stroke.startCap,
-            endCap: stroke.endCap
+            endCap: stroke.endCap,
+            traceSink: traceSink
         )
         strokeOutputs.append((stroke: stroke, pathParam: pathParam, plan: plan, result: result, joinGTs: joinGTs))
         if let glyphBounds = result.glyphBounds {
@@ -1638,6 +1649,14 @@ func renderStoryboardCels(
             warn(message)
         }
     }
+    let traceSink: TraceSink? = {
+        let wantsTrace = options.debugDumpCapEndpoints ||
+            options.debugSweep ||
+            options.debugRingTopology ||
+            options.debugRingSelfXHit != nil ||
+            options.debugSoupNeighborhoodCenter != nil
+        return wantsTrace ? StdoutTraceSink() : nil
+    }()
 
     var (renderSettings, referenceLayer) = resolveEffectiveSettings(options: options, spec: spec)
     if options.viewCenterlineOnly {
@@ -1685,7 +1704,8 @@ func renderStoryboardCels(
             options: options,
             capNamespace: capNamespace,
             startCap: stroke.startCap,
-            endCap: stroke.endCap
+            endCap: stroke.endCap,
+            traceSink: traceSink
         )
         strokeOutputs.append((stroke: stroke, pathParam: pathParam, plan: plan, result: result))
         if let glyphBounds = result.glyphBounds {

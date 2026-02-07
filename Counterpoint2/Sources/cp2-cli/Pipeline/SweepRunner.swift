@@ -76,22 +76,42 @@ struct RingSelfXHitDebug {
     let b1: Vec2
 }
 
-private func emitSoupNeighborhood(_ report: SoupNeighborhoodReport, label: String) {
-    print(String(format: "soupNeighborhood label=%@ center=(%.6f,%.6f) r=%.6f nodes=%d collisions=%d", label, report.center.x, report.center.y, report.radius, report.nodes.count, report.collisions.count))
-    for node in report.nodes {
-        print(String(format: "  node key=(%d,%d) pos=(%.6f,%.6f) degree=%d", node.key.x, node.key.y, node.pos.x, node.pos.y, node.degree))
-        for edge in node.edges {
-            let segIndexText = edge.segmentIndex.map(String.init) ?? "none"
-            print(String(format: "    out -> key=(%d,%d) pos=(%.6f,%.6f) len=%.6f dir=(%.6f,%.6f) src=%@ segIndex=%@", edge.toKey.x, edge.toKey.y, edge.toPos.x, edge.toPos.y, edge.len, edge.dir.x, edge.dir.y, edge.source.description, segIndexText))
+private func makeSoupNeighborhoodEvent(_ report: SoupNeighborhoodReport, label: String) -> TraceEvent {
+    let nodes = report.nodes.map { node in
+        let edges = node.edges.map { edge in
+            TraceSoupNeighborhoodEdge(
+                toKeyX: edge.toKey.x,
+                toKeyY: edge.toKey.y,
+                toPos: edge.toPos,
+                len: edge.len,
+                dir: edge.dir,
+                sourceDescription: edge.source.description,
+                segmentIndex: edge.segmentIndex
+            )
         }
+        return TraceSoupNeighborhoodNode(
+            keyX: node.key.x,
+            keyY: node.key.y,
+            pos: node.pos,
+            degree: node.degree,
+            edges: edges
+        )
     }
-    if !report.collisions.isEmpty {
-        print(String(format: "soupNeighborhood collisions=%d", report.collisions.count))
-        for collision in report.collisions {
-            let positions = collision.positions.map { String(format: "(%.6f,%.6f)", $0.x, $0.y) }.joined(separator: ", ")
-            print(String(format: "  collision key=(%d,%d) positions=[%@]", collision.key.x, collision.key.y, positions))
-        }
+    let collisions = report.collisions.map { collision in
+        TraceSoupNeighborhoodCollision(
+            keyX: collision.key.x,
+            keyY: collision.key.y,
+            positions: collision.positions
+        )
     }
+    let payload = TraceSoupNeighborhood(
+        label: label,
+        center: report.center,
+        radius: report.radius,
+        nodes: nodes,
+        collisions: collisions
+    )
+    return .soupNeighborhood(payload)
 }
 
 struct RingTopologyDebug {
@@ -220,7 +240,8 @@ func runSweep(
     options: CLIOptions,
     capNamespace: String,
     startCap: CapStyle,
-    endCap: CapStyle
+    endCap: CapStyle,
+    traceSink: TraceSink? = nil
 ) -> SweepResult {
     var capturedSampling: SamplingResult? = nil
     var traceSteps: [TraceStepInfo] = []
@@ -273,10 +294,24 @@ func runSweep(
                     if options.debugDumpCapEndpoints || options.debugSweep {
                         let info = $0
                         if info.success {
-                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f theta=%.6f d=%.6f corner=(%.6f,%.6f) P=(%.6f,%.6f) Q=(%.6f,%.6f)", info.kind, info.side, info.radius, info.theta, info.d, info.corner.x, info.corner.y, info.p.x, info.p.y, info.q.x, info.q.y))
+                            traceSink?.emit(.capFilletSuccess(TraceCapFilletSuccess(
+                                kind: info.kind,
+                                side: info.side,
+                                radius: info.radius,
+                                theta: info.theta,
+                                d: info.d,
+                                corner: info.corner,
+                                p: info.p,
+                                q: info.q
+                            )))
                         } else {
                             let reason = info.failureReason ?? "unknown"
-                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f failed=%@", info.kind, info.side, info.radius, reason))
+                            traceSink?.emit(.capFilletFailure(TraceCapFilletFailure(
+                                kind: info.kind,
+                                side: info.side,
+                                radius: info.radius,
+                                reason: reason
+                            )))
                         }
                     }
                 },
@@ -319,10 +354,24 @@ func runSweep(
                     if options.debugDumpCapEndpoints || options.debugSweep {
                         let info = $0
                         if info.success {
-                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f theta=%.6f d=%.6f corner=(%.6f,%.6f) P=(%.6f,%.6f) Q=(%.6f,%.6f)", info.kind, info.side, info.radius, info.theta, info.d, info.corner.x, info.corner.y, info.p.x, info.p.y, info.q.x, info.q.y))
+                            traceSink?.emit(.capFilletSuccess(TraceCapFilletSuccess(
+                                kind: info.kind,
+                                side: info.side,
+                                radius: info.radius,
+                                theta: info.theta,
+                                d: info.d,
+                                corner: info.corner,
+                                p: info.p,
+                                q: info.q
+                            )))
                         } else {
                             let reason = info.failureReason ?? "unknown"
-                            print(String(format: "capFillet kind=%@ side=%@ r=%.6f failed=%@", info.kind, info.side, info.radius, reason))
+                            traceSink?.emit(.capFilletFailure(TraceCapFilletFailure(
+                                kind: info.kind,
+                                side: info.side,
+                                radius: info.radius,
+                                reason: reason
+                            )))
                         }
                     }
                 },
@@ -359,8 +408,6 @@ func runSweep(
         if let left = endLeft, let right = endRight {
             let midA = right.p
             let midB = left.q
-            let midAText = String(format: "(%.3f,%.3f)", midA.x, midA.y)
-            let midBText = String(format: "(%.3f,%.3f)", midB.x, midB.y)
             var midMatches: [Segment2] = []
             for seg in segmentsUsed {
                 let direct = Epsilon.approxEqual(seg.a, midA) && Epsilon.approxEqual(seg.b, midB)
@@ -369,15 +416,22 @@ func runSweep(
                     midMatches.append(seg)
                 }
             }
-            print("capFilletMidSegmentFound count=\(midMatches.count) midA=\(midAText) midB=\(midBText)")
+            traceSink?.emit(.capFilletMidSegmentFound(TraceCapFilletMidSegment(
+                count: midMatches.count,
+                midA: midA,
+                midB: midB
+            )))
             for seg in midMatches {
                 let len = (seg.a - seg.b).length
-                print(String(format: "  mid len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+                traceSink?.emit(.capFilletMidSegmentDetail(TraceCapFilletSegmentDetail(
+                    len: len,
+                    a: seg.a,
+                    b: seg.b,
+                    sourceDescription: seg.source.description
+                )))
             }
             let bypassA = left.corner
             let bypassB = right.corner
-            let bypassAText = String(format: "(%.3f,%.3f)", bypassA.x, bypassA.y)
-            let bypassBText = String(format: "(%.3f,%.3f)", bypassB.x, bypassB.y)
             var bypassMatches: [Segment2] = []
             for seg in segmentsUsed {
                 let direct = Epsilon.approxEqual(seg.a, bypassA) && Epsilon.approxEqual(seg.b, bypassB)
@@ -386,10 +440,19 @@ func runSweep(
                     bypassMatches.append(seg)
                 }
             }
-            print("capFilletBypassEdgesFound count=\(bypassMatches.count) cornerA=\(bypassAText) cornerB=\(bypassBText)")
+            traceSink?.emit(.capFilletBypassEdgesFound(TraceCapFilletBypass(
+                count: bypassMatches.count,
+                cornerA: bypassA,
+                cornerB: bypassB
+            )))
             for seg in bypassMatches {
                 let len = (seg.a - seg.b).length
-                print(String(format: "  bypass len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+                traceSink?.emit(.capFilletBypassDetail(TraceCapFilletSegmentDetail(
+                    len: len,
+                    a: seg.a,
+                    b: seg.b,
+                    sourceDescription: seg.source.description
+                )))
             }
             let arcSteps = max(8, options.capFilletArcSegments)
             var arcInterior: [Vec2] = []
@@ -411,10 +474,9 @@ func runSweep(
             }
             if !arcInterior.isEmpty {
                 let ok = soupConnectivity(segments: segmentsUsed, eps: 1.0e-6, from: midA, targets: arcInterior)
-                print("capFilletConnectivity ok=\(ok)")
+                traceSink?.emit(.capFilletConnectivity(ok: ok))
             }
             let eps = 1.0e-6
-            let epsText = String(format: "%.1e", eps)
             var touchingX: [Segment2] = []
             for seg in segmentsUsed {
                 let aNear = abs(seg.a.x - 200.0) <= eps
@@ -423,10 +485,19 @@ func runSweep(
                     touchingX.append(seg)
                 }
             }
-            print("capFilletXTouch count=\(touchingX.count) x=200 eps=\(epsText)")
+            traceSink?.emit(.capFilletXTouch(TraceCapFilletXTouch(
+                count: touchingX.count,
+                x: 200.0,
+                eps: eps
+            )))
             for seg in touchingX {
                 let len = (seg.a - seg.b).length
-                print(String(format: "  xTouch len=%.6f a=(%.3f,%.3f) b=(%.3f,%.3f) src=%@", len, seg.a.x, seg.a.y, seg.b.x, seg.b.y, seg.source.description))
+                traceSink?.emit(.capFilletXTouchDetail(TraceCapFilletSegmentDetail(
+                    len: len,
+                    a: seg.a,
+                    b: seg.b,
+                    sourceDescription: seg.source.description
+                )))
             }
         }
     }
@@ -438,7 +509,7 @@ func runSweep(
             center: center,
             radius: options.debugSoupNeighborhoodRadius
         )
-        emitSoupNeighborhood(report, label: "manual")
+        traceSink?.emit(makeSoupNeighborhoodEvent(report, label: "manual"))
     }
 
     let rawRings = traceLoops(
@@ -541,7 +612,13 @@ func runSweep(
         resolvedFaces = artifacts?.faceSet.faces
         if resolved.success {
             let after = ringSelfIntersections(ring: resolved.ring, ringIndex: 0, eps: 1.0e-6).count
-            print(String(format: "RESOLVE_SELF_OVERLAP enabled=%@ ringSelfXBefore=%d ringSelfXAfter=%d vertsBefore=%d vertsAfter=%d", options.resolveSelfOverlap ? "true" : "auto", before, after, ring.count, resolved.ring.count))
+            traceSink?.emit(.resolveSelfOverlap(TraceResolveSelfOverlap(
+                enabledExplicit: options.resolveSelfOverlap,
+                ringSelfXBefore: before,
+                ringSelfXAfter: after,
+                vertsBefore: ring.count,
+                vertsAfter: resolved.ring.count
+            )))
             let bounds = ringBounds(resolved.ring)
             resolveSelfOverlapDebug = ResolveSelfOverlapDebug(
                 original: ring,
@@ -565,7 +642,7 @@ func runSweep(
             )
             ring = resolved.ring
         } else {
-            print(String(format: "RESOLVE_SELF_OVERLAP_FALLBACK reason=%@", resolved.failureReason ?? "unknown"))
+            traceSink?.emit(.resolveSelfOverlapFallback(reason: resolved.failureReason ?? "unknown"))
         }
     }
 
@@ -585,21 +662,31 @@ func runSweep(
             }
         }
         ringTopology = RingTopologyDebug(rings: ringInfos, selfIntersections: intersections, microRingIndices: microRings)
-        print("RING_TOPO ringCount=\(rings.count)")
+        traceSink?.emit(.ringTopoCount(count: rings.count))
         for info in ringInfos {
-            print(String(format: "RING_TOPO ring=%d absArea=%.6f winding=%@ verts=%d", info.index, info.absArea, info.winding, info.verts))
+            traceSink?.emit(.ringTopoInfo(TraceRingTopoInfo(
+                index: info.index,
+                absArea: info.absArea,
+                winding: info.winding,
+                verts: info.verts
+            )))
         }
         let grouped = Dictionary(grouping: intersections, by: { $0.ringIndex })
         for info in ringInfos {
             let hits = grouped[info.index] ?? []
-            print(String(format: "RING_SELF_X ring=%d count=%d", info.index, hits.count))
+            traceSink?.emit(.ringSelfXCount(ringIndex: info.index, count: hits.count))
             for hit in hits {
-                print(String(format: "RING_SELF_X hit ring=%d i=%d j=%d P=(%.6f,%.6f)", hit.ringIndex, hit.i, hit.j, hit.point.x, hit.point.y))
+                traceSink?.emit(.ringSelfXHit(TraceRingSelfXHit(
+                    ringIndex: hit.ringIndex,
+                    i: hit.i,
+                    j: hit.j,
+                    point: hit.point
+                )))
             }
         }
         for index in microRings {
             if let info = ringInfos.first(where: { $0.index == index }) {
-                print(String(format: "RING_MICRO ring=%d absArea=%.6f", info.index, info.absArea))
+                traceSink?.emit(.ringMicro(ringIndex: info.index, absArea: info.absArea))
             }
         }
     }
@@ -629,10 +716,20 @@ func runSweep(
                     b0: b0,
                     b1: b1
                 )
-                print(String(format: "RING_SELF_X_HIT k=%d ring=%d i=%d j=%d P=(%.6f,%.6f) A0=(%.6f,%.6f) A1=(%.6f,%.6f) B0=(%.6f,%.6f) B1=(%.6f,%.6f)", k, hit.ringIndex, hit.i, hit.j, hit.point.x, hit.point.y, a0.x, a0.y, a1.x, a1.y, b0.x, b0.y, b1.x, b1.y))
+                traceSink?.emit(.ringSelfXHitDetail(TraceRingSelfXHitDetail(
+                    k: k,
+                    ringIndex: hit.ringIndex,
+                    i: hit.i,
+                    j: hit.j,
+                    point: hit.point,
+                    a0: a0,
+                    a1: a1,
+                    b0: b0,
+                    b1: b1
+                )))
             }
         } else {
-            print(String(format: "RING_SELF_X_HIT k=%d out_of_range count=%d", k, intersections.count))
+            traceSink?.emit(.ringSelfXHitOutOfRange(k: k, count: intersections.count))
         }
     }
     let glyphBounds = ring.isEmpty ? nil : ringBounds(ring)
